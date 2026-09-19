@@ -1,0 +1,40 @@
+# 多 Agent 研发团队 · 单端口生产部署（容器内托管 API + 前端，默认 8787）
+#
+# 使用步骤：
+#   1) 在项目根 .env 中设置 AUTH_TOKEN（必填，生成示例：openssl rand -hex 24）
+#      与 LLM_API_KEY（真实模型必填；离线演示可设 LLM_MOCK=true）
+#   2) docker compose up -d --build
+#   3) 浏览器首次访问 http://127.0.0.1:8787/?token=<AUTH_TOKEN>（种 cookie 后直接访问 / 即可）
+#
+# 安全模型：
+#   - 容器内 BIND_ALL=true（必须监听 0.0.0.0 才能被端口映射），AUTH_TOKEN 强制校验（HTTP + WS 握手）；
+#   - 端口默认仅绑定宿主 127.0.0.1；如需局域网访问改为 "8787:8787"（token 仍是准入条件）。
+#
+# 数据与工作区默认挂载到 ./data、./workspace；
+# Linux 宿主首次启动前需：mkdir -p data workspace && sudo chown -R 1000:1000 data workspace
+# （macOS/Windows 的 Docker Desktop 无需处理）。
+services:
+  app:
+    build: .
+    image: multi-agent:latest
+    container_name: multi-agent
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8787:8787"
+    env_file:
+      - .env
+    environment:
+      BIND_ALL: "true"
+      AUTH_TOKEN: ${AUTH_TOKEN:?请在 .env 或当前 shell 设置 AUTH_TOKEN（BIND_ALL=true 时必填）}
+      # 可选：真实仓库模式（M6）——挂载仓库目录并纳入白名单后启用
+      # ALLOWED_ROOTS: /repos
+      # ALLOW_RUN_COMMAND: "true"
+      # 可选：单波并行成员上限（1 = 关闭并行；默认 3，场景可在 _group.yaml 覆盖）
+      # PARALLEL_MAX: "3"
+      # 可选：Agent 资产包目录（默认 agents/，镜像已内置；挂载自定义目录时设置）
+      # AGENTS_DIR: agents
+    volumes:
+      - ./data:/app/data
+      - ./workspace:/app/workspace
+      # 可选：挂载真实仓库（配合上方 ALLOWED_ROOTS 使用）
+      # - ${REPOS_DIR:-./repos}:/repos

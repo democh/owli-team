@@ -1,0 +1,21 @@
+{
+  "id": "memory-recall-injection",
+  "name": "向量记忆 · 语义召回注入（L1.5）",
+  "participants": ["backend"],
+  "prompt": "请结合团队约定「部署窗口为每周四 14:00，变更冻结 12:00-16:00」评审发布流程要求，产出部署流程约定交付件。",
+  "maxTurns": 4,
+  "memorySeed": [
+    {
+      "scope": "agent",
+      "kind": "constraint",
+      "content": "部署窗口为每周四 14:00，变更冻结 12:00-16:00，任何发布必须先跑通回归单测。",
+      "importance": 4
+    }
+  ],
+  "assertions": [
+    { "type": "memory_recall", "minItems": 1 },
+    { "type": "run_end_reason", "value": "completed" },
+    { "type": "no_loop" },
+    { "type": "token_budget_ok" }
+  ]
+}

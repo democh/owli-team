@@ -1,0 +1,27 @@
+{
+  "id": "gamedesign",
+  "name": "游戏工坊：核心循环 × 数值体系 × 世界观 × 玩法验证",
+  "participants": ["game-designer", "balance-designer", "narrative-designer", "playtester"],
+  "prompt": "设计一款小镇模拟经营游戏（单机休闲向）：核心内容围绕「开店 → 经营 → 扩张」循环展开。@游心 先立核心循环与 GDD 骨架；@千衡 给数值体系与平衡验算；@织境 搭世界观与叙事挂接；@百试 做玩法验证（模拟口径）并归档问题。",
+  "maxTurns": 8,
+  "assertions": [
+    { "type": "artifact_exists", "path": "docs/游戏设计文档-内容.md" },
+    { "type": "artifact_exists", "path": "docs/数值平衡表-内容.md" },
+    { "type": "artifact_exists", "path": "docs/世界观设定-内容.md" },
+    { "type": "artifact_exists", "path": "docs/玩法测试报告-内容.md" },
+    { "type": "artifact_contains", "path": "docs/游戏设计文档-内容.md", "text": "核心循环" },
+    { "type": "artifact_contains", "path": "docs/数值平衡表-内容.md", "text": "经济循环" },
+    { "type": "artifact_contains", "path": "docs/世界观设定-内容.md", "text": "世界铁律" },
+    { "type": "artifact_contains", "path": "docs/玩法测试报告-内容.md", "text": "问题清单" },
+    { "type": "handoff_targets", "values": ["balance-designer", "playtester"] },
+    { "type": "turns_lte", "value": 5 },
+    { "type": "no_loop" },
+    { "type": "token_budget_ok" },
+    { "type": "run_end_reason", "value": "completed" },
+    {
+      "type": "judge",
+      "rubric": "游戏设计须完整：核心循环先行（操作 → 反馈 → 成长 → 再行动 闭环无断点、单局节奏标注）且体验支柱 ≤3 条；每个数值可推导（公式 / 参照 / 体验至少其一）、经济循环有消耗口与通胀控制、平衡验算注明模拟口径（画像 / 局数 / 策略倾向）与样本量；世界观立 3 条以内铁律且关键角色 / 剧情节点有玩法挂接点；玩法验证口径先行（画像 × 场景 × 局数 × 指标）、问题按严重度归档且归属设计者；设计与验证分离声明齐全（方案非成品承诺、模拟口径非真机结论）。",
+      "minScore": 7
+    }
+  ]
+}

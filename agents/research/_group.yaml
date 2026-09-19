@@ -1,0 +1,24 @@
+id: research
+name: 深度研究
+description: 可追溯的深度研究：问题树 → 检索归档 → 交叉分析 → 事实核查 → 结论汇总
+icon: binoculars
+theme: ["#0ea5e9", "#38bdf8"]
+objective: 产出可追溯、可复核、带置信度的研究报告
+chain: [lead, scout, analyst, verifier]
+defaultSkills: [deep-research]
+parallel: true
+order: 30
+guide: 提出研究问题
+agenda:
+  - label: 快速调研
+    prompt: 帮我调研这个问题的现状与关键事实（附来源与置信度）：
+  - label: 竞品对比
+    prompt: 对比这几个产品的定位、能力与差异（逐条标注证据来源）：
+  - label: 事实核查
+    prompt: 核查下面这些说法，给出证据与置信度：
+  - label: 深度专题
+    prompt: 围绕这个课题做一份可追溯的深度研究报告：
+stage:
+  layout: roundtable
+  panel: pool
+

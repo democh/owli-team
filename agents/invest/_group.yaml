@@ -1,0 +1,24 @@
+id: invest
+name: 投资研究
+description: 标的研究与策略推演：基本面 / 技术面 / 舆情 / 量化四路独立分析，交叉检验后由投研主管收口
+icon: trending-up
+theme: ["#dc2626", "#ef4444"]
+objective: 产出数据可溯、观点与事实分离的投研报告与策略方案；不预测点位、不承诺收益、不构成投资建议
+chain: [invest-lead, analyst-fa, analyst-ta, analyst-news, quant]
+parallel: true
+parallelMax: 4
+order: 62
+guide: 提出投研议题
+agenda:
+  - label: 个股研报
+    prompt: 为下面这个标的出一份完整投研报告（基本面 / 技术面 / 舆情面三路并行）：
+  - label: 技术面快评
+    prompt: 分析下面这个标的的技术面结构（趋势 / 关键位 / 量价 / 指标共振）：
+  - label: 策略回测
+    prompt: 把这个策略想法规则化，并给出回测评估口径与参数敏感性计划：
+  - label: 多空对弈
+    prompt: 围绕下面的标的组织一轮多空对弈（默认 3 轮，多方 / 空方逐轮立论交锋 + 量化走子，终局给裁决与翻盘条件）：
+stage:
+  layout: dock
+  panel: versus
+

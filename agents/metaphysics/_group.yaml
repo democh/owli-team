@@ -1,0 +1,25 @@
+id: metaphysics
+name: 传统数术
+description: 传统术数研习：四柱八字 / 紫微斗数 / 六爻 / 大六壬 / 梅花易数 / 七政四余 / 奇门遁甲；排盘可验、过程可查，文化研习与参考定位
+icon: moon
+theme: ["#1e293b", "#f59e0b"]
+objective: 以传统术数为镜做文化研习与决策参考；先盘后论、表述克制
+chain: [bazi, ziwei, liuyao, meihua, qizheng, daliuren, qimen]
+defaultSkills: [chinese-metaphysics]
+parallel: true
+rounds: false
+parallelMax: 4
+order: 118
+guide: 提供生辰或起卦信息，开始研习
+agenda:
+  - label: 排盘解读
+    prompt: 帮我排盘并解读：四柱八字 / 紫微斗数 / 六爻起卦（附生辰或起卦信息）：
+  - label: 多术合参
+    prompt: 用多种术数合参下面这个问题（八字 + 紫微，或卦象互参，说明侧重点）：
+  - label: 择时参考
+    prompt: 帮我看看近期择时参考（说明要办的事与可选时间范围）：
+  - label: 术语答疑
+    prompt: 解释下面这些术数术语的白话含义与来历：
+stage:
+  layout: dock
+  panel: chartboard

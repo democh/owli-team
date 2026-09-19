@@ -1,0 +1,16 @@
+{
+  "id": "seven-relay-permission",
+  "name": "七人满链：权限体系无回环",
+  "participants": ["pm", "architect", "designer", "frontend", "backend", "qa", "devops"],
+  "prompt": "请团队接力完成权限体系的交付：需求、架构、交互、实现、接口、测试、部署都要有交付件，且不允许出现无意义回环。",
+  "maxTurns": 12,
+  "assertions": [
+    { "type": "artifact_exists", "path": "docs/需求文档-权限.md" },
+    { "type": "artifact_exists", "path": "docs/交互设计-权限.md" },
+    { "type": "artifact_exists", "path": "docs/接口设计-权限.md" },
+    { "type": "handoff_targets", "values": ["architect", "frontend", "qa", "devops", "designer", "backend"] },
+    { "type": "no_loop" },
+    { "type": "turns_lte", "value": 9 },
+    { "type": "run_end_reason", "value": "completed" }
+  ]
+}

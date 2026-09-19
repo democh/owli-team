@@ -1,0 +1,18 @@
+id: ops
+name: 运营行政
+description: 一人公司的运营中枢：流程 SOP、会议与行政事务、招聘外包对接、供应链与采购管理
+icon: workflow
+theme: ["#64748b", "#94a3b8"]
+objective: 把重复的事变成流程，把琐碎的事变成清单，让老板专注在只有老板能做的事
+chain: [ops, assistant, recruiter, supply]
+order: 70
+guide: 交办一件运营或行政事务
+agenda:
+  - label: 流程梳理
+    prompt: 帮我把这件事梳理成可复用的 SOP（步骤、责任人与检查点）：
+  - label: 会议纪要
+    prompt: 帮我把这段会议内容整理成纪要（决议 + 待办 + 负责人）：
+  - label: 行政安排
+    prompt: 帮我安排这项行政事务的步骤与清单：
+  - label: 招聘对接
+    prompt: 帮我推进这个岗位的招聘或外包（渠道与预算）：

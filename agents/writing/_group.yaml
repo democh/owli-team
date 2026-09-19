@@ -1,0 +1,22 @@
+id: writing
+name: 创作工作室
+description: 长文创作全流程：选题策划 → 主笔成稿 → 编辑定稿 → 出版发行；与营销文案（content）和技术文档（tech-writer）区隔——文学 / 长文 / 出版向
+icon: pen-tool
+theme: ["#92400e", "#d97706"]
+objective: 把想法变成可发表的成稿，并找到合适的发布路径
+chain: [storyline, author, editor, publisher]
+parallel: false
+order: 110
+guide: 想写点什么？长文、专栏、小说、剧本都可以
+agenda:
+  - label: 打磨选题与大纲
+    prompt: 围绕下面这个想法做选题策划：目标读者、切入角度、大纲与叙事结构：
+  - label: 起草一段正文
+    prompt: 按下面这个大纲起草正文（先出一节，保持风格统一与叙事视角一致）：
+  - label: 编辑润色这稿
+    prompt: 对下面这版文稿做编辑：润色、校对、风格统一，给出修改意见与定稿：
+  - label: 规划发布路径
+    prompt: 为下面这部作品规划发布路径：投稿 / 出版方案、版权与 IP 运营建议：
+stage:
+  layout: dock
+  panel: board

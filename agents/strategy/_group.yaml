@@ -1,0 +1,23 @@
+id: strategy
+name: 商业战略
+description: 老板的虚拟参谋部：目标拆解与优先级排序、商业模式与竞品推演、定价与单位经济测算；参谋只给取舍建议，拍板权在用户
+icon: briefcase
+theme: ["#6366f1", "#818cf8"]
+objective: 回答「做什么、先做哪个、不做什么」，产出可执行的经营简报与决策建议
+chain: [chief, strategist, pricing]
+rounds: true
+order: 5
+guide: 提出你正在纠结的战略议题
+agenda:
+  - label: 经营简报
+    prompt: 为下面这个业务出经营简报（关键数字 / 分歧点 / 决策建议）：
+  - label: 优先级排序
+    prompt: 帮我对这几件事做优先级排序，给出取舍理由与不做清单：
+  - label: 决策评估
+    prompt: 评估这个决策的收益、成本与风险，并给出替代方案：
+  - label: 定价测算
+    prompt: 帮我为这个产品设计定价结构并测算单位经济（含假设与敏感性）：
+stage:
+  layout: roundtable
+  panel: pool
+

@@ -1,0 +1,25 @@
+{
+  "id": "invest-quick-review",
+  "name": "投研快评：技术面 × 舆情面，投研主管收口",
+  "participants": ["invest-lead", "analyst-ta", "analyst-news"],
+  "prompt": "做一份增长主题投研快评：技术面给出位置与关键位（支撑 / 压力 / 失效条件），舆情面梳理公告与待核实要点（附信源分级），最后收敛为一页快评（结论 / 置信度 / 风险声明）。",
+  "maxTurns": 6,
+  "assertions": [
+    { "type": "artifact_exists", "path": "docs/技术面分析-增长.md" },
+    { "type": "artifact_exists", "path": "docs/舆情简报-增长.md" },
+    { "type": "artifact_exists", "path": "docs/投研报告-增长.md" },
+    { "type": "artifact_contains", "path": "docs/技术面分析-增长.md", "text": "关键位表" },
+    { "type": "artifact_contains", "path": "docs/舆情简报-增长.md", "text": "信源分级" },
+    { "type": "artifact_contains", "path": "docs/投研报告-增长.md", "text": "免责声明" },
+    { "type": "handoff_targets", "values": ["analyst-ta", "analyst-news"] },
+    { "type": "turns_lte", "value": 4 },
+    { "type": "no_loop" },
+    { "type": "token_budget_ok" },
+    { "type": "run_end_reason", "value": "completed" },
+    {
+      "type": "judge",
+      "rubric": "投研快评须三件齐活：技术面给出结构判断与关键位（含失效条件）；舆情面给出事件时间线与信源分级（含待核实清单）；投研主管收口出一页快评，结论附置信度与风险声明。判断与事实分离、数据可溯（来源 / asOf），不得出现预测点位或收益承诺。",
+      "minScore": 7
+    }
+  ]
+}

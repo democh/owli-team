@@ -1,0 +1,26 @@
+id: brainstorm
+name: 头脑风暴
+description: 创意发散与点子打磨：快速发散 → ICE 收敛 → 红队挑刺 → 最小可行版，先求量后收敛、禁止过早评判
+icon: lightbulb
+theme: ["#f59e0b", "#fbbf24"]
+objective: 围绕议题产出可执行的创意方案集
+chain: [facilitator, ideator, challenger, refiner]
+defaultSkills: [brainstorm-facilitation]
+parallel: true
+rounds: true
+parallelMax: 4
+order: 20
+guide: 抛出一个议题
+agenda:
+  - label: 快速发散
+    prompt: 围绕下面这个议题做一轮快速发散（不评判、先求量）：
+  - label: 收敛方案
+    prompt: 从上面的点子里收敛出 3 个可执行方案（含 ICE 打分）：
+  - label: 红队挑刺
+    prompt: 对当前方案做一轮红队挑刺：致命假设、失败场景与修补方向：
+  - label: 最小可行版
+    prompt: 把当前方案打磨出最小可行版本与验证计划：
+stage:
+  layout: roundtable
+  panel: pool
+

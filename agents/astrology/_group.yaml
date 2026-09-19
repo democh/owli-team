@@ -1,0 +1,25 @@
+id: astrology
+name: 星象占星
+description: 专业占星视角：本命盘 / 行运 / 合盘 / 卜卦择时；盘面为据、表述克制；与七政四余（中国星历）互参
+icon: star
+theme: ["#312e81", "#a5b4fc"]
+objective: 用星盘语言看清主题与时机，给参考不给宿命
+chain: [natal, transit, synastry, horary]
+defaultSkills: [western-astrology]
+parallel: true
+rounds: false
+parallelMax: 4
+order: 120
+guide: 提供出生时间与地点，开始排盘
+agenda:
+  - label: 本命盘解读
+    prompt: 帮我排本命盘并解读（附出生时间与地点，尽量精确到分钟）：
+  - label: 行运与流年
+    prompt: 看看我近期的行运重点与时间窗（附出生数据）：
+  - label: 合盘分析
+    prompt: 帮我做合盘分析（双方出生时间与地点，双方知情同意）：
+  - label: 择时参考
+    prompt: 为下面这件事看看择时参考（说明事项与可选时间范围）：
+stage:
+  layout: dock
+  panel: chartboard

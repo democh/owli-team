@@ -1,0 +1,22 @@
+id: learning
+name: 学习成长
+description: 学习路径、语言陪练与阅读沉淀：目标拆解、每日练习、输出检验与分阶段书单，把兴趣变成能力
+icon: graduation-cap
+theme: ["#eab308", "#facc15"]
+objective: 把目标拆成每周可完成的学习任务，用输出检验掌握
+chain: [tutor, language, reading]
+order: 92
+guide: 定一个学习目标，拆成每周任务
+agenda:
+  - label: 学习路径
+    prompt: 帮我为这个目标制定学习路径与每周里程碑：
+  - label: 每日练习
+    prompt: 用这个知识点给我出一道今天的练习题：
+  - label: 输出检验
+    prompt: 用提问检验我对这个知识点的掌握：
+  - label: 书单推荐
+    prompt: 围绕这个主题给我一份分阶段书单：
+stage:
+  layout: dock
+  panel: coach
+

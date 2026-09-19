@@ -1,0 +1,16 @@
+{
+  "id": "qa-quality-search",
+  "name": "质量视角：搜索测试计划与发布",
+  "participants": ["pm", "qa", "devops"],
+  "prompt": "请聚焦搜索功能的质量与发布：需求文档、测试计划（含边界与安全用例）、部署说明。",
+  "maxTurns": 6,
+  "assertions": [
+    { "type": "artifact_exists", "path": "docs/需求文档-搜索.md" },
+    { "type": "artifact_exists", "path": "docs/测试计划-搜索.md" },
+    { "type": "artifact_contains", "path": "docs/测试计划-搜索.md", "text": "幂等" },
+    { "type": "artifact_contains", "path": "docs/测试计划-搜索.md", "text": "越权访问" },
+    { "type": "artifact_exists", "path": "deploy/部署说明-搜索.md" },
+    { "type": "turns_lte", "value": 4 },
+    { "type": "run_end_reason", "value": "completed" }
+  ]
+}

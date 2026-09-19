@@ -1,0 +1,22 @@
+id: bi
+name: 商业智能
+description: 数据驱动决策：NL2SQL 取数、指标口径治理、数据质量检视与可视化交付
+icon: database
+theme: ["#ec4899", "#f472b6"]
+objective: 让每个业务问题都有一条可复现的取数路径
+chain: [bi]
+order: 65
+guide: 提出一个业务问题，我来补齐口径与证据
+agenda:
+  - label: 取数分析
+    prompt: 帮我回答这个业务问题，并给出取数口径：
+  - label: 指标拆解
+    prompt: 帮我把这个指标拆解成可归因的子指标与监控口径：
+  - label: 报表设计
+    prompt: 帮我设计这个场景的报表结构（指标、维度与刷新节奏）：
+  - label: 数据质量
+    prompt: 帮我检视这张表的数据质量并给出校验规则：
+stage:
+  layout: dock
+  panel: console
+

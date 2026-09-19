@@ -1,0 +1,18 @@
+node_modules/
+dist/
+data/
+workspace/
+worktrees/
+.env
+*.local
+.DS_Store
+*.log
+evals/reports/
+# Playwright（E2E）
+test-results/
+playwright-report/
+blob-report/
+
+# Python（金融桥 pycache）
+__pycache__/
+*.pyc

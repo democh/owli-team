@@ -1,0 +1,22 @@
+id: funding
+name: 融资资本
+description: 融资全流程支持：BP 与融资材料、估值与条款准备、投资人沟通与数据室维护，让每次沟通都推进到下一里程碑
+icon: banknote
+theme: ["#8b5cf6", "#a78bfa"]
+objective: 把业务故事变成投资人听得懂的语言，把每次沟通变成下一轮进展
+chain: [fundraiser, ir]
+order: 80
+guide: 准备一次融资沟通或材料
+agenda:
+  - label: 打磨 BP
+    prompt: 帮我打磨商业计划书的核心叙事（含关键数字与里程碑）：
+  - label: 投资人问答
+    prompt: 模拟投资人提问，帮我准备回答要点与数据支撑：
+  - label: 更新进展
+    prompt: 帮我整理这一期的融资进展更新：
+  - label: 条款估值
+    prompt: 帮我核对这轮融资的估值口径与关键条款风险：
+stage:
+  layout: dock
+  panel: console
+

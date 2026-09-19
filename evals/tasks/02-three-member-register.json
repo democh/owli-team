@@ -1,0 +1,16 @@
+{
+  "id": "three-member-register",
+  "name": "最小三人组：注册需求与架构",
+  "participants": ["pm", "architect", "qa"],
+  "prompt": "请三人小组完成注册功能的需求与架构：需求文档、架构设计、测试计划各出一份交付件。",
+  "maxTurns": 6,
+  "assertions": [
+    { "type": "artifact_exists", "path": "docs/需求文档-注册.md" },
+    { "type": "artifact_exists", "path": "docs/架构设计-注册.md" },
+    { "type": "artifact_contains", "path": "docs/架构设计-注册.md", "text": "幂等" },
+    { "type": "artifact_exists", "path": "docs/测试计划-注册.md" },
+    { "type": "handoff_targets", "values": ["architect", "qa"] },
+    { "type": "turns_lte", "value": 4 },
+    { "type": "run_end_reason", "value": "completed" }
+  ]
+}

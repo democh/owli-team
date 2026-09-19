@@ -1,0 +1,27 @@
+id: debate
+name: 辩论场
+description: 观点对抗 PK：正反双方多轮交锋、证据挂载、裁判终局裁决；与投资多空对弈（限标的）和红队挑刺（单向）区隔——通用议题、双向对抗、胜负裁决
+icon: scale
+theme: ["#dc2626", "#3b82f6"]
+objective: 把有争议的议题辩出边界：什么成立、什么存疑、什么被证伪
+chain: [judge, affirmative, negative, evidence]
+rounds: true
+parallel: true
+parallelMax: 2
+order: 102
+guide: 抛出议题，开一场有裁决的辩论
+agenda:
+  - label: 开一场辩论赛
+    prompt: 围绕下面这个议题组织一场完整辩论（默认 3 轮：正反双方逐轮立论交锋、证据官挂证据、裁判终局裁决）：
+  - label: 单点交锋
+    prompt: 针对下面这个争议点做一轮聚焦交锋（只辩这一点：正反各一轮立论后，裁判即时判定并给理由）：
+  - label: 帮我预演反方
+    prompt: 我要为下面这个观点做立场准备：请反方全力攻击它，证据官收集双方证据，裁判指出我的薄弱环节与补强方向：
+  - label: 复盘上次裁决
+    prompt: 复盘上一场辩论的裁决与交锋记录：哪些论点站住了、哪些被证伪、下次如何改进：
+stage:
+  layout: arena
+  seats:
+    left: [affirmative]
+    right: [negative]
+    center: [judge, evidence]

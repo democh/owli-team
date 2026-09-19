@@ -1,0 +1,17 @@
+{
+  "id": "full-chain-export-budget",
+  "name": "全链预算：导出功能七人接力",
+  "participants": ["pm", "architect", "designer", "frontend", "backend", "qa", "devops"],
+  "prompt": "请团队完整接力导出功能：从需求到部署全覆盖，并在过程中保持上下文在预算内。",
+  "maxTurns": 12,
+  "assertions": [
+    { "type": "artifact_exists", "path": "docs/需求文档-导出.md" },
+    { "type": "artifact_exists", "path": "docs/架构设计-导出.md" },
+    { "type": "artifact_exists", "path": "docs/测试计划-导出.md" },
+    { "type": "artifact_exists", "path": "deploy/部署说明-导出.md" },
+    { "type": "handoff_targets", "values": ["architect", "frontend", "qa", "devops"] },
+    { "type": "turns_lte", "value": 9 },
+    { "type": "token_budget_ok" },
+    { "type": "run_end_reason", "value": "completed" }
+  ]
+}

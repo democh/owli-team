@@ -1,0 +1,27 @@
+{
+  "id": "society",
+  "name": "议题圆桌：事实核查 × 立场图谱 × 政策伦理",
+  "participants": ["moderator", "fact-checker", "stakeholder", "policy-advisor"],
+  "prompt": "议题：搜索引擎竞价排名是否必须显著标注广告属性（默认 3 轮）。@齐观 开场收窄议题边界并终局收口观察报告；@尚真 对关键说法逐条核查（来源 / 日期 / 核验状态，不可核实的标「待核实」）；@方衡 梳理各方立场（含间接相关方与沉默方，推演与事实分开标注）；@允中 补政策伦理视角（政策工具与国际经验对比）并入观察报告终局版（含共识与分歧 + 可行建议区间）。",
+  "maxTurns": 8,
+  "assertions": [
+    { "type": "artifact_exists", "path": "docs/议题观察报告-搜索.md" },
+    { "type": "artifact_exists", "path": "docs/事实基线-搜索.md" },
+    { "type": "artifact_exists", "path": "docs/立场图谱-搜索.md" },
+    { "type": "artifact_contains", "path": "docs/议题观察报告-搜索.md", "text": "政策伦理" },
+    { "type": "artifact_contains", "path": "docs/议题观察报告-搜索.md", "text": "可行建议区间" },
+    { "type": "artifact_contains", "path": "docs/议题观察报告-搜索.md", "text": "共识与分歧" },
+    { "type": "artifact_contains", "path": "docs/事实基线-搜索.md", "text": "核验状态" },
+    { "type": "artifact_contains", "path": "docs/立场图谱-搜索.md", "text": "核心关切" },
+    { "type": "handoff_targets", "values": ["fact-checker", "stakeholder", "policy-advisor"] },
+    { "type": "turns_lte", "value": 5 },
+    { "type": "no_loop" },
+    { "type": "token_budget_ok" },
+    { "type": "run_end_reason", "value": "completed" },
+    {
+      "type": "judge",
+      "rubric": "议题圆桌须完整：主持先收窄议题边界并明确不讨论项与轮数；事实核查逐条给来源 / 日期 / 核验状态，不可核实的标注「待核实」、不硬凑结论；立场图谱列全利益相关方（含间接相关方与沉默方），逐方「主张 + 核心关切 + 约束条件」，推演与事实分开标注、价值分歧并列不判胜负；政策伦理章对比政策工具与国际经验（注明适用条件）并给出公平 / 权利 / 后果三框架结论；可行建议区间给出下沿与上沿（措施 / 代价 / 适用前提）；观察报告收口含共识与分歧，并附模拟声明（非价值裁判、非决策建议）。全程不作意识形态输出、不煽动对立。",
+      "minScore": 7
+    }
+  ]
+}

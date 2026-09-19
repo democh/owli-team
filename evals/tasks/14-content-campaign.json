@@ -1,0 +1,26 @@
+{
+  "id": "content-campaign",
+  "name": "内容营销战役：目标拆解到日历投放",
+  "participants": ["growth", "content", "seo", "brand"],
+  "prompt": "请团队执行一轮内容营销战役：目标与 KPI 拆解、选题与发布日历、关键词投放、品牌物料齐备，最后汇总为战役方案与内容日历。",
+  "maxTurns": 6,
+  "assertions": [
+    { "type": "artifact_exists", "path": "docs/增长方案-内容.md" },
+    { "type": "artifact_exists", "path": "docs/内容日历-内容.md" },
+    { "type": "artifact_exists", "path": "docs/搜索投放-内容.md" },
+    { "type": "artifact_exists", "path": "docs/品牌规范-内容.md" },
+    { "type": "artifact_contains", "path": "docs/内容日历-内容.md", "text": "KPI 口径" },
+    { "type": "artifact_contains", "path": "docs/搜索投放-内容.md", "text": "否定词表" },
+    { "type": "artifact_contains", "path": "docs/品牌规范-内容.md", "text": "logo 安全区" },
+    { "type": "handoff_targets", "values": ["content", "seo", "brand"] },
+    { "type": "turns_lte", "value": 5 },
+    { "type": "no_loop" },
+    { "type": "token_budget_ok" },
+    { "type": "run_end_reason", "value": "completed" },
+    {
+      "type": "judge",
+      "rubric": "内容战役必须形成闭环：目标与 KPI 口径可量化；选题与发布日历成排期；关键词投放含预算与否定词表；品牌物料规范齐备并可用于评审。",
+      "minScore": 7
+    }
+  ]
+}

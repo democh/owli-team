@@ -1,0 +1,27 @@
+{
+  "id": "invest-strategy-research",
+  "name": "策略研究：基本面 × 技术面 × 回测，主管收口",
+  "participants": ["invest-lead", "analyst-fa", "analyst-ta", "quant"],
+  "prompt": "围绕增长主题启动一轮策略研究：基本面给出筛选口径与候选池特征，技术面把信号转成可判定规则，量化完成回测口径与参数敏感性评估，最后收口为策略研究简报与下一步验证清单。",
+  "maxTurns": 7,
+  "assertions": [
+    { "type": "artifact_exists", "path": "docs/基本面分析-增长.md" },
+    { "type": "artifact_exists", "path": "docs/技术面分析-增长.md" },
+    { "type": "artifact_exists", "path": "docs/策略方案-增长.md" },
+    { "type": "artifact_exists", "path": "docs/投研报告-增长.md" },
+    { "type": "artifact_contains", "path": "docs/策略方案-增长.md", "text": "参数敏感性" },
+    { "type": "artifact_contains", "path": "docs/策略方案-增长.md", "text": "失效条件" },
+    { "type": "artifact_contains", "path": "docs/基本面分析-增长.md", "text": "估值三口径" },
+    { "type": "artifact_contains", "path": "docs/投研报告-增长.md", "text": "免责声明" },
+    { "type": "handoff_targets", "values": ["analyst-fa", "quant", "analyst-ta"] },
+    { "type": "turns_lte", "value": 5 },
+    { "type": "no_loop" },
+    { "type": "token_budget_ok" },
+    { "type": "run_end_reason", "value": "completed" },
+    {
+      "type": "judge",
+      "rubric": "策略研究须完整：基本面给出筛选口径与候选池特征；技术面把信号转成可判定规则（含参数与周期口径）；量化给出回测口径（七要素）与参数敏感性结论；主管收口出策略简报与下一步验证清单。全链数据可溯、结论附置信度，不含收益承诺。",
+      "minScore": 7
+    }
+  ]
+}

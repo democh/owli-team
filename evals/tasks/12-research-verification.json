@@ -1,0 +1,25 @@
+{
+  "id": "research-verification",
+  "name": "深度研究：检索、交叉分析与核查",
+  "participants": ["lead", "scout", "analyst", "verifier"],
+  "prompt": "研究课题：调研「权限」模型在中小团队的最佳实践。要求来源可追溯、结论标注置信度，并给出反面证据。",
+  "maxTurns": 6,
+  "assertions": [
+    { "type": "artifact_exists", "path": "docs/研究报告-权限.md" },
+    { "type": "artifact_exists", "path": "docs/来源清单.md" },
+    { "type": "artifact_exists", "path": "docs/交叉分析-权限.md" },
+    { "type": "artifact_exists", "path": "docs/核查记录-权限.md" },
+    { "type": "artifact_contains", "path": "docs/研究报告-权限.md", "text": "置信度" },
+    { "type": "artifact_contains", "path": "docs/核查记录-权限.md", "text": "反面证据" },
+    { "type": "handoff_targets", "values": ["scout", "analyst", "verifier"] },
+    { "type": "turns_lte", "value": 5 },
+    { "type": "no_loop" },
+    { "type": "token_budget_ok" },
+    { "type": "run_end_reason", "value": "completed" },
+    {
+      "type": "judge",
+      "rubric": "研究报告必须来源可追溯、区分事实与推断，结论标注置信度并包含反面证据；核查记录需逐条给出核查结论与不确定性说明。",
+      "minScore": 7
+    }
+  ]
+}

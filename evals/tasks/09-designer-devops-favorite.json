@@ -1,0 +1,17 @@
+{
+  "id": "designer-devops-favorite",
+  "name": "混合链路：收藏功能设计与发布",
+  "participants": ["pm", "designer", "qa", "devops"],
+  "prompt": "请接力完成收藏功能的交互设计、测试与发布准备，部署说明需包含回滚点。",
+  "maxTurns": 8,
+  "assertions": [
+    { "type": "artifact_exists", "path": "docs/需求文档-收藏.md" },
+    { "type": "artifact_exists", "path": "docs/交互设计-收藏.md" },
+    { "type": "artifact_exists", "path": "docs/测试计划-收藏.md" },
+    { "type": "artifact_exists", "path": "deploy/部署说明-收藏.md" },
+    { "type": "artifact_contains", "path": "deploy/部署说明-收藏.md", "text": "回滚" },
+    { "type": "handoff_targets", "values": ["designer", "qa", "devops"] },
+    { "type": "turns_lte", "value": 5 },
+    { "type": "run_end_reason", "value": "completed" }
+  ]
+}

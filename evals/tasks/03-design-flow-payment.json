@@ -1,0 +1,16 @@
+{
+  "id": "design-flow-payment",
+  "name": "设计先行：支付交互到前端实现",
+  "participants": ["pm", "designer", "frontend"],
+  "prompt": "请围绕支付流程接力：需求 → 交互设计 → 前端实现说明，交互稿需要给出栅格与错误态约定。",
+  "maxTurns": 6,
+  "assertions": [
+    { "type": "artifact_exists", "path": "docs/需求文档-支付.md" },
+    { "type": "artifact_exists", "path": "docs/交互设计-支付.md" },
+    { "type": "artifact_contains", "path": "docs/交互设计-支付.md", "text": "8pt 栅格" },
+    { "type": "artifact_exists", "path": "web/src/README-实现说明.md" },
+    { "type": "handoff_targets", "values": ["designer", "frontend"] },
+    { "type": "turns_lte", "value": 4 },
+    { "type": "run_end_reason", "value": "completed" }
+  ]
+}

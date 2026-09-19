@@ -1,0 +1,217 @@
+/**
+ * API 路由聚合（§9）：全部挂载于 /api，错误统一 { error }（中文文案）。
+ */
+import { Router } from 'express'
+import type { RequestHandler } from 'express'
+import type { AppConfig } from '../config.js'
+import type { ApprovalService } from '../approval.js'
+import type { PlanReviewService } from '../plan-review.js'
+import type { ContextService } from '../context/service.js'
+import type { Engine } from '../orchestration/engine.js'
+import type { ArtifactStore } from '../store/artifacts.js'
+import type { ArtifactVersionStore } from '../store/artifact-versions.js'
+import type { FeedbackStore } from '../store/feedback.js'
+import type { MemoryStore } from '../store/memory.js'
+import type { ToolMetricsStore } from '../store/metrics.js'
+import type { PlanStore } from '../store/plans.js'
+import type { ProjectStore } from '../store/projects.js'
+import type { PromptLibrary } from '../store/prompts.js'
+import type { ReviewStore } from '../store/reviews.js'
+import type { RunEventStore } from '../store/run-events.js'
+import type { RunStore } from '../store/runs.js'
+import type { SessionStore } from '../store/sessions.js'
+import type { SkillLibrary } from '../store/skills.js'
+import type { TaskStore } from '../store/tasks.js'
+import type { UsageStore } from '../store/usage.js'
+import type { WorkspaceService } from '../workspace.js'
+import type { NotifyHub } from '../ws.js'
+import type { ConnectionStore } from '../store/connections.js'
+import type { EmbeddingManager } from '../embeddings/manager.js'
+import type { MemoryService } from '../memory/service.js'
+import type { AuditStore } from '../store/audit.js'
+import type { DbConnectionManager } from '../connections/db/manager.js'
+import type { SshConnectionManager } from '../connections/ssh/manager.js'
+import type { BrowserRuntime } from '../browser/runtime.js'
+import type { StreamTokenService } from '../browser/stream-token.js'
+import type { AssetManager } from '../assets/manager.js'
+import type { ToolRegistry } from '../tools/registry.js'
+import type { McpServerStore } from '../store/mcp-servers.js'
+import type { McpRuntimeManager } from '../mcp/manager.js'
+import type { McpJsonConfigService } from '../mcp/json-config.js'
+// M31：无限画布（文档存储 / 素材上传 / 脑图生成）
+import type { CanvasStore } from '../canvas/store.js'
+import type { MindGenerator } from '../canvas/mind.js'
+import type { MediaService } from '../media/service.js'
+// M35：定时任务（调度服务；缺省 = /schedules 路由 503 未装配）
+import type { ScheduleService } from '../schedule/service.js'
+// M34：金融投研（数据网关 + 自选列表存储；缺省 = /finance 路由 503 未启用）
+import type { FinanceGateway } from '../finance/gateway.js'
+import type { PyEnvStatus } from '../finance/bridge/probe.js'
+import type { FinanceStore } from '../store/finance.js'
+import { createAgentsRouter } from './agents.js'
+import { createArtifactsRouter } from './artifacts.js'
+import { createContextRouter } from './context.js'
+import { createFeedbackRouter } from './feedback.js'
+import { createMetricsRouter } from './metrics.js'
+import { createProjectsRouter } from './projects.js'
+import { createRunsRouter } from './runs.js'
+import { createSessionsRouter } from './sessions.js'
+import { createAttachmentsRouter } from './attachments.js'
+import { createSettingsRouter } from './settings.js'
+import { createSkillsRouter } from './skills.js'
+import { createConnectionsRouter } from './connections.js'
+import { createBrowserRouter } from './browser.js'
+import { createMemoriesRouter } from './memories.js'
+import { createConsoleRouter } from './console.js'
+import { createMcpRouter } from './mcp.js'
+import { createCanvasRouter } from './canvas.js'
+import { createMediaRouter } from './media.js'
+import { createSchedulesRouter } from './schedules.js'
+import { createFinanceRouter } from './finance.js'
+
+export interface ApiDeps {
+  cfg: AppConfig
+  prompts: PromptLibrary
+  skills: SkillLibrary
+  sessions: SessionStore
+  artifacts: ArtifactStore
+  /** 会话长期记忆（M2：context / memory 接口） */
+  memory: MemoryStore
+  /** 上下文服务（M2：分层快照） */
+  context: ContextService
+  /** 任务清单存储（M3：tasks 接口） */
+  tasks: TaskStore
+  /** 运行快照存储（M3：断点恢复） */
+  runs: RunStore
+  /** 工具指标存储（M5：/metrics/tools） */
+  metrics: ToolMetricsStore
+  /** 运行轨迹存储（M9：/runs/:id/trace 与指标聚合） */
+  events: RunEventStore
+  /** 消息反馈存储（M9：/feedback 与导出） */
+  feedback: FeedbackStore
+  /** 项目存储（M6：真实仓库挂载） */
+  projects: ProjectStore
+  /** 工作区服务（M6：sandbox/repo/worktree 解析与 worktree 生命周期） */
+  workspace: WorkspaceService
+  /** 审批服务（M7：挂起 / 决定 / 查询） */
+  approvals: ApprovalService
+  /** M24：计划存储（/sessions/:id/plans；缺省 = 空列表，行为与现状零差异） */
+  plans?: PlanStore
+  /** M24：评审存储（/plans 随附 reviews） */
+  reviews?: ReviewStore
+  /** M24：计划审批服务（resolve 结算挂起；缺省 = 仅稍后批准路径） */
+  planReviews?: PlanReviewService
+  /** 交付件版本存储（M8：Diff 视图 / 版本列表） */
+  versions: ArtifactVersionStore
+  /** 用量与成本存储（M8：GET /runs/:id/usage 的本 Run 费用） */
+  usage: UsageStore
+  /** 消息接口限流（M7：index.ts 创建；测试可缺省） */
+  messageLimiter?: RequestHandler
+  /** M22：连接中心存储（CRUD / 会话绑定） */
+  connections: ConnectionStore
+  /** M22：操作审计存储 */
+  audit: AuditStore
+  /** M22：数据库连接管理器（测试 / 执行） */
+  db: DbConnectionManager
+  /** M23：SSH 连接管理器（测试 / 终端会话） */
+  ssh: SshConnectionManager
+  /** M25：嵌入管理（连接测试 / provider 失效 / 状态诊断） */
+  embeddings: EmbeddingManager
+  /** M25：向量记忆服务（列表统计 / 语义搜索 / 重建 / 候选审核） */
+  memories: MemoryService
+  /** M22：浏览器运行时（会话 / 步骤 / 系统打开） */
+  browser: BrowserRuntime
+  /** M22：流 token 服务（帧流 watch / takeover 授权） */
+  streamTokens: StreamTokenService
+  /** M26：资产控制台（Agent / Skill / 场景 读写与校验；唯一写盘通道） */
+  assets: AssetManager
+  /** M26：工具注册表（工具中心清单与授权情况） */
+  tools: ToolRegistry
+  /** M27：MCP 服务器存储（CRUD / 会话绑定；缺省 = MCP 路由 503 未装配） */
+  mcp?: McpServerStore
+  /** M27：MCP 运行时管理器（连接 / 测试 / 刷新 / 工具目录依赖） */
+  mcpRuntime?: McpRuntimeManager
+  /** M28：MCP JSON 直配服务（mcp.json 文件权威同步 / 状态 / 粘贴导入；缺省 = json-config 路由 503） */
+  mcpJson?: McpJsonConfigService
+  /** M31：画布文档存储（GET/PUT /sessions/:id/canvas；缺省 = 503 未装配） */
+  canvas?: CanvasStore
+  /** M31：脑图生成器（POST /sessions/:id/canvas/mind；缺省 = 503 未装配） */
+  mind?: MindGenerator
+  /** M31：媒体生成服务（连接适配器 + 任务管线；缺省 = /media 路由 503） */
+  media?: MediaService
+  /** M35：定时任务服务（CRUD / 启停 / 立即触发；缺省 = /schedules 路由 503） */
+  schedules?: ScheduleService
+  /** M34：金融数据网关（行情 / K 线 / 检索 / 新闻 / 博弈；缺省 = /finance 路由 503 未启用） */
+  finance?: FinanceGateway
+  /** M34：金融自选列表存储（/finance/watchlist；缺省 = 路由 503） */
+  financeStore?: FinanceStore
+  /** M34：Python 环境探测（/finance/env；缺省 = probePython 真实探测（10 分钟缓存；测试注入桩）） */
+  financeProbe?: (opts: { python?: string; force?: boolean }) => Promise<PyEnvStatus>
+  engine: Engine
+  notify: NotifyHub
+}
+
+export function createApiRouter(deps: ApiDeps): Router {
+  const router = Router()
+
+  router.get('/health', (_req, res) => {
+    // 真实模型为唯一运行路径（§7.4）；M4：下发前端运行参数（通知轮询间隔）
+    res.json({
+      ok: true,
+      model: deps.cfg.llmModel,
+      baseUrl: deps.cfg.llmBaseUrl,
+      thinking: deps.cfg.llmThinking,
+      notifyPollMs: deps.cfg.notifyPollMs,
+    })
+  })
+
+  router.use(createAgentsRouter(deps))
+  router.use(createSkillsRouter(deps))
+  router.use(createProjectsRouter(deps))
+  router.use(createSettingsRouter(deps))
+  router.use(createSessionsRouter(deps))
+  // M33：附件上传（raw 二进制直传；对话附件托盘）
+  router.use(createAttachmentsRouter(deps))
+  router.use(createContextRouter(deps))
+  router.use(createArtifactsRouter(deps))
+  router.use(createRunsRouter(deps))
+  router.use(createMetricsRouter(deps))
+  router.use(createFeedbackRouter(deps))
+  // M22：连接中心（数据库 / SSH / 浏览器接入 + 审计）
+  router.use(createConnectionsRouter(deps))
+  router.use(createBrowserRouter(deps))
+  // M25：向量记忆（跨 scope 管理 / 统计 / 重建 / 语义搜索）
+  router.use(createMemoriesRouter(deps))
+  // M26：资产控制台（Agent / Skill / 场景 / 工具清单 / 校验）
+  router.use(createConsoleRouter(deps))
+  // M27：MCP 接入与管理（服务器 CRUD / 生命周期 / 工具目录 / 会话绑定）
+  router.use(createMcpRouter(deps))
+  // M31：无限画布（文档 / 素材上传 / 脑图生成）与媒体生成（任务管线 / 提供方清单）
+  router.use(createCanvasRouter(deps))
+  router.use(createMediaRouter(deps))
+  // M35：定时任务（会话清单 / CRUD / 启停 / 立即触发）
+  router.use(createSchedulesRouter(deps))
+  // M34：金融投研（健康度 / 自选列表 / 行情 / K 线 / 检索 / 新闻 / 博弈推演）
+  router.use(createFinanceRouter(deps))
+
+  return router
+}
+
+/** 统一错误中间件（中文 { error }；透传 body-parser 等中间件抛出的 4xx 状态码，审核 M-2） */
+export function apiErrorHandler(
+  err: Error,
+  _req: unknown,
+  res: { status: (code: number) => { json: (body: unknown) => void } },
+  _next: unknown,
+): void {
+  // body-parser 抛错携带 status / statusCode（413 请求体超限 / 400 JSON 语法错误等）
+  const meta = err as unknown as { status?: unknown; statusCode?: unknown }
+  const raw = meta.status ?? meta.statusCode
+  const status = typeof raw === 'number' && raw >= 400 && raw < 600 ? raw : 500
+  if (status === 413) {
+    res.status(413).json({ error: '请求体过大：单文件上传上限 8MB（base64 编码后约 11MB）；其他请求上限 4MB' })
+    return
+  }
+  const message = err instanceof Error ? err.message : '服务器内部错误'
+  res.status(status).json({ error: message })
+}

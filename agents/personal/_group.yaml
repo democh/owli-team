@@ -1,0 +1,22 @@
+id: personal
+name: 个人管理
+description: 情绪陪谈与生活事务：状态梳理、习惯养成、琐事清点与到点提醒，琐事与状态一起打理
+icon: compass
+theme: ["#a855f7", "#c084fc"]
+objective: 照顾状态、管好琐事，让人把精力留给重要的事
+chain: [coach, life-admin]
+order: 100
+guide: 说说你想打理的事
+agenda:
+  - label: 状态梳理
+    prompt: 帮我梳理最近的精力状态与调整建议：
+  - label: 琐事清点
+    prompt: 帮我把堆积的琐事理成行动清单（含截止时间）：
+  - label: 目标推进
+    prompt: 帮我看看这个个人目标怎么推进：
+  - label: 到点提醒
+    prompt: 帮我为这些事项设置到点提醒：
+stage:
+  layout: dock
+  panel: coach
+

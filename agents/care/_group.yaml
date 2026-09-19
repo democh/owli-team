@@ -1,0 +1,22 @@
+id: care
+name: 家庭照护
+description: 家庭照护支持：照护规划 / 陪诊协助 / 康养活动；非医疗诊断，不做诊断、不开药、不替代医生，异常症状直接建议就医
+icon: heart-handshake
+theme: ["#be185d", "#f472b6"]
+objective: 让照护有方案、有排班、有记录，让家人安心、自己不透支
+chain: [care-planner, care-escort, elder-advisor]
+parallel: false
+order: 116
+guide: 说说需要照护的家人情况与你最操心的事
+agenda:
+  - label: 制定照护方案
+    prompt: 帮我为家人制定照护方案：健康状况与照护需求、排班分工、资源协调、关注信号清单（非诊断）：
+  - label: 准备一次陪诊
+    prompt: 帮我准备一次陪诊：就医资料清单、要问医生的问题清单、就诊记录模板（只记录不解读医嘱）：
+  - label: 适老化与康养建议
+    prompt: 给我家的适老化改造与康养活动建议：居家安全改造、日常活动安排、情绪陪伴要点：
+  - label: 整理照护排班
+    prompt: 帮我整理照护排班与分工：家庭成员轮值、照护者休息安排、突发情况应急预案：
+stage:
+  layout: dock
+  panel: coach

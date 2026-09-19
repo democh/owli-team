@@ -1,0 +1,25 @@
+{
+  "id": "brainstorm-roundtable",
+  "name": "头脑风暴：圆桌创意发散与收敛",
+  "participants": ["facilitator", "ideator", "challenger", "refiner"],
+  "prompt": "圆桌议题：怎么把「收藏」做得更有记忆点？先求量后收敛，团队依次接力：先发散一轮点子，再挑战假设，最后用评分矩阵收敛出创意方案。",
+  "maxTurns": 6,
+  "assertions": [
+    { "type": "artifact_exists", "path": "docs/创意方案-收藏.md" },
+    { "type": "artifact_exists", "path": "docs/点子池-收藏.md" },
+    { "type": "artifact_exists", "path": "docs/红队报告-收藏.md" },
+    { "type": "artifact_exists", "path": "docs/评分矩阵-收藏.md" },
+    { "type": "artifact_contains", "path": "docs/创意方案-收藏.md", "text": "议题卡" },
+    { "type": "artifact_contains", "path": "docs/评分矩阵-收藏.md", "text": "ICE" },
+    { "type": "handoff_targets", "values": ["ideator", "challenger", "refiner"] },
+    { "type": "turns_lte", "value": 5 },
+    { "type": "no_loop" },
+    { "type": "token_budget_ok" },
+    { "type": "run_end_reason", "value": "completed" },
+    {
+      "type": "judge",
+      "rubric": "头脑风暴产出必须体现「先发散后收敛」：点子池含量化候选创意；红队报告先复述最强版本再攻击关键假设；评分矩阵用 ICE 口径收敛出最小可行范围。",
+      "minScore": 7
+    }
+  ]
+}

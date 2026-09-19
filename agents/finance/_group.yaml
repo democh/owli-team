@@ -1,0 +1,18 @@
+id: finance
+name: 财务法务
+description: 一人公司的钱与合规底座：财务测算与现金流、税务申报清单、合同审阅与风险边界
+icon: wallet
+theme: ["#10b981", "#34d399"]
+objective: 让每一笔钱算得清、报得对，让每份合同签得放心
+chain: [finance, tax, legal]
+order: 60
+guide: 提出一个财务、税务或法务问题
+agenda:
+  - label: 费用测算
+    prompt: 帮我测算下面这项支出的成本与口径：
+  - label: 合同审查
+    prompt: 帮我审查这份合同，标出高风险条款与修改建议：
+  - label: 报表解读
+    prompt: 帮我解读这组财务数字背后的经营状况：
+  - label: 税务申报
+    prompt: 帮我梳理这个周期的税务申报清单与风险点：

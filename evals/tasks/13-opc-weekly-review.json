@@ -1,0 +1,26 @@
+{
+  "id": "opc-weekly-review",
+  "name": "OPC 周经营例会：四方汇报与收敛",
+  "participants": ["chief", "finance", "growth", "sales"],
+  "prompt": "主持本周经营例会：幕僚长开场定议程，财务给出测算与口径，增长汇报指标与实验结论，销售更新重点客户与回款风险，最后收敛为经营简报与下周优先级。",
+  "maxTurns": 6,
+  "assertions": [
+    { "type": "artifact_exists", "path": "docs/经营简报-增长.md" },
+    { "type": "artifact_exists", "path": "docs/财务测算-增长.md" },
+    { "type": "artifact_exists", "path": "docs/增长方案-增长.md" },
+    { "type": "artifact_exists", "path": "docs/销售话术-增长.md" },
+    { "type": "artifact_contains", "path": "docs/财务测算-增长.md", "text": "盈亏平衡点" },
+    { "type": "artifact_contains", "path": "docs/经营简报-增长.md", "text": "决策记录" },
+    { "type": "artifact_contains", "path": "docs/增长方案-增长.md", "text": "止损线" },
+    { "type": "handoff_targets", "values": ["growth", "finance", "sales"] },
+    { "type": "turns_lte", "value": 5 },
+    { "type": "no_loop" },
+    { "type": "token_budget_ok" },
+    { "type": "run_end_reason", "value": "completed" },
+    {
+      "type": "judge",
+      "rubric": "经营例会必须四方齐活：财务测算含口径与关键指标（含盈亏平衡点）；增长汇报指标与实验结论；销售更新重点客户与回款风险；幕僚长收敛出决策记录与下周优先级，数字口径一致可追溯。",
+      "minScore": 7
+    }
+  ]
+}

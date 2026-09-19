@@ -1,0 +1,22 @@
+id: sre
+name: 站点可靠性
+description: 生产可靠性：事故响应与止血、SLO 与错误预算、容量规划与无责复盘
+icon: activity
+theme: ["#84cc16", "#a3e635"]
+objective: 让每一次线上抖动都有证据、有处置、有归因
+chain: [sre]
+order: 15
+guide: 描述一次故障或要巡检的服务
+agenda:
+  - label: 故障响应
+    prompt: 线上出现这个问题，帮我做分级、给出止血步骤与影响面评估：
+  - label: 复盘归因
+    prompt: 帮我复盘这次故障：时间线、根因与带验收标准的改进项：
+  - label: 巡检加固
+    prompt: 帮我为这个服务做一轮可靠性巡检（SLO / 容量 / 告警）：
+  - label: SLO 设计
+    prompt: 帮我为这个服务设计 SLI / SLO 与错误预算口径：
+stage:
+  layout: dock
+  panel: console
+

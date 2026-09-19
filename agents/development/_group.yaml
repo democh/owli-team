@@ -1,0 +1,19 @@
+id: development
+name: 研发团队
+description: 需求到交付的完整研发接力链：产品澄清 → 架构设计 → 界面设计 → 前后端实现 → 测试验收 → 部署保障
+icon: code
+theme: ["#3b82f6", "#60a5fa"]
+objective: 把用户需求打磨成可落地、可验收的研发交付件
+chain: [pm, architect, designer, frontend, backend, qa, devops]
+parallel: false
+order: 10
+guide: 开始第一次研发接力
+agenda:
+  - label: 需求澄清
+    prompt: 帮我澄清这个需求，产出可验收的需求说明：
+  - label: 技术方案
+    prompt: 为下面这个功能出技术方案与架构设计（含关键决策与风险）：
+  - label: 排期估算
+    prompt: 评估这个任务的实现路径、依赖与工期：
+  - label: 缺陷修复
+    prompt: 帮我定位并修复这个缺陷，附最小复现与回归证据：

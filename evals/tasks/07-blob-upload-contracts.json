@@ -1,0 +1,17 @@
+{
+  "id": "blob-upload-contracts",
+  "name": "契约质量：上传接口与配套测试",
+  "participants": ["pm", "architect", "backend", "qa"],
+  "prompt": "请完成上传能力的核心契约：需求、架构、接口设计（含错误码与签名）、测试计划。",
+  "maxTurns": 8,
+  "assertions": [
+    { "type": "artifact_exists", "path": "docs/需求文档-上传.md" },
+    { "type": "artifact_exists", "path": "docs/架构设计-上传.md" },
+    { "type": "artifact_exists", "path": "docs/接口设计-上传.md" },
+    { "type": "artifact_contains", "path": "docs/接口设计-上传.md", "text": "40901" },
+    { "type": "artifact_contains", "path": "docs/接口设计-上传.md", "text": "签名" },
+    { "type": "handoff_targets", "values": ["architect", "backend", "qa"] },
+    { "type": "turns_lte", "value": 5 },
+    { "type": "run_end_reason", "value": "completed" }
+  ]
+}

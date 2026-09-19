@@ -1,0 +1,15 @@
+{
+  "id": "blank-scene",
+  "name": "空场景单助手直聊：独立完成并交还用户",
+  "participants": ["general"],
+  "prompt": "整理一份财务数据快报：营收 120 万、成本 68 万、现金流为正。",
+  "maxTurns": 4,
+  "assertions": [
+    { "type": "agent_spoke", "values": ["general"] },
+    { "type": "no_invite" },
+    { "type": "artifact_exists", "path": "docs/交付件-财务.md" },
+    { "type": "no_loop" },
+    { "type": "turns_lte", "value": 4 },
+    { "type": "run_end_reason", "value": "completed" }
+  ]
+}

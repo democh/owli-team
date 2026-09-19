@@ -1,0 +1,8 @@
+node_modules
+dist
+coverage
+data
+workspace
+evals/reports
+package-lock.json
+*.md

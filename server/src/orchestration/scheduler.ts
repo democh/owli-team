@@ -1,0 +1,291 @@
+/**
+ * 调度器（§5 / §29）：把波内各成员提议的转交裁决为「实际入手」，并规划下一波。
+ *
+ * 两个纯函数 + 一个波规划器：
+ * - planWave：从队首取本波成员（串行 = 1 位；显式触发 / 场景 parallel 时成波）；
+ * - decideHandoff：单成员提议裁决（参与者过滤 / 自续抑制 / 重复剔除）；
+ * - mergeWaveSchedule：波次合并（按波内顺序收集 accepted 并去重 → 下一波队列；
+ *   交还用户仅当全员交还且无被指名接手 / 被抑制；fallback 每 Run 一次，按编制顺序补齐）。
+ *
+ * 循环检测基于「波次签名序列」（签名 = 波成员排序拼接，并行波带 +）：
+ * - 单人连续 ≥3 波 / 两人交替 ≥4 波（rounds 场景放宽为 ≥6）→ 抑制并交还用户；
+ * - 内容级循环（M3/M16）：每波串联文本相邻 3-gram 重复率 > 0.85 连续 4 波 → 强制交还。
+ */
+
+/** 循环检测：最近 window 个签名中形成「两人交替（≥altThreshold）」或「同一签名反复（≥3）」即判定 */
+export function detectLoop(history: string[], window = 6, altThreshold = 4): boolean {
+  const recent = history.slice(-window)
+  if (recent.length < 3) return false
+  const distinct = new Set(recent)
+  if (distinct.size === 1) return recent.length >= 3
+  if (distinct.size === 2) {
+    let alternating = true
+    for (let i = 1; i < recent.length; i++) {
+      if (recent[i] === recent[i - 1]) {
+        alternating = false
+        break
+      }
+    }
+    return alternating && recent.length >= altThreshold
+  }
+  return false
+}
+
+/** 字符 3-gram 的 Dice 系数（中文按字符切分，无需分词）：1 = 完全相同 */
+export function trigramDice(a: string, b: string): number {
+  const norm = (s: string): string => s.replace(/\s+/g, ' ').trim().slice(0, 2000)
+  const na = norm(a)
+  const nb = norm(b)
+  if (na === nb) return 1
+  if (na.length < 3 || nb.length < 3) return 0
+  const grams = (s: string): Map<string, number> => {
+    const map = new Map<string, number>()
+    for (let i = 0; i + 3 <= s.length; i++) {
+      const g = s.slice(i, i + 3)
+      map.set(g, (map.get(g) ?? 0) + 1)
+    }
+    return map
+  }
+  const ga = grams(na)
+  const gb = grams(nb)
+  let intersection = 0
+  for (const [g, count] of ga) intersection += Math.min(count, gb.get(g) ?? 0)
+  let sumA = 0
+  let sumB = 0
+  for (const count of ga.values()) sumA += count
+  for (const count of gb.values()) sumB += count
+  return sumA + sumB === 0 ? 0 : (2 * intersection) / (sumA + sumB)
+}
+
+/** 内容级循环检测（M3）：最近 4 波串联文本相邻 3 对相似度均 > threshold → 判定为原地打转 */
+export function detectContentLoop(contents: string[], threshold = 0.85): boolean {
+  const recent = contents.filter((c) => c.trim().length > 0).slice(-4)
+  if (recent.length < 4) return false
+  for (let i = 1; i < recent.length; i++) {
+    if (trigramDice(recent[i - 1], recent[i]) <= threshold) return false
+  }
+  return true
+}
+
+/** 波次签名：波成员排序拼接（并行波带 +；串行波 = 成员 id 本身） */
+export function waveSignature(members: string[]): string {
+  return [...members].sort().join('+')
+}
+
+// ---------- 波规划（planWave） ----------
+
+export interface WaveGroupMeta {
+  id: string
+  /** 场景是否默认并行圆桌（_group.yaml parallel） */
+  parallel: boolean
+  /** 场景并行上限覆盖（_group.yaml parallelMax） */
+  parallelMax?: number
+}
+
+export interface PlanWaveInput {
+  /** 未出手队列（本波从队首取人） */
+  queue: string[]
+  groupOf: (agentId: string) => WaveGroupMeta | undefined
+  /** 全局并行上限（PARALLEL_MAX；=1 关闭并行） */
+  globalParallelMax: number
+  /** 显式触发并行（用户 @≥2 / handoff 多目标）：不要求同场景，直接取队首 */
+  forceParallel: boolean
+}
+
+export interface PlannedWave {
+  members: string[]
+  /** members.length > 1 即并行波 */
+  parallel: boolean
+}
+
+/**
+ * 波规划（§29 触发规则取并集；均不满足 = 串行单成员）：
+ * 1. 显式触发（forceParallel）→ 取队首最多 N 位（可跨场景混搭）；
+ * 2. 队首所属场景 parallel: true → 取队首连续同场景成员成波；
+ * 3. 其余 → 单成员串行。
+ */
+export function planWave(input: PlanWaveInput): PlannedWave {
+  const { queue, groupOf, globalParallelMax } = input
+  if (queue.length === 0) return { members: [], parallel: false }
+  const capOf = (sceneMax?: number): number => {
+    if (globalParallelMax <= 1) return 1 // PARALLEL_MAX=1：关闭并行
+    return Math.max(1, sceneMax ?? globalParallelMax)
+  }
+  if (input.forceParallel) {
+    const members = queue.slice(0, capOf(groupOf(queue[0])?.parallelMax))
+    return { members, parallel: members.length > 1 }
+  }
+  const group = groupOf(queue[0])
+  if (group?.parallel) {
+    const cap = capOf(group.parallelMax)
+    const members: string[] = []
+    for (const id of queue) {
+      if (groupOf(id)?.id !== group.id) break
+      members.push(id)
+      if (members.length >= cap) break
+    }
+    return { members, parallel: members.length > 1 }
+  }
+  return { members: [queue[0]], parallel: false }
+}
+
+// ---------- 单成员提议裁决（decideHandoff） ----------
+
+export interface DecideHandoffInput {
+  /** 解析出的候选成员（已剔除 'user' token，可能含不在场者） */
+  mentions: string[]
+  /** 行首 @用户 / handoff user（交还信号） */
+  handedToUser: boolean
+  participants: string[]
+  /** 刚发言者（自续抑制） */
+  currentAgentId: string
+}
+
+export interface HandoffDecision {
+  /** 守卫过滤后实际接手的成员（turn:end.mentions 的真实来源，§6.4） */
+  accepted: string[]
+  /** 解析出的交还信号（行首 @用户 / handoff user）；与成员接手的优先取舍在合并层裁决（ADR 0094） */
+  handedToUser: boolean
+  dropped: Array<{ id: string; reason: 'not-in-room' | 'self-continuous' | 'duplicate' }>
+}
+
+export function decideHandoff(input: DecideHandoffInput): HandoffDecision {
+  const { mentions, handedToUser, participants, currentAgentId } = input
+  const seen = new Set<string>()
+  const accepted: string[] = []
+  const dropped: HandoffDecision['dropped'] = []
+  for (const id of mentions) {
+    if (!participants.includes(id)) {
+      dropped.push({ id, reason: 'not-in-room' })
+      continue
+    }
+    if (id === currentAgentId) {
+      dropped.push({ id, reason: 'self-continuous' })
+      continue
+    }
+    if (seen.has(id)) {
+      dropped.push({ id, reason: 'duplicate' })
+      continue
+    }
+    seen.add(id)
+    accepted.push(id)
+  }
+  return { accepted, handedToUser, dropped }
+}
+
+// ---------- 波次合并（mergeWaveSchedule，fan-in） ----------
+
+export interface MergeWaveInput {
+  /** 波内各成员的裁决（按出手顺序） */
+  decisions: Array<HandoffDecision & { agentId: string }>
+  participants: string[]
+  /** 本波开始前的剩余队列（波内成员已出队） */
+  queue: string[]
+  /** 已完成波次的签名序列（含本波签名） */
+  signatures: string[]
+  /** 每波串联文本（含本波；内容级循环检测输入） */
+  waveTexts: string[]
+  /** 本 Run 已发言成员（含本波） */
+  spoken: string[]
+  fallbackUsed: boolean
+  /** 场景 rounds：交替阈值放宽 4 → 6 */
+  rounds: boolean
+}
+
+export interface MergeWaveResult {
+  /** 每成员实际接手（turn:end.mentions 数据源；交还用户 = ['user']） */
+  acceptedByAgent: Array<{ agentId: string; accepted: string[] }>
+  /** 下一波队列 */
+  queue: string[]
+  handedToUser: boolean
+  fallbackUsed: boolean
+  loopSuppressed: boolean
+  /** 任一成员给出多目标 → 下一波并行（fan-out 意图） */
+  forceNextParallel: boolean
+  dropped: Array<{ id: string; reason: string; by: string }>
+}
+
+export function mergeWaveSchedule(input: MergeWaveInput): MergeWaveResult {
+  const { decisions, participants, signatures, waveTexts, spoken, rounds } = input
+  // 波内按顺序收集 accepted 并去重 → 下一波队列
+  // 先收集再判交还：同一条消息可以「先派发成员、再 @用户 报备」（如调度官派发后告知用户稍后汇总），
+  // 此时派发必须优先——`@用户` 只是报备，绝不吞掉同条消息的成员接手（M46-2 历史缺陷：单成员波被误判全员交还，派发被静默丢弃）
+  const acceptedAll: string[] = []
+  for (const d of decisions) {
+    for (const id of d.accepted) {
+      if (!acceptedAll.includes(id)) acceptedAll.push(id)
+    }
+  }
+  // 每成员实际接手（turn:end.mentions 数据源）：有明确接手成员时以成员为准，仅纯 @用户 才标注 ['user']
+  const acceptedByAgent = decisions.map((d) => ({
+    agentId: d.agentId,
+    accepted: d.accepted.length > 0 ? [...d.accepted] : d.handedToUser ? ['user'] : [],
+  }))
+  /** 波级交还（全员交还 / 循环抑制 / 兜底无候选）：全员统一标注 ['user']（turn:end 与图谱口径） */
+  const handedByAgent = decisions.map((d) => ({ agentId: d.agentId, accepted: ['user'] }))
+  const dropped = decisions.flatMap((d) => d.dropped.map((x) => ({ ...x, by: d.agentId })))
+
+  // 全员交还「且本波无任何成员接手」→ 收尾交还用户（部分交还视为不交还：Run 继续消费成员接手）
+  const allHanded =
+    decisions.length > 0 && decisions.every((d) => d.handedToUser) && acceptedAll.length === 0
+  if (allHanded) {
+    return {
+      acceptedByAgent: handedByAgent,
+      queue: [],
+      handedToUser: true,
+      fallbackUsed: input.fallbackUsed,
+      loopSuppressed: false,
+      forceNextParallel: false,
+      dropped,
+    }
+  }
+
+  const queue = [...input.queue]
+  for (const id of acceptedAll) {
+    if (!queue.includes(id)) queue.push(id)
+  }
+
+  let handedToUser = false
+  let loopSuppressed = false
+  // 循环检测：签名序列 + 拟新增接手将形成 A/B 交替或反复 → 抑制并交还
+  if (acceptedAll.length > 0 && detectLoop([...signatures, ...acceptedAll], 6, rounds ? 6 : 4)) {
+    loopSuppressed = true
+    handedToUser = true
+  }
+  // 内容级循环：每波串联文本相邻比较（避免同波正常相似被误判）
+  if (!handedToUser && detectContentLoop(waveTexts)) {
+    loopSuppressed = true
+    handedToUser = true
+  }
+
+  let fallbackUsed = input.fallbackUsed
+  if (!handedToUser && queue.length === 0) {
+    // 收尾兜底：全员沉默/弹尽且无接手 → 按编制顺序（participants）找一位未发言者（整 Run 仅一次）
+    if (!fallbackUsed) {
+      const next = participants.find((id) => !spoken.includes(id))
+      if (next) {
+        queue.push(next)
+        fallbackUsed = true
+      } else {
+        handedToUser = true
+      }
+    } else {
+      handedToUser = true
+    }
+  }
+
+  if (handedToUser) {
+    return {
+      acceptedByAgent: handedByAgent,
+      queue: [],
+      handedToUser: true,
+      fallbackUsed,
+      loopSuppressed,
+      forceNextParallel: false,
+      dropped,
+    }
+  }
+  // handoff 多目标（≥2 位成员）→ 下一波并行
+  const forceNextParallel = decisions.some((d) => d.accepted.length >= 2)
+  return { acceptedByAgent, queue, handedToUser: false, fallbackUsed, loopSuppressed, forceNextParallel, dropped }
+}

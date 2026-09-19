@@ -1,0 +1,27 @@
+{
+  "id": "career",
+  "name": "职业发展：转型定位 × 简历打磨 × 模拟面试 × offer 评估",
+  "participants": ["career-advisor", "resume-coach", "interview-coach", "comp-advisor"],
+  "prompt": "我要准备一次职业转型求职：从互联网运营转产品经理（5 年经验）。@程途 先做定位与路径规划（含技能差距清单）；@履新 按目标岗位把简历改写并由我核对真实性；@问达 组织一场模拟面试（默认 3 轮）并给复盘；@薪言 做 offer 评估与谈薪策略。",
+  "maxTurns": 8,
+  "assertions": [
+    { "type": "artifact_exists", "path": "docs/职业规划-求职.md" },
+    { "type": "artifact_exists", "path": "docs/简历-求职.md" },
+    { "type": "artifact_exists", "path": "docs/面试手册-求职.md" },
+    { "type": "artifact_exists", "path": "docs/offer评估-求职.md" },
+    { "type": "artifact_contains", "path": "docs/职业规划-求职.md", "text": "技能差距清单" },
+    { "type": "artifact_contains", "path": "docs/简历-求职.md", "text": "真实性核对" },
+    { "type": "artifact_contains", "path": "docs/面试手册-求职.md", "text": "反问清单" },
+    { "type": "artifact_contains", "path": "docs/offer评估-求职.md", "text": "谈判策略" },
+    { "type": "handoff_targets", "values": ["resume-coach", "interview-coach", "comp-advisor"] },
+    { "type": "turns_lte", "value": 5 },
+    { "type": "no_loop" },
+    { "type": "token_budget_ok" },
+    { "type": "run_end_reason", "value": "completed" },
+    {
+      "type": "judge",
+      "rubric": "职业陪跑须完整：定位分析覆盖现状（优势 / 约束）/ 目标 / 差距三要素，路径 2-3 条带里程碑与可行性依据；简历按 STAR 化改写、成果量化且真实性逐条核对（不新增未确认事实，待确认项列明）；模拟面试按目标岗位考察维度出题、逐轮点评给「考察点 + 改进建议」，复盘列薄弱点与补强动作、反问清单可直接使用；offer 评估拆解现金 / 权益 / 稳定性并给出谈判策略三要素（目标 / 底线 / 交换项）与决策框架；全程候选人视角、不替用户拍板，模拟彩排与参考口径均有声明（非真实录用评价 / 非职业决策）。",
+      "minScore": 7
+    }
+  ]
+}

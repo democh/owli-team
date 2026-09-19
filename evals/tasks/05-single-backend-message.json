@@ -1,0 +1,15 @@
+{
+  "id": "single-backend-message",
+  "name": "单角色闭环：消息接口设计",
+  "participants": ["backend"],
+  "prompt": "请独立完成消息模块的接口设计交付件，包含端点、错误码、幂等与安全约定。",
+  "maxTurns": 4,
+  "assertions": [
+    { "type": "artifact_exists", "path": "docs/接口设计-消息.md" },
+    { "type": "artifact_contains", "path": "docs/接口设计-消息.md", "text": "Idempotency-Key" },
+    { "type": "turns_lte", "value": 2 },
+    { "type": "no_loop" },
+    { "type": "token_budget_ok" },
+    { "type": "run_end_reason", "value": "completed" }
+  ]
+}

@@ -1,0 +1,42 @@
+# ADR 0126：成员展示去重——标题栏头像组移除 · 输入条成员条席位让位
+
+- 状态：Accepted
+- 引入：M52-G
+- 相关：[design.md §78](../design.md)、ADR 0112（场景工作区体系）、[client/src/components/chat/ChatArea.tsx](../../client/src/components/chat/ChatArea.tsx)、[client/src/components/chat/Composer.tsx](../../client/src/components/chat/Composer.tsx)、[client/src/components/scene/resolve.ts](../../client/src/components/scene/resolve.ts)
+
+## 背景
+
+- 用户实测截图（谈判 arena 场景）红框标注两处成员表达并追问「是不是重复了，且输入框中的有必要展示吗」——① ChatArea 标题栏右侧头像组（`participants.slice(0, 7)` 纯装饰：无交互、无状态）；② 输入条上方成员条（M11 指挥台 chips：点击 @ 召唤 / 发言状态点 / 排队角标 / 新成员高亮）；
+- M52 场景工作区体系（ADR 0112）落地后，arena 席位卡 / roundtable 席位环同样承载「点击 @ 召唤 + speaking/waiting 状态」——同一会话内成员被三处重复表达（信息架构冗余 + 视觉噪声）；
+- 边界：stream / dock 等无席位载体场景，输入条成员条仍是唯一常驻成员入口；窄屏 BottomMemberBar 与右栏 TeamPanel 各有其形态职能，不在本批范围。
+
+## 决策
+
+1. **标题栏头像组删除**：纯装饰（无交互 / 无状态），与场景席位 / 成员条构成三重冗余——直接移除，注释留档锚点。
+2. **输入条成员条「席位覆盖时隐藏」**（`poolHidden`，Composer 内 useMemo 派生）：
+   - 参与者为空（回退全部 agents 形态）不隐藏；
+   - 取首个参与者所属场景组解析 `resolveStage(group?.stage, { listMode })`（与 SceneStage 渲染同源，单一事实来源）；listMode / fallback（未声明 / 非法 / arena 缺席位 / 纯列表）→ 不隐藏；
+   - roundtable（席位环恒展示全员）→ 隐藏；arena → 参与者**全部入席**（left / right / center 并集）才隐藏（有未入席成员保留——保证新成员可见可召唤）；
+   - 渲染条件仅加 `!poolHidden` 一项：@ 菜单、插入链路、状态点与排队角标逻辑零改动。
+3. **窄屏 BottomMemberBar 与右栏 TeamPanel 不动**（各自形态的成员入口，不参与本批收口）。
+
+## 理由
+
+- **按信息增量决定去留**：席位卡承载「谁在哪个席 + 是否在发言」的结构化信息 + @ 召唤交互，是成员条信息的严格超集；标题栏头像组则无任何增量（纯装饰）；
+- **「覆盖才让位」而非「有席位就让位」**：arena 席位只列编制内的席，运行期新入队 / 未入席成员若被隐藏将失去可见性与 @ 召唤入口——全员入席判定守住「成员入口不缺失」底线；
+- **输入条是兜底主入口**：stream / dock / 纯列表（listMode）/ 未声明 stage 的场景全部照常展示，改动面收敛在「席位已完整表达同一信息」的窄条件内；
+- **纯前端派生**：判定复用 `resolveStage` 纯函数（与场景渲染同源），不新增 store / 协议 / 服务端字段，零 agents 资产变更。
+
+## 被否决的方案
+
+- **保留标题栏头像组并改为可点击 @**：与席位 / 成员条交互重复，标题栏空间有限（截断叠层）——不如直接移除；
+- **只要 arena 就隐藏成员条**：席位未覆盖全员时（新成员 / 编制外参与者）成员失去入口，功能倒退；
+- **有 stage 即隐藏（含 dock）**：dock 形态 stage 不含席位语义，隐藏将失去唯一常驻成员入口；
+- **删除成员条组件（收口到席位单入口）**：stream / dock / 纯列表场景无席位载体，成员管理彻底失入口——收口过猛；
+- **同步收口 BottomMemberBar / TeamPanel**：窄屏无席位可见性、右栏有管理职能，与「重复表达」不同构，本批不动。
+
+## 适用与失效条件
+
+- 适用：有场景席位载体（arena 全员入席 / roundtable）的会话——输入条成员条自动让位；其余场景照常展示；标题栏头像组全局移除（所有会话形态）；
+- 失效条件：若席位组件未来不再承载 @ 召唤 / 发言状态（交互能力收缩），成员条让位判定须同步撤销；成员条新增独有信息（如技能快捷插入）时判定口径需重审；
+- 已知边界：判定取首个参与者所属组解析 stage——同会话混合组参与者的非常规编制以首组为准；`listMode`（切回纯列表）恒不隐藏。

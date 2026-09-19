@@ -1,0 +1,21 @@
+/**
+ * M52-A：场景元件库汇总（§7.6 12 件）——注册表与面板按名引用。
+ */
+export { RoundTrack } from './RoundTrack'
+export { Scoreboard } from './Scoreboard'
+export { SeatCard } from './SeatCard'
+export { SeatRing } from './SeatRing'
+export { MomentumBar } from './MomentumBar'
+export { ClaimTree } from './ClaimTree'
+export type { ClaimNode, ClaimReason } from './ClaimTree'
+export { AgendaTrack } from './AgendaTrack'
+export type { AgendaStep } from './AgendaTrack'
+export { KanbanBoard } from './KanbanBoard'
+export type { KanbanCard, KanbanColumn } from './KanbanBoard'
+export { ProgressRing, CheckGrid } from './ProgressGrid'
+export type { CheckCell } from './ProgressGrid'
+export { DeliveryPanel } from './DeliveryPanel'
+export type { DeliveryItem } from './DeliveryPanel'
+export { VerdictPart } from './VerdictPart'
+export { PanBoard } from './PanBoard'
+export type { PanChart } from './PanBoard'

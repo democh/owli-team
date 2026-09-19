@@ -1,0 +1,21 @@
+{
+  "id": "full-relay-login",
+  "name": "全链路接力：登录需求到部署",
+  "participants": ["pm", "architect", "designer", "frontend", "backend", "qa", "devops"],
+  "prompt": "请团队接力完成登录能力的完整交付：需求梳理 → 架构设计 → 交互设计 → 前端实现说明 → 接口设计 → 测试计划 → 部署说明。每个角色请把产出落到工作区交付件里。",
+  "maxTurns": 12,
+  "assertions": [
+    { "type": "artifact_exists", "path": "docs/需求文档-登录.md" },
+    { "type": "artifact_exists", "path": "docs/架构设计-登录.md" },
+    { "type": "artifact_exists", "path": "docs/交互设计-登录.md" },
+    { "type": "artifact_exists", "path": "web/src/README-实现说明.md" },
+    { "type": "artifact_exists", "path": "docs/接口设计-登录.md" },
+    { "type": "artifact_exists", "path": "docs/测试计划-登录.md" },
+    { "type": "artifact_exists", "path": "deploy/部署说明-登录.md" },
+    { "type": "handoff_targets", "values": ["architect", "frontend", "qa", "devops", "designer", "backend"] },
+    { "type": "no_loop" },
+    { "type": "turns_lte", "value": 8 },
+    { "type": "run_end_reason", "value": "completed" },
+    { "type": "token_budget_ok" }
+  ]
+}

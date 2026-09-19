@@ -1,0 +1,27 @@
+{
+  "id": "metaphysics",
+  "name": "命理占星：四柱 × 紫微 × 本命盘三盘合参",
+  "participants": ["bazi", "ziwei", "natal"],
+  "prompt": "想看事业前程（传统文化研习视角，先盘后论）：@观复 先排四柱命盘（含真太阳时校正说明与校正告警）；@星垣 排紫微命盘，与八字盘合参（时辰敏感处标注）；@司辰 排西方本命盘（元素模式与关键格局）；三盘互参给参考区间，术语附白话释义。",
+  "maxTurns": 6,
+  "assertions": [
+    { "type": "artifact_exists", "path": "docs/八字命盘-前程.md" },
+    { "type": "artifact_exists", "path": "docs/紫微命盘-前程.md" },
+    { "type": "artifact_exists", "path": "docs/本命盘报告-前程.md" },
+    { "type": "artifact_contains", "path": "docs/八字命盘-前程.md", "text": "排盘参数与校正告警" },
+    { "type": "artifact_contains", "path": "docs/八字命盘-前程.md", "text": "参考声明" },
+    { "type": "artifact_contains", "path": "docs/紫微命盘-前程.md", "text": "十二宫与命身宫" },
+    { "type": "artifact_contains", "path": "docs/本命盘报告-前程.md", "text": "相位与平衡" },
+    { "type": "artifact_contains", "path": "docs/本命盘报告-前程.md", "text": "参考声明" },
+    { "type": "handoff_targets", "values": ["ziwei", "natal"] },
+    { "type": "turns_lte", "value": 4 },
+    { "type": "no_loop" },
+    { "type": "token_budget_ok" },
+    { "type": "run_end_reason", "value": "completed" },
+    {
+      "type": "judge",
+      "rubric": "命理占星协作须守住表述纪律：三类盘面均先给排盘参数（真太阳时校正 / 时辰敏感 / 宫位制与 orb 口径）再谈解读，先盘后论；每条判断可指认盘面位置（柱位 / 宫位 / 相位）；解读给「参考区间」与结构观察，不做结论性建议（婚育 / 生死 / 投资 / 医疗 / 法律一律不出口）；不承诺预测准确、不使用恐吓话术与付费化解暗示；术语附白话释义；三盘互参时线索并列呈现、不硬断；生辰隐私仅用于本次排盘、不扩散。",
+      "minScore": 7
+    }
+  ]
+}

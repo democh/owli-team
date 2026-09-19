@@ -1,0 +1,18 @@
+{
+  "id": "platform-routing",
+  "name": "零选择开场：平台自动组队并派发研发委托",
+  "participants": [],
+  "prompt": "帮我做一个登录功能，请组织团队完成从需求到测试的完整交付。",
+  "maxTurns": 8,
+  "assertions": [
+    { "type": "agent_spoke", "values": ["pm", "architect", "qa"] },
+    { "type": "invited_members", "values": ["pm", "architect", "qa"] },
+    { "type": "handoff_targets", "values": ["architect", "qa"] },
+    { "type": "artifact_exists", "path": "docs/需求文档-登录.md" },
+    { "type": "artifact_exists", "path": "docs/架构设计-登录.md" },
+    { "type": "artifact_exists", "path": "docs/测试计划-登录.md" },
+    { "type": "no_loop" },
+    { "type": "turns_lte", "value": 8 },
+    { "type": "run_end_reason", "value": "completed" }
+  ]
+}

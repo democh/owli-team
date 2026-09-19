@@ -1,0 +1,22 @@
+id: sales
+name: 销售客户
+description: 从线索到复购的客户经营闭环：话术与报价、客户成功陪跑、客服 SOP 与问题闭环，每条线索都有下一动作
+icon: handshake
+theme: ["#14b8a6", "#2dd4bf"]
+objective: 让每个线索都有下一动作，让每个客户都感受到被照顾
+chain: [sales, success, support]
+order: 50
+guide: 推进一个客户或线索
+agenda:
+  - label: 客户跟进
+    prompt: 帮我为这个客户制定下一步跟进动作（含话术要点与时间点）：
+  - label: 话术打磨
+    prompt: 帮我打磨针对这个客户的沟通话术与异议应对：
+  - label: 异议处理
+    prompt: 客户提出了这些异议，帮我准备应对：
+  - label: 报价条款
+    prompt: 帮我为这个客户出一版报价与商务条款（含折扣边界与测算）：
+stage:
+  layout: dock
+  panel: console
+

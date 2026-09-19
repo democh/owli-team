@@ -1,0 +1,25 @@
+{
+  "id": "negotiation",
+  "name": "谈判桌：三桩立锚 × 对手还价 × 教练复盘",
+  "participants": ["negotiator", "counterpart", "tactician"],
+  "prompt": "模拟一轮供应商合同续约谈判（默认 1 轮练习）。@谭成 先立三桩（目标 / 底线 / BATNA）并按行情出首锚；@祁弈 按设定立场还价且无对价不让步；@苏纵 逐轮复盘（成交区间 / 得失评分 / 失误清单）并给下一步建议。",
+  "maxTurns": 6,
+  "assertions": [
+    { "type": "artifact_exists", "path": "docs/谈判策略-合同.md" },
+    { "type": "artifact_exists", "path": "docs/对手档案-合同.md" },
+    { "type": "artifact_exists", "path": "docs/谈判复盘-合同.md" },
+    { "type": "artifact_contains", "path": "docs/谈判策略-合同.md", "text": "BATNA" },
+    { "type": "artifact_contains", "path": "docs/谈判策略-合同.md", "text": "让步阶梯" },
+    { "type": "artifact_contains", "path": "docs/对手档案-合同.md", "text": "模拟声明" },
+    { "type": "artifact_contains", "path": "docs/谈判复盘-合同.md", "text": "成交区间" },
+    { "type": "handoff_targets", "values": ["counterpart", "tactician"] },
+    { "type": "turns_lte", "value": 4 },
+    { "type": "no_loop" },
+    { "type": "run_end_reason", "value": "completed" },
+    {
+      "type": "judge",
+      "rubric": "谈判桌须完整：三桩（目标/底线/BATNA）先行且量化；首锚有行情依据并给出让步阶梯（幅度递减、每步绑换取条件）；对手按设定立场还价、无对价不让步；复盘给出成交区间（ZOPA）判断、得失评分与失误清单及下一步建议，并含模拟声明（不影射真实个人）。",
+      "minScore": 7
+    }
+  ]
+}

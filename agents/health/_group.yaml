@@ -1,0 +1,24 @@
+id: health
+name: 健康生活
+description: 训练、饮食与作息的日常管家：一周计划、配比测算、作息调整与打卡复盘，计划可执行、进度可追踪
+icon: heart-pulse
+theme: ["#ef4444", "#f87171"]
+objective: 让健康习惯可持续：训练有计划、饮食有配比、作息有节奏
+chain: [fitness, nutrition, wellness]
+parallel: true
+parallelMax: 3
+order: 90
+guide: 说说你的健康目标与现状
+agenda:
+  - label: 训练计划
+    prompt: 帮我制定一周的训练计划（含强度与恢复安排）：
+  - label: 饮食配比
+    prompt: 帮我搭配适合我的饮食方案（含热量与营养配比）：
+  - label: 作息调整
+    prompt: 帮我调整作息，改善睡眠质量：
+  - label: 打卡复盘
+    prompt: 帮我复盘这周的训练与饮食执行，给出下周调整：
+stage:
+  layout: dock
+  panel: coach
+

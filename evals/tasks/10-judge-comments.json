@@ -1,0 +1,19 @@
+{
+  "id": "judge-comments",
+  "name": "质量评分：评论需求文档（judge）",
+  "participants": ["pm", "architect", "qa"],
+  "prompt": "请三人小组完成评论功能的需求、架构与测试计划；需求文档需包含背景、用户故事与可执行的验收标准。",
+  "maxTurns": 6,
+  "assertions": [
+    { "type": "artifact_exists", "path": "docs/需求文档-评论.md" },
+    { "type": "artifact_contains", "path": "docs/需求文档-评论.md", "text": "验收标准" },
+    { "type": "handoff_targets", "values": ["architect", "qa"] },
+    { "type": "turns_lte", "value": 4 },
+    { "type": "run_end_reason", "value": "completed" },
+    {
+      "type": "judge",
+      "rubric": "需求文档必须包含明确的用户故事与可执行验收标准；架构与测试计划与需求直接对应，无空话。",
+      "minScore": 7
+    }
+  ]
+}

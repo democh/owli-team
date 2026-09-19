@@ -1,0 +1,22 @@
+id: travel
+name: 出行旅行
+description: 行程规划与出行清单：路线编排、预算测算、证件签证与打包清单，一样不落
+icon: plane
+theme: ["#06b6d4", "#22d3ee"]
+objective: 产出一份可以直接照着走的行程计划
+chain: [travel]
+order: 94
+guide: 说说这次出行的想法（目的地 / 天数 / 预算）
+agenda:
+  - label: 行程规划
+    prompt: 帮我规划一次旅行行程（含每天的路线与节奏）：
+  - label: 交通住宿
+    prompt: 帮我比较交通与住宿的选择，给出性价比排序：
+  - label: 行前清单
+    prompt: 帮我列一份出行前的准备清单：
+  - label: 预算测算
+    prompt: 帮我测算这次出行的总预算与省钱空间：
+stage:
+  layout: dock
+  panel: coach
+

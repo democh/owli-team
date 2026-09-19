@@ -1,0 +1,24 @@
+id: gamedesign
+name: 游戏工坊
+description: 游戏内容设计：玩法 / 数值 / 叙事 / 玩法验证；产出 GDD 等设计件（与写代码的 development 区隔）
+icon: flame
+theme: ["#7c3aed", "#ec4899"]
+objective: 从玩法点子到可验证的设计文档：核心循环成立、数值不崩、叙事自洽
+chain: [game-designer, balance-designer, narrative-designer, playtester]
+rounds: false
+parallel: true
+parallelMax: 3
+order: 108
+guide: 说说想做的游戏：类型、平台、核心体验
+agenda:
+  - label: 立项与核心循环
+    prompt: 围绕下面这个游戏点子立项：定义核心循环、目标玩家与体验支柱（玩法 / 数值 / 叙事三路并行展开设计）：
+  - label: 设计数值体系
+    prompt: 为下面这个玩法设计数值体系：成长曲线、经济循环与平衡表（附模拟验算口径与可调参数）：
+  - label: 搭建世界观
+    prompt: 为下面这个游戏搭建世界观：世界设定、关键角色与剧情线（与玩法机制咬合）：
+  - label: 模拟验证平衡
+    prompt: 对下面这版设计做玩法验证：模拟对局验证平衡与上手体验，输出测试报告与调整建议：
+stage:
+  layout: dock
+  panel: board

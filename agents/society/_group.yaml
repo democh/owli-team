@@ -1,0 +1,24 @@
+id: society
+name: 议题圆桌
+description: 社会议题多方研讨：事实基线 + 立场图谱 + 政策伦理视角，记录共识与分歧；聚焦民生 / 科技 / 文化 / 环境等非政治敏感议题，不作意识形态输出、不煽动对立
+icon: globe
+theme: ["#0ea5e9", "#14b8a6"]
+objective: 把一个议题看清楚：事实是什么、各方关切是什么、可行的中间路径在哪
+chain: [moderator, fact-checker, stakeholder, policy-advisor]
+rounds: true
+parallel: true
+parallelMax: 2
+order: 106
+guide: 抛出一个议题，我们多视角研讨
+agenda:
+  - label: 组织议题研讨
+    prompt: 围绕下面这个议题组织一场多方研讨（默认 3 轮：事实核查与各方立场梳理并行展开、政策伦理视角补位，主持人收口观察报告）：
+  - label: 核查一组说法
+    prompt: 核查下面这组说法：逐条给出事实基线（来源分级 / 核验状态），标出存疑与不确定项：
+  - label: 梳理各方立场
+    prompt: 梳理下面这个话题中各利益相关方的立场：核心主张、真实关切与被忽视的视角：
+  - label: 对比政策做法
+    prompt: 对比下面这个议题的政策做法与国际经验：政策工具、公平 / 权利 / 后果框架与可行建议区间：
+stage:
+  layout: roundtable
+  panel: pool

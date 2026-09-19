@@ -1,0 +1,27 @@
+{
+  "id": "bull-bear-duel",
+  "name": "多空对弈：三路交锋 × 量化走子 × 终局裁决",
+  "participants": ["invest-lead", "analyst-fa", "analyst-ta", "analyst-news", "quant"],
+  "prompt": "组织一轮多空对弈（围绕增长与估值的对抗推演，默认 3 轮）：@秦砚 持多方立论，@雷动 持空方立论，每轮挂证据与置信度并回应对方论据；@闻笛 汇拢双方证据弹药（附信源等级），随后由方程逐轮量化走子、主管终局裁决（胜负 + 置信度 + 核心依据 + 翻盘条件）。",
+  "maxTurns": 9,
+  "assertions": [
+    { "type": "artifact_exists", "path": "docs/基本面分析-增长.md" },
+    { "type": "artifact_exists", "path": "docs/技术面分析-增长.md" },
+    { "type": "artifact_exists", "path": "docs/舆情简报-增长.md" },
+    { "type": "artifact_exists", "path": "docs/博弈推演-增长.md" },
+    { "type": "artifact_exists", "path": "docs/投研报告-增长.md" },
+    { "type": "artifact_contains", "path": "docs/博弈推演-增长.md", "text": "翻盘条件" },
+    { "type": "artifact_contains", "path": "docs/博弈推演-增长.md", "text": "模型推演" },
+    { "type": "artifact_contains", "path": "docs/投研报告-增长.md", "text": "免责声明" },
+    { "type": "handoff_targets", "values": ["quant", "invest-lead"] },
+    { "type": "turns_lte", "value": 7 },
+    { "type": "no_loop" },
+    { "type": "token_budget_ok" },
+    { "type": "run_end_reason", "value": "completed" },
+    {
+      "type": "judge",
+      "rubric": "多空对弈须完整：多方与空方各自立论并挂证据与置信度、相互回应对方论据；证据弹药按信源等级归堆；量化走子给出博弈模型结论要点与参数口径（含快照与「模型推演，非预测」标注）；主管终局裁决给出胜负（多/空/僵持）+ 置信度 + 核心依据 + 翻盘条件。全程不出现涨跌承诺与点位预测。",
+      "minScore": 7
+    }
+  ]
+}

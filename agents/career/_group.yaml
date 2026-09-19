@@ -1,0 +1,22 @@
+id: career
+name: 职业发展
+description: 求职全流程：职业定位 → 简历打磨 → 模拟面试 → offer 谈判；求职者视角（与招聘方视角的 recruiter 区隔）
+icon: target
+theme: ["#0f766e", "#2dd4bf"]
+objective: 从「我想换工作」到「拿到并谈好 offer」的完整陪跑
+chain: [career-advisor, resume-coach, interview-coach, comp-advisor]
+parallel: false
+order: 112
+guide: 说说你的求职方向与现状
+agenda:
+  - label: 职业定位与路径
+    prompt: 帮我理清职业定位与路径：目标方向、优势与差距、转行（或进阶）的可行路线：
+  - label: 打磨简历
+    prompt: 优化我的简历：按 STAR 化改写经历、突出成果与匹配度（只用真实经历）：
+  - label: 模拟一轮面试
+    prompt: 按下面这个岗位做一轮模拟面试：逐轮提问 + 复盘点评（问题背后的考察点与改进项）：
+  - label: 评估与谈 offer
+    prompt: 评估下面这个 offer 并定谈薪策略：薪资结构拆解、市场对标与谈判空间（含彩排建议）：
+stage:
+  layout: dock
+  panel: coach

@@ -1,0 +1,26 @@
+id: negotiation
+name: 谈判桌
+description: 利益博弈 PK：目标 / 底线 / BATNA 设定，多轮出价与让步，教练旁观复盘；真实谈判前的彩排场
+icon: handshake
+theme: ["#f59e0b", "#8b5cf6"]
+objective: 在不破裂的前提下逼近对方底线，拿到可落地的成交区间
+chain: [negotiator, counterpart, tactician]
+rounds: true
+parallel: false
+order: 104
+guide: 说说你要谈的事：谈什么、对方是谁、你的底线
+agenda:
+  - label: 彩排一轮谈判
+    prompt: 围绕下面这件事组织一场谈判彩排（严格轮流出价，默认 3 轮：我方定策略并出价、对方真实还价、教练复盘点拨）：
+  - label: 定谈判策略
+    prompt: 帮我把谈判策略定下来（目标 / 底线 / BATNA / 出价序列与让步节奏），暂不模拟对方：
+  - label: 模拟对手还价
+    prompt: 按我给的对手设定模拟一轮还价（强硬 / 拖延 / 情绪型任选其一），我要练应对：
+  - label: 复盘上次谈判
+    prompt: 复盘上一次谈判：锚定在哪一步被拉走、哪些让步不必要、ZOPA 实际落在哪、下一步怎么调整：
+stage:
+  layout: arena
+  seats:
+    left: [negotiator]
+    right: [counterpart]
+    center: [tactician]

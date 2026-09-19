@@ -1,0 +1,25 @@
+id: marketing
+name: 市场增长
+description: 从获客到复购的增长引擎：目标拆解、内容产销、搜索投放、品牌物料与效果复盘，每个动作都挂在指标与止损线上
+icon: trending-up
+theme: ["#f43f5e", "#fb7185"]
+objective: 用可量化的实验和内容，把产品卖点变成稳定的获客与转化
+chain: [growth, content, seo, brand]
+defaultSkills: [content-marketing]
+parallel: true
+parallelMax: 3
+order: 40
+guide: 提出一个增长目标或营销议题
+agenda:
+  - label: 内容选题
+    prompt: 围绕这个产品卖点出一组内容选题与发布日历：
+  - label: 投放实验
+    prompt: 帮我设计一个小预算增长实验（含指标、预算与止损线）：
+  - label: 渠道分析
+    prompt: 分析这几条获客渠道的性价比，给出预算分配建议：
+  - label: 品牌物料
+    prompt: 帮我产出这轮活动的品牌物料规范与文案：
+stage:
+  layout: dock
+  panel: console
+
