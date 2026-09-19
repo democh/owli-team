@@ -7,6 +7,7 @@ import * as React from 'react'
 import { useAgentStore } from '../../stores/agent-store'
 import { useSessionStore } from '../../stores/session-store'
 import type { RailItem } from '../../lib/chat-rows'
+import { labelOfMemberKey } from '../../lib/members'
 import { cn } from '../../lib/utils'
 
 const THROTTLE_MS = 500
@@ -30,6 +31,8 @@ export function MessageRail({
   onJump: (id: string) => void
 }): React.JSX.Element | null {
   const agents = useAgentStore((s) => s.agents)
+  // M77：导航条署名按成员实例（分身 = 名字·灵魂名）
+  const session = useSessionStore((s) => s.sessions.find((x) => x.id === s.currentId))
   const [dots, setDots] = React.useState<Set<number>>(() => new Set())
   const itemsRef = React.useRef(items)
   itemsRef.current = items
@@ -66,10 +69,12 @@ export function MessageRail({
     const first = it.ids[0] ? byId.get(it.ids[0]) : undefined
     const wave =
       first && typeof first.turnIndex === 'number' && first.turnIndex >= 0 ? `第 ${first.turnIndex + 1} 波` : '发言'
+    // M77：署名按成员实例（分身 = 名字·灵魂名；存量消息回退角色名）
     const names = it.ids
       .map((id) => {
-        const agentId = byId.get(id)?.agentId
-        return agentId ? (agents.find((a) => a.id === agentId)?.name ?? agentId) : ''
+        const m = byId.get(id)
+        const key = m?.memberKey ?? m?.agentId
+        return key ? labelOfMemberKey(agents, session, key) : ''
       })
       .filter(Boolean)
     return `${wave}${names.length > 0 ? ` · ${names.join('、')}` : ''}`

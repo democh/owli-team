@@ -24,7 +24,6 @@ test('M48 · 零选择开场：空编制创建，平台自动组队并派发首�
 
   // 空编制空态：引导直接描述需求（平台接管组队与派发）
   await expect(page.getByText('直接描述你的需求，平台将自动组队并派发任务')).toBeVisible()
-  await expect(page.getByText(/零成员创建：平台会识别你的需求/)).toBeVisible()
 
   // 无 @ 消息 → 平台路由：召集 pm/architect/qa（费利/艾达/诺娃）并派发首棒给费利
   const log = page.locator('[role="log"]')

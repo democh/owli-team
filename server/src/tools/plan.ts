@@ -99,7 +99,7 @@ const writePlanTool = {
         if (!hit) {
           return {
             ok: false,
-            summary: `步骤负责人「${step.owner}」不在场：可指派 ${rosterText(ctx)}；或省略 owner 由你（${ctx.agentId}）负责`,
+            summary: `步骤负责人「${step.owner}」不在场：可指派 ${rosterText(ctx)}；或省略 owner 由你（${ctx.memberKey ?? ctx.agentId}）负责`,
           }
         }
         ownerAgentId = hit.id
@@ -272,7 +272,8 @@ const submitReviewTool = {
     const record = ctx.reviews.create({
       sessionId: ctx.sessionId,
       runId: ctx.runId,
-      agentId: ctx.agentId,
+      // M77：评审人用成员键（分身实例；经典 = agentId）
+      agentId: ctx.memberKey ?? ctx.agentId,
       planId: plan?.id,
       stepId: step?.id,
       target: args.target.trim(),

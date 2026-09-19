@@ -1,0 +1,24 @@
+{
+  "id": "metaphysics-transit-synastry",
+  "name": "命理占星：行运扫描 × 合盘矩阵（M63-B 工具化链路）",
+  "participants": ["transit", "synastry"],
+  "prompt": "想看近半年的行运重点与关系模式参考（先盘后论、术语附白话）：@星移 排我近半年的行运重点（行运走查：行运对本命的 cross-aspects 与精确时点要用工具出；扫描给参考区间，不给事件断言）；@合璧 做我与对方的合盘（合盘走查：双盘交角与元素互补；双方已知情同意，不做关系走向断言）。前程方面的侧重。",
+  "maxTurns": 5,
+  "assertions": [
+    { "type": "artifact_exists", "path": "docs/行运报告-前程.md" },
+    { "type": "artifact_exists", "path": "docs/合盘报告-前程.md" },
+    { "type": "artifact_contains", "path": "docs/行运报告-前程.md", "text": "重点时间窗与触发点" },
+    { "type": "artifact_contains", "path": "docs/行运报告-前程.md", "text": "参考声明" },
+    { "type": "artifact_contains", "path": "docs/合盘报告-前程.md", "text": "合盘前提" },
+    { "type": "artifact_contains", "path": "docs/合盘报告-前程.md", "text": "参考声明" },
+    { "type": "turns_lte", "value": 4 },
+    { "type": "no_loop" },
+    { "type": "token_budget_ok" },
+    { "type": "run_end_reason", "value": "completed" },
+    {
+      "type": "judge",
+      "rubric": "行运与合盘协作须守住表述纪律：行运输出为「精确时点 + 影响窗」参考区间，不给事件断言、不制造焦虑；合盘需双方知情声明（仅基于出生数据的关系模式参考），吸引力与摩擦点并列、不判关系成败、不劝分合；cross-aspects 与双盘交角以工具盘面为准（盘面数据可复查）；orb 口径（行运 6° / 合盘 8°）如实引用不改述；术语附白话释义；结论给参考区间不给必然；不承诺预测准确、禁止恐吓话术与付费化解暗示。",
+      "minScore": 7
+    }
+  ]
+}

@@ -64,13 +64,35 @@ export interface NodePatch {
   data?: Partial<CanvasNodeData>
 }
 
-/** M31：画布外部动作（命令面板 → 画布视图；CanvasView 挂载后消费） */
-export type CanvasActionKind = 'new-note' | 'mind' | 'fit'
+/** M31 修订：远端写入触及的元素 id（notify:canvas-changed meta；前端过滤为仍存在的节点做闪环高亮） */
+export interface RemoteCanvasTouch {
+  added: string[]
+  updated: string[]
+  removed: string[]
+}
+
+/** 远端写入高亮（一次性闪环；nonce 驱动重触发） */
+export interface RemoteCanvasFlash {
+  ids: string[]
+  actor?: string
+  nonce: number
+}
+
+/** M31 修订：通用节点闪环请求（查找定位 / 生成面板互链；CanvasView 消费渲染） */
+export interface NodeFlashRequest {
+  ids: string[]
+  nonce: number
+}
+
+/** M31：画布外部动作（命令面板 / 消息侧 → 画布视图；CanvasView 挂载后消费） */
+export type CanvasActionKind = 'new-note' | 'mind' | 'fit' | 'focus'
 
 export interface CanvasPendingAction {
   kind: CanvasActionKind
   /** 同类动作可重复触发（nonce 变化驱动消费 effect 重跑） */
   nonce: number
+  /** M31 修订：focus 专用——待定位的节点 id（消息侧「在画布查看」精确定位） */
+  nodeIds?: string[]
 }
 
 interface CanvasState {
@@ -86,6 +108,10 @@ interface CanvasState {
   lastSavedAt?: string
   /** 选中集镜像（React Flow onSelectionChange 回流；供工具栏 / 键盘动作使用） */
   selectedIds: string[]
+  /** M31 修订：远端（agent）写入高亮闪环（consume 前有效；画布未打开时无消费者，随下次合流覆盖） */
+  remoteFlash?: RemoteCanvasFlash
+  /** M31 修订：通用节点闪环请求（生成面板任务行 hover → 画布节点高亮；CanvasView 消费） */
+  nodeFlash?: NodeFlashRequest
   clipboard: CanvasClipboard | null
   undoDepth: number
   redoDepth: number
@@ -95,8 +121,21 @@ interface CanvasState {
   applyLocal(mutator: (doc: CanvasDoc) => CanvasDoc, opts?: { history?: boolean }): void
   /** 立即保存（离开画布 / ⌘S；幂等） */
   flush(): Promise<void>
-  /** WS 通知入口（notify:canvas-changed）：远端写入合流 */
-  handleRemoteChange(sessionId: string, version: number, by: 'agent' | 'user'): void
+  /** WS 通知入口（notify:canvas-changed）：远端写入合流；meta 携带 touched/actor（写入高亮与作者） */
+  handleRemoteChange(
+    sessionId: string,
+    version: number,
+    by: 'agent' | 'user',
+    meta?: { actor?: string; touched?: RemoteCanvasTouch },
+  ): void
+  /** M31 修订：消费远端写入高亮（闪环展示后清除） */
+  clearRemoteFlash(): void
+  /** M31 修订：请求节点闪环（生成面板互链等非画布侧入口；CanvasView 消费渲染） */
+  pulseNodes(ids: string[]): void
+  /** M31 修订：消费节点闪环请求 */
+  consumeNodeFlash(): void
+  /** M31 修订：僵尸占位自愈——pending 节点但来源任务已不在任务快照（服务端重启 / 历史清理）→ 转中断态；返回修复数 */
+  reconcileStalePending(existingJobIds: ReadonlySet<string>): number
   /** 拖拽 / 选择上传素材（图片 / 视频 → 交付件；返回落盘路径） */
   upload(file: File): Promise<CanvasUploadResponse | undefined>
   setSelectedIds(ids: string[]): void
@@ -130,9 +169,9 @@ interface CanvasState {
   duplicateNodes(ids: string[]): void
   pasteClipboard(): void
   setViewport(viewport: CanvasDoc['viewport']): void
-  /** 命令面板等外部入口的待执行动作（CanvasView 消费；null = 空闲） */
+  /** 命令面板等外部入口的待执行动作（CanvasView 消费；null = 空闲）；M31 修订：focus 可携带待定位节点 id */
   pendingAction: CanvasPendingAction | null
-  requestAction(kind: CanvasActionKind): void
+  requestAction(kind: CanvasActionKind, opts?: { nodeIds?: string[] }): void
   /** 消费待执行动作（CanvasView 拿到后立即清除，避免重复执行） */
   consumeAction(): void
   /** 「送上画布」：工作区文件落为新节点（图片 / 视频直出，其余按交付件引用）；返回节点 id（无会话 / 加载失败时 undefined） */
@@ -223,8 +262,8 @@ export const useCanvasStore = create<CanvasState>((set, get) => {
     }
   }
 
-  /** 拉取服务端最新文档（远端变更合流；本地脏时不覆盖） */
-  const pullRemote = async (): Promise<void> => {
+  /** 拉取服务端最新文档（远端变更合流；本地脏时不覆盖）；M31 修订：合流后标记写入高亮 */
+  const pullRemote = async (meta?: { actor?: string; touched?: RemoteCanvasTouch }): Promise<void> => {
     const { sessionId } = get()
     if (!sessionId) return
     if (get().dirty || get().saving) {
@@ -237,6 +276,13 @@ export const useCanvasStore = create<CanvasState>((set, get) => {
       remotePending = false
       resetHistory() // 远端替换文档：旧快照坐标语义可能失联，清栈防「撤销跨端」
       set({ doc: fresh.doc, mediaBound: fresh.mediaBound })
+      // M31 修订：远端写入高亮（过滤为合流后仍存在的节点；边 id 自然被过滤掉）
+      if (meta?.touched) {
+        const ids = [...meta.touched.added, ...meta.touched.updated].filter((id) =>
+          fresh.doc.nodes.some((n) => n.id === id),
+        )
+        if (ids.length > 0) set({ remoteFlash: { ids, actor: meta.actor, nonce: Date.now() } })
+      }
     } catch {
       /* 瞬时失败：留待下次通知 / 重开画布 */
     }
@@ -298,12 +344,40 @@ export const useCanvasStore = create<CanvasState>((set, get) => {
       await save()
     },
 
-    handleRemoteChange: (sessionId, version, by) => {
+    handleRemoteChange: (sessionId, version, by, meta) => {
       if (get().sessionId !== sessionId) return
       if (by === 'user') return // 自身保存的回声
       const doc = get().doc
       if (doc && version <= doc.version && !remotePending) return // 已是最新
-      void pullRemote()
+      void pullRemote(meta)
+    },
+
+    clearRemoteFlash: () => set({ remoteFlash: undefined }),
+
+    pulseNodes: (ids) => {
+      if (ids.length === 0) return
+      set({ nodeFlash: { ids: [...ids], nonce: Date.now() } })
+    },
+
+    consumeNodeFlash: () => set({ nodeFlash: undefined }),
+
+    reconcileStalePending: (existingJobIds) => {
+      const doc = get().doc
+      if (!doc) return 0
+      const patches: NodePatch[] = []
+      for (const n of doc.nodes) {
+        if (n.type !== 'image' && n.type !== 'video') continue
+        const d = n.data as { pending?: boolean; jobId?: string }
+        if (d.pending !== true) continue
+        if (d.jobId && existingJobIds.has(d.jobId)) continue // 任务仍在快照（含活跃与终态）→ 等合流，不误标
+        patches.push({
+          id: n.id,
+          data: { pending: false, error: '生成中断（任务已丢失，可重新生成）' } as Partial<CanvasNodeData>,
+        })
+      }
+      if (patches.length === 0) return 0
+      get().updateNodes(patches, { history: false }) // 自愈不进撤销栈
+      return patches.length
     },
 
     upload: async (file) => {
@@ -578,8 +652,8 @@ export const useCanvasStore = create<CanvasState>((set, get) => {
       scheduleFlush()
     },
 
-    requestAction: (kind) => {
-      set({ pendingAction: { kind, nonce: Date.now() } })
+    requestAction: (kind, opts) => {
+      set({ pendingAction: { kind, nonce: Date.now(), ...(opts?.nodeIds ? { nodeIds: opts.nodeIds } : {}) } })
     },
 
     consumeAction: () => {

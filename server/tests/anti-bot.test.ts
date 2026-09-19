@@ -66,6 +66,9 @@ describe('http：请求头与风控识别', () => {
     expect(
       detectBlockPage({ status: 200, finalUrl: 'https://x.com/', text: '<html><title>正常页面</title>hello</html>' }),
     ).toBeNull()
+    // JSON 接口空响应（软风控）仅在 expectJson 时识别，避免误伤正常空页面
+    expect(detectBlockPage({ status: 200, finalUrl: 'https://x.com/api', text: '' })).toBeNull()
+    expect(detectBlockPage({ status: 200, finalUrl: 'https://x.com/api', text: '', expectJson: true })).toContain('空响应')
   })
 
   it('decodeBody：BOM / content-type charset / meta charset（GBK 家族）', () => {
@@ -271,6 +274,102 @@ describe('http：antiBotFetch 反爬行为', () => {
       await antiBotFetch({ url: `${base}/b`, minIntervalMs: 0 })
       expect(agents[0]).toContain('Mozilla/5.0')
       expect(agents[1]).toBe(agents[0])
+    } finally {
+      await closeServer(server)
+    }
+  })
+
+  it('软封锁：连接被异常中断单次 → network（不立即冷却）', async () => {
+    const { server, base } = await startServer((req) => {
+      req.socket.destroy()
+    })
+    try {
+      await expect(antiBotFetch({ url: `${base}/x`, minIntervalMs: 0, maxRetries: 0 })).rejects.toMatchObject({
+        kind: 'network',
+      })
+    } finally {
+      await closeServer(server)
+    }
+  })
+
+  it('软封锁：连续两次连接中断 → blocked（冷却期内不再发起请求）', async () => {
+    let calls = 0
+    const { server, base } = await startServer((req) => {
+      calls += 1
+      req.socket.destroy()
+    })
+    try {
+      await expect(antiBotFetch({ url: `${base}/x`, minIntervalMs: 0, maxRetries: 0 })).rejects.toMatchObject({
+        kind: 'network',
+      })
+      await expect(antiBotFetch({ url: `${base}/x`, minIntervalMs: 0, maxRetries: 0 })).rejects.toMatchObject({
+        kind: 'blocked',
+        message: expect.stringContaining('连续 2 次'),
+      })
+      await expect(antiBotFetch({ url: `${base}/x`, minIntervalMs: 0, maxRetries: 0 })).rejects.toMatchObject({
+        kind: 'blocked',
+      })
+      expect(calls).toBe(2)
+    } finally {
+      await closeServer(server)
+    }
+  })
+
+  it('软封锁：同一请求内的重试失败不重复计数（单次请求 → network，不触发 5 分钟冷却）', async () => {
+    let calls = 0
+    const { server, base } = await startServer((req) => {
+      calls += 1
+      req.socket.destroy()
+    })
+    try {
+      // maxRetries=1：两次尝试同属一次逻辑请求 → 计数 1，不升级 blocked
+      await expect(antiBotFetch({ url: `${base}/x`, minIntervalMs: 0, maxRetries: 1 })).rejects.toMatchObject({
+        kind: 'network',
+      })
+      expect(calls).toBe(2)
+      // 下一次独立请求失败 → 累计 2 次 → blocked + 冷却
+      await expect(antiBotFetch({ url: `${base}/x`, minIntervalMs: 0, maxRetries: 0 })).rejects.toMatchObject({
+        kind: 'blocked',
+        message: expect.stringContaining('连续 2 次'),
+      })
+      expect(calls).toBe(3)
+    } finally {
+      await closeServer(server)
+    }
+  })
+
+  it('软封锁：JSON 接口空响应 → 首次 network（可重试）；连续两次 → blocked + 冷却', async () => {
+    let calls = 0
+    const { server, base } = await startServer((_req, res) => {
+      calls += 1
+      res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+      res.end('')
+    })
+    try {
+      await expect(
+        antiBotFetch({ url: `${base}/x`, minIntervalMs: 0, maxRetries: 0, accept: 'application/json' }),
+      ).rejects.toMatchObject({ kind: 'network' })
+      await expect(
+        antiBotFetch({ url: `${base}/x`, minIntervalMs: 0, maxRetries: 0, accept: 'application/json' }),
+      ).rejects.toMatchObject({ kind: 'blocked' })
+      await expect(
+        antiBotFetch({ url: `${base}/x`, minIntervalMs: 0, maxRetries: 0, accept: 'application/json' }),
+      ).rejects.toMatchObject({ kind: 'blocked' })
+      expect(calls).toBe(2)
+    } finally {
+      await closeServer(server)
+    }
+  })
+
+  it('软封锁：非 JSON 请求的空响应不误判（空页面正常返回）', async () => {
+    const { server, base } = await startServer((_req, res) => {
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
+      res.end('')
+    })
+    try {
+      const res = await antiBotFetch({ url: `${base}/x`, minIntervalMs: 0, maxRetries: 0 })
+      expect(res.ok).toBe(true)
+      expect(res.text).toBe('')
     } finally {
       await closeServer(server)
     }

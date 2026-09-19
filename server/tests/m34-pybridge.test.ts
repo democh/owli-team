@@ -199,6 +199,49 @@ maybeDescribe('M34 Python 桥：真脚本冒烟（fin_bridge.py）', () => {
     })
   })
 
+  it('kline 字段白名单：time 仅分钟线（防「指标参数传入错误:time」回归）', () => {
+    // 真脚本模块导入（仅 stdlib 依赖，不触网）：直接校验字段选择纯函数与窗口表
+    const script = [
+      'import importlib.util, json',
+      `spec = importlib.util.spec_from_file_location('fin_bridge', ${JSON.stringify(DEFAULT_BRIDGE_SCRIPT)})`,
+      'mod = importlib.util.module_from_spec(spec)',
+      'spec.loader.exec_module(mod)',
+      'print(json.dumps({',
+      "    'd': mod.bs_kline_fields('d'),",
+      "    'w': mod.bs_kline_fields('w'),",
+      "    'm': mod.bs_kline_fields('m'),",
+      "    'min5': mod.bs_kline_fields('5'),",
+      "    'min60': mod.bs_kline_fields('60'),",
+      "    'windows': sorted(mod._BS_WINDOW_DAYS),",
+      "    'akWindows': sorted(mod._AK_WINDOW_DAYS),",
+      '}))',
+    ].join('\n')
+    const out = execFileSync(python, ['-c', script], { encoding: 'utf8' })
+    const line = out
+      .trim()
+      .split('\n')
+      .reverse()
+      .find((l) => l.startsWith('{'))
+    const res = JSON.parse(line!) as {
+      d: string
+      w: string
+      m: string
+      min5: string
+      min60: string
+      windows: string[]
+      akWindows: string[]
+    }
+    // 日/周/月线不得含 time（baostock 服务端 10004012 报错）；分钟线必须含 time
+    expect(res.d).toBe('date,code,open,high,low,close,volume,amount')
+    expect(res.w).not.toContain('time')
+    expect(res.m).not.toContain('time')
+    expect(res.min5).toContain('date,time,')
+    expect(res.min60).toContain('time')
+    // 日/周/月取数窗口齐备（月线需足够长以覆盖 limit 上限）
+    expect(res.windows).toEqual(['d', 'm', 'w'])
+    expect(res.akWindows).toEqual(['daily', 'monthly', 'weekly'])
+  })
+
   it('默认脚本路径存在（dev 态 src/finance/bridge/py/）', () => {
     expect(DEFAULT_BRIDGE_SCRIPT.endsWith(path.join('bridge', 'py', 'fin_bridge.py'))).toBe(true)
     expect(fs.existsSync(DEFAULT_BRIDGE_SCRIPT)).toBe(true)

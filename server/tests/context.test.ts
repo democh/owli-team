@@ -401,7 +401,13 @@ describe('M2：端到端验收（30 回合）', () => {
   it('压缩后预算内、核心约束不丢、压缩事件可见、无 tool 孤儿', async () => {
     // M23→M29：预算夹具随资产扩容上调（39 技能索引 + development 场景协议 1.2k + pm 预载 prd-authoring
     // 后系统层约 9.8k；12k 仍能触发压缩且为对话窗口留出余量）
-    const env = makeEnv({ contextBudgetTokens: 12000, keepRecentTurns: 1 })
+    // M61：pm 正文升级专家级六段骨架（+600 字符）+ 全局资产扩容 → 13.2k 夹具（实测 12.5k±）
+    // M69：十场景扩展（163 角色 + 60 技能 + 40 协议）系统层进一步增重 → 14k 夹具（实测 13.6k±）
+    // 外部安装批：69 技能索引（+8：literature-search / natural-writing / test-driven-development /
+    // secure-coding / brand-naming / translation-quality / user-persona / health-metrics）→ 15k 夹具（实测 14.2k±）
+    // 报告专业化批：全局协议新增 <deliverable_spec> 段（+18 行）+ report-authoring 技能索引（70 技能）
+    // → 16k 夹具（实测 15.0k±）
+    const env = makeEnv({ contextBudgetTokens: 16000, keepRecentTurns: 1 })
     const session = env.sessions.create(['pm'])
     // 第 1 回合的核心约束 → 写入 L1 记忆（永不裁剪层）
     env.memory.upsert(session.id, 'constraint', '错误码必须复用现有 40001 规范', 'agent:pm')
@@ -427,7 +433,7 @@ describe('M2：端到端验收（30 回合）', () => {
     })
     expect(prepared.system).toContain('错误码必须复用现有 40001 规范')
     // 4) 估算 token 稳定在预算内
-    expect(prepared.estimatedTokens).toBeLessThanOrEqual(12000)
+    expect(prepared.estimatedTokens).toBeLessThanOrEqual(16000)
     // 5) 无 tool 角色孤儿消息（历史工具调用随所属 agent 消息渲染）
     expect(prepared.messages.every((m) => m.role !== 'tool')).toBe(true)
     // 6) 上下文快照可用（API 数据源）

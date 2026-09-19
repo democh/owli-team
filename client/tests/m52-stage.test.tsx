@@ -38,6 +38,7 @@ import {
   VersusPanel,
 } from '../src/components/scene/panels'
 import { SceneContext, type SceneCtx } from '../src/components/scene/context'
+import { clampDockW, dockDefaultW, dockMaxW, loadDockPref, SC_DOCK_KEY } from '../src/components/scene/persist'
 import { resolveStage } from '../src/components/scene/resolve'
 import { RoundtableStage } from '../src/components/scene/RoundtableStage'
 import { SceneStage } from '../src/components/scene/SceneStage'
@@ -585,6 +586,95 @@ describe('SceneStage 宿主（四形态渲染与降级）', () => {
   })
 })
 
+// ---------- 批九：dock 右区宽度（自适应默认 / 半屏上限） ----------
+
+/** 视口宽夹具（无 RO 环境时容器宽以视口宽为首帧估计；返回还原函数） */
+function stubViewport(w: number): () => void {
+  const orig = Object.getOwnPropertyDescriptor(window, 'innerWidth')
+  Object.defineProperty(window, 'innerWidth', { value: w, configurable: true, writable: true })
+  return () => {
+    if (orig) Object.defineProperty(window, 'innerWidth', orig)
+  }
+}
+
+describe('批九 · dock 右区宽度（自适应默认 / 半屏上限 / 复位）', () => {
+  it('纯函数口径：上限 = 容器一半（下取整）；默认 = 容器 1/3（clamp 380–600，不越上限）', () => {
+    expect(dockMaxW(1024)).toBe(512)
+    expect(dockMaxW(300)).toBe(280) // 容器极小： DOCK_MIN_W 保底
+    expect(dockDefaultW(1024)).toBe(380)
+    expect(dockDefaultW(1440)).toBe(480)
+    expect(dockDefaultW(2400)).toBe(600) // 1/3 越 600 → 封顶
+    expect(dockDefaultW(300)).toBe(280) // 不越半屏上限
+    expect(clampDockW(5000, 1024)).toBe(512)
+    expect(clampDockW(100, 1024)).toBe(280)
+  })
+
+  it('存量偏好迁移：旧固定默认 360 → 自适应；显式值原样保留（下限护栏）', () => {
+    try {
+      localStorage.setItem(SC_DOCK_KEY, JSON.stringify({ width: 360, collapsed: true, closed: false }))
+      expect(loadDockPref()).toEqual({ width: null, collapsed: true, closed: false })
+      localStorage.setItem(SC_DOCK_KEY, JSON.stringify({ width: 720 }))
+      expect(loadDockPref().width).toBe(720)
+      localStorage.setItem(SC_DOCK_KEY, JSON.stringify({ width: 100 }))
+      expect(loadDockPref().width).toBe(280)
+    } finally {
+      localStorage.removeItem(SC_DOCK_KEY)
+    }
+  })
+
+  it('默认渲染（视口 1024）：右区 380px；把手 aria：min 280 / now 380 / max 512', () => {
+    const restore = stubViewport(1024)
+    try {
+      seed([agentMsg('m1', 'diviner', PAN_MAIN)])
+      const { container } = render(
+        <SceneStage group={GROUP_DOCK} participants={[]}>
+          <div data-testid="stream-child">对话流</div>
+        </SceneStage>,
+      )
+      const aside = container.querySelector('.scene-dock-aside') as HTMLElement
+      expect(aside.style.width).toBe('380px')
+      const grip = container.querySelector('.scene-dock-grip') as HTMLElement
+      expect(grip.getAttribute('aria-valuemin')).toBe('280')
+      expect(grip.getAttribute('aria-valuenow')).toBe('380')
+      expect(grip.getAttribute('aria-valuemax')).toBe('512')
+    } finally {
+      restore()
+      localStorage.removeItem(SC_DOCK_KEY)
+    }
+  })
+
+  it('显式宽超半屏 → 渲染期收敛一半（不改写存储意图）；双击复位自适应；键盘 ← 调宽', () => {
+    const restore = stubViewport(1024)
+    try {
+      localStorage.setItem(SC_DOCK_KEY, JSON.stringify({ width: 5000, collapsed: false, closed: false }))
+      seed([agentMsg('m1', 'diviner', PAN_MAIN)])
+      const { container } = render(
+        <SceneStage group={GROUP_DOCK} participants={[]}>
+          <div data-testid="stream-child">对话流</div>
+        </SceneStage>,
+      )
+      const aside = container.querySelector('.scene-dock-aside') as HTMLElement
+      expect(aside.style.width).toBe('512px')
+      // 存储保留原始意图（窗口再放宽 → 恢复）
+      expect((JSON.parse(localStorage.getItem(SC_DOCK_KEY)!) as { width: number }).width).toBe(5000)
+
+      // 双击复位 → 自适应（视口 1024 → 380）
+      const grip = container.querySelector('.scene-dock-grip') as HTMLElement
+      fireEvent.doubleClick(grip)
+      expect(aside.style.width).toBe('380px')
+      expect((JSON.parse(localStorage.getItem(SC_DOCK_KEY)!) as { width: number | null }).width).toBeNull()
+
+      // 键盘 ← 调宽（+16 落显式宽）
+      fireEvent.keyDown(grip, { key: 'ArrowLeft' })
+      expect(aside.style.width).toBe('396px')
+      expect((JSON.parse(localStorage.getItem(SC_DOCK_KEY)!) as { width: number }).width).toBe(396)
+    } finally {
+      restore()
+      localStorage.removeItem(SC_DOCK_KEY)
+    }
+  })
+})
+
 // ---------- M52-B：四形态组件级走查（seats / agenda 数据驱动） ----------
 
 function makeAgent(id: string, name: string): AgentDefinition {
@@ -660,6 +750,51 @@ describe('M52-B 四形态组件级走查（seats / agenda 数据驱动）', () =
     expect(sb.textContent).toContain('左席')
     expect(sb.textContent).toContain('右席')
     expect(sb.textContent).toContain('未开赛')
+  })
+
+  it('arena：parts 声明裁剪——negotiation 去计分板保报价流；debate 去报价流保计分板', () => {
+    const NEGO: AgentGroup = {
+      ...GROUP_ARENA,
+      id: 'negotiation',
+      name: '谈判桌',
+      stage: {
+        layout: 'arena',
+        seats: { left: ['negotiator'], right: ['counterpart'], center: ['tactician'] },
+        parts: ['round-track', 'verdicts', 'claim-tree', 'offers'],
+      },
+    }
+    // 谈判无计分语义：scoreboard 被 parts 裁剪（此前恒显 0:0 失真）；报价流与论断树保留
+    seed([
+      agentMsg('n1', 'negotiator', '::: claim 锚定策略\n- 论据 1 | 先出高锚\n:::\n\n::: offer 首轮出价\n报价：98 万\n:::', 0),
+    ])
+    const { container } = render(
+      <SceneStage group={NEGO} participants={[LI_YAN, LI_FENG, MING_DUAN]}>
+        <div data-testid="stream-child">对话流</div>
+      </SceneStage>,
+    )
+    expect(container.querySelector('.scene-arena')).not.toBeNull()
+    expect(container.querySelector('.scene-scoreboard')).toBeNull()
+    expect(container.querySelector('[data-insight="offers"]')).not.toBeNull()
+    expect(container.querySelector('[data-insight="claims"]')).not.toBeNull()
+
+    // debate：计分板与论断树保留；报价流（辩论无此语义）被裁剪
+    const DEBATE: AgentGroup = {
+      ...GROUP_ARENA,
+      stage: {
+        layout: 'arena',
+        seats: { left: ['affirmative'], right: ['negative'], center: ['judge'] },
+        parts: ['round-track', 'scoreboard', 'verdicts', 'claim-tree'],
+      },
+    }
+    seed([agentMsg('d1', 'affirmative', '::: claim 正方主张：净收益为正\n- 论据 1 | 证据 1\n:::', 0)])
+    const { container: c2 } = render(
+      <SceneStage group={DEBATE} participants={[LI_YAN, LI_FENG, MING_DUAN]}>
+        <div data-testid="stream-child-2">对话流</div>
+      </SceneStage>,
+    )
+    expect(c2.querySelector('.scene-scoreboard')).not.toBeNull()
+    expect(c2.querySelector('[data-insight="claims"]')).not.toBeNull()
+    expect(c2.querySelector('[data-insight="offers"]')).toBeNull()
   })
 
   it('roundtable：席位环 4 席 + 议程条推进 + 有产物时汇聚板渲染', () => {
@@ -897,11 +1032,19 @@ describe('M58 panelReady（六面板就绪口径）', () => {
     messages,
   })
 
-  it('chartboard：有 `::: pan` 容器才就绪', () => {
+  it('chartboard：有 `::: pan` 盘面容器或 `::: cards` 牌阵容器才就绪', () => {
     expect(panelReady('chartboard', data([]))).toBe(false)
     expect(panelReady('chartboard', data([agentMsg('m1', 'a', '纯文本')]))).toBe(false)
     expect(panelReady('chartboard', data([agentMsg('m1', 'a', IDEAS)]))).toBe(false)
     expect(panelReady('chartboard', data([agentMsg('m1', 'a', PAN_MAIN)]))).toBe(true)
+    // M69 塔罗牌阵台：tarot 场景无 pan 卡，`::: cards` 亦构成就绪
+    const CARDS = [
+      '::: cards 三张牌阵',
+      '- 过去 | 死神 | 逆位 | 结束 · 转化',
+      '- 现在 | 命运之轮 | 正位 | 转机 · 周期',
+      ':::',
+    ].join('\n')
+    expect(panelReady('chartboard', data([agentMsg('m1', 'a', CARDS)]))).toBe(true)
   })
 
   it('pool：存在「有结构化行或带标题」的容器卡才就绪', () => {

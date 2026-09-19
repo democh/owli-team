@@ -2,7 +2,7 @@
  * M33 前端测试：附件托盘（三态 / 交互）+ 消息内附件原生渲染（分类 / Lightbox / 播放）
  * + Composer 附件流（选择 → 上传 → 发送携带附件）。
  */
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { AgentDefinition, MessageAttachment } from '@multi-agent/shared'
@@ -50,6 +50,8 @@ const UPLOADED: MessageAttachment = {
 }
 
 beforeEach(() => {
+  // 底栏上下文电池（ContextBar）挂载即拉取快照：stub 网络为常挂起，避免真实请求与 act 警告
+  vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>(() => {})))
   localStorage.clear()
   // jsdom 缺失 object URL API（媒体缩略图创建 / 释放）
   URL.createObjectURL = vi.fn(() => 'blob:mock')
@@ -92,6 +94,10 @@ beforeEach(() => {
     pinnedArtifactPath: undefined,
     followArtifactPath: undefined,
   })
+})
+
+afterEach(() => {
+  vi.unstubAllGlobals()
 })
 
 // ---------- AttachmentTray ----------

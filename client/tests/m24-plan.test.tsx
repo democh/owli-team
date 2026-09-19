@@ -47,6 +47,8 @@ function mockApi(routes: Record<string, Route> = {}): void {
     if (method === 'GET' && /\/plans$/.test(url)) return jsonResponse({ plans: [], reviews: [] })
     if (method === 'GET' && /\/tasks$/.test(url)) return jsonResponse({ tasks: [] })
     if (method === 'GET' && /\/approvals$/.test(url)) return jsonResponse({ approvals: [] })
+    // 底栏上下文电池（Composer 内）的取数挂起：本文件不断言快照，避免迟到 setState 触发 act 警告
+    if (method === 'GET' && /\/(context|usage)$/.test(url)) return new Promise<Response>(() => {})
     return jsonResponse({})
   })
 }

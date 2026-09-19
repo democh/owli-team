@@ -66,4 +66,16 @@ describe('Markdown @mention 插件', () => {
     expect(screen.getAllByRole('listitem')).toHaveLength(2)
     expect(screen.getByRole('table')).toBeInTheDocument()
   })
+
+  it('任务列表（GFM）：checkbox 表达完成状态（结构化断言；静态展示不可编辑）', () => {
+    const { container } = render(<Markdown content={'- [ ] 待办一\n- [x] 已完成项'} />)
+    const items = container.querySelectorAll('li.task-list-item')
+    expect(items).toHaveLength(2)
+    const boxes = container.querySelectorAll('li.task-list-item > input[type="checkbox"]')
+    expect(boxes).toHaveLength(2)
+    expect((boxes[0] as HTMLInputElement).checked).toBe(false)
+    expect((boxes[1] as HTMLInputElement).checked).toBe(true)
+    // 静态展示：可勾选 / 可回填的清单走 ::: checklist 容器（ADR 0064 口径）
+    expect((boxes[0] as HTMLInputElement).disabled).toBe(true)
+  })
 })

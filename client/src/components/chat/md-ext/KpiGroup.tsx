@@ -1,8 +1,9 @@
 /**
- * KPI 指标卡组（::: kpi [标题]，条目 `- 名称 | 值 | 变化 | 目标`）：
+ * KPI 指标卡组（::: kpi [标题]，条目 `- 名称 | 值 | 变化 | 目标 | 口径`）：
  * - 条目由 remark-ext finalize 拆为 data-* 结构化节点，本组件按属性渲染，不解析文本；
  * - 涨跌色（+绿 / −红，↑↓▲▼ 等价符号）；值/目标均可取数时显示进度条（上限 100%）；
  * - 点击数值复制（复用 copyText，1.6s 状态复位）；hover 通过 title 显示原始行；
+ * - M66（N2）：第 5 列「口径」→ 口径徽章（hover 全文；缺省不渲染）；
  * - 非条目子节点（普通段落等）原样渲染在网格之后。
  */
 import * as React from 'react'
@@ -48,12 +49,15 @@ export function KpiItem({
   value,
   delta,
   target,
+  scope,
   raw,
 }: {
   name: string
   value: string
   delta: string
   target: string
+  /** M66（N2）：口径列（第 5 列；缺省不渲染徽章） */
+  scope?: string
   raw: string
 }): React.JSX.Element {
   const [copied, setCopied] = React.useState(false)
@@ -72,6 +76,11 @@ export function KpiItem({
   return (
     <div className="md-kpi-item" title={raw || undefined}>
       {name ? <div className="md-kpi-name">{name}</div> : null}
+      {scope ? (
+        <span className="md-kpi-scope" title={`口径：${scope}`}>
+          口径 {scope.length > 14 ? `${scope.slice(0, 14)}…` : scope}
+        </span>
+      ) : null}
       <div className="md-kpi-figure">
         {value ? (
           <button type="button" className="md-kpi-value" title="点击复制" onClick={copyValue}>

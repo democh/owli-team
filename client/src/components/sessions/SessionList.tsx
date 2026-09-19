@@ -2,11 +2,13 @@
  * 会话列表（左栏）：CRUD + 未读角标 + 最近消息预览 + 全文搜索（M9，FTS5）。
  * 搜索：GET /api/search?q=（messages_fts 跨会话检索），命中后跳转会话并定位消息。
  * M50：新建会话改用组队台（CreateSessionDialog）；pendingCreate 通道在此消费后经 initialSource 传入。
+ * M31 修订：其他会话的 agent 画布写入 → 行内小点（切到该会话即清零）。
  */
 import * as React from 'react'
 import { toast } from 'sonner'
 import { Loader2, MessageSquarePlus, Pencil, Plus, Search, Trash2, X } from 'lucide-react'
 import { apiGet } from '../../lib/api'
+import { labelOfMemberKey } from '../../lib/members'
 import { useAgentStore } from '../../stores/agent-store'
 import { useSessionStore } from '../../stores/session-store'
 import { useUiStore } from '../../stores/ui-store'
@@ -16,6 +18,8 @@ import { cn } from '../../lib/utils'
 import { Button } from '../ui/button'
 import { Input } from '../ui/input'
 import { Badge } from '../ui/badge'
+import { useAuthStore } from '../../stores/auth-store'
+// M57 P2：共享角色（列表徽章 / 操作 gating）依赖 SessionSummary.role（服务端下发）
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '../ui/dialog'
 import { CreateSessionDialog, type CreateSource } from './CreateSessionDialog'
 
@@ -51,6 +55,13 @@ export function SessionList({ onSelect }: SessionListProps): React.JSX.Element {
   const loading = useSessionStore((s) => s.loadingSessions)
   const agents = useAgentStore((s) => s.agents)
   const unread = useWsStore((s) => s.unread)
+  // M57 P3：本人 id（列表预览署名判定「你」/ 昵称）
+  const myUserId = useAuthStore((s) => s.user?.id)
+  // M31 修订：其他会话的画布写入标记（agent 写入小点；切到该会话即清零）
+  const otherCanvasWrites = useUiStore((s) => s.otherCanvasWrites)
+  React.useEffect(() => {
+    if (currentId) useUiStore.getState().clearOtherCanvasWrite(currentId)
+  }, [currentId])
 
   const [dialog, setDialog] = React.useState<DialogState>(null)
   const [titleInput, setTitleInput] = React.useState('')
@@ -231,10 +242,17 @@ export function SessionList({ onSelect }: SessionListProps): React.JSX.Element {
             const isActive = s.id === currentId
             const count = unread[s.id] ?? 0
             const last = s.lastMessage
+            // M57 P2：共享角色（兼容模式缺省 = owner）；viewer 隐藏重命名，非 owner 隐藏删除
+            const canWrite = !s.role || s.role !== 'viewer'
+            const isOwner = !s.role || s.role === 'owner'
+            // M57 P3：预览署名——他人人类消息显示昵称（无昵称回退「成员」），自己 / 兼容模式仍为「你」
             const authorName = last
               ? last.role === 'user'
-                ? '你'
-                : agents.find((a) => a.id === last.agentId)?.name ?? last.agentId
+                ? last.userId && last.userId !== myUserId
+                  ? (last.userName ?? '成员')
+                  : '你'
+                : /* M77：署名按成员实例（分身 = `名字·灵魂名`；存量消息缺省 = 角色名） */
+                  labelOfMemberKey(agents, s, last.memberKey ?? last.agentId ?? '')
               : ''
             return (
               <div
@@ -252,34 +270,54 @@ export function SessionList({ onSelect }: SessionListProps): React.JSX.Element {
                   <span className={cn('min-w-0 flex-1 truncate text-[13px] font-medium', isActive && 'text-primary')}>
                     {s.title}
                   </span>
+                  {s.role && s.role !== 'owner' && (
+                    <Badge
+                      variant="outline"
+                      className="h-4 shrink-0 border-primary/30 px-1 text-[10px] text-primary"
+                      title={s.role === 'editor' ? '与我共享：可协作（读写）' : '与我共享：只读'}
+                    >
+                      {s.role === 'editor' ? '协作' : '只读'}
+                    </Badge>
+                  )}
+                  {otherCanvasWrites[s.id] > 0 && (
+                    <span
+                      className="size-1.5 shrink-0 rounded-full bg-primary"
+                      title="Agent 刚更新了该会话的画布"
+                      aria-label="画布有新写入"
+                    />
+                  )}
                   {count > 0 && (
                     <Badge variant="destructive" className="badge-pop h-4 min-w-4 justify-center px-1 text-[10px]">
                       {count > 99 ? '99+' : count}
                     </Badge>
                   )}
                   <span className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
-                    <button
-                      type="button"
-                      className="rounded p-1 text-muted-foreground hover:bg-background hover:text-foreground"
-                      title="重命名"
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        openRename(s.id, s.title)
-                      }}
-                    >
-                      <Pencil className="size-3" />
-                    </button>
-                    <button
-                      type="button"
-                      className="rounded p-1 text-muted-foreground hover:bg-background hover:text-destructive"
-                      title="删除（含工作区）"
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        setDialog({ mode: 'delete', id: s.id, title: s.title })
-                      }}
-                    >
-                      <Trash2 className="size-3" />
-                    </button>
+                    {canWrite && (
+                      <button
+                        type="button"
+                        className="rounded p-1 text-muted-foreground hover:bg-background hover:text-foreground"
+                        title="重命名"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          openRename(s.id, s.title)
+                        }}
+                      >
+                        <Pencil className="size-3" />
+                      </button>
+                    )}
+                    {isOwner && (
+                      <button
+                        type="button"
+                        className="rounded p-1 text-muted-foreground hover:bg-background hover:text-destructive"
+                        title="删除（含工作区）"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          setDialog({ mode: 'delete', id: s.id, title: s.title })
+                        }}
+                      >
+                        <Trash2 className="size-3" />
+                      </button>
+                    )}
                   </span>
                 </div>
                 <div className="mt-0.5 flex items-center gap-1.5 text-[11px] text-muted-foreground">

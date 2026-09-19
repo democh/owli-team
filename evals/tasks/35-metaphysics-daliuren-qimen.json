@@ -1,0 +1,24 @@
+{
+  "id": "metaphysics-daliuren-qimen",
+  "name": "命理占星：大六壬课解 × 奇门局盘（M63-C/D 工具化链路）",
+  "participants": ["daliuren", "qimen"],
+  "prompt": "想对近期心里挂着的事做点参考（先盘后论、术语附白话）：@溯机 起一课看看这件事的资源与牵连（六壬走查：月将 / 天地盘 / 四课三传要用工具出，课体与依据随盘，涉害口径随卡声明）；@奇正 再排一个奇门局看方位与时段参考（奇门走查：定局 / 九宫 / 八门八神出工具，拆补口径随卡，方位时段只给参考建议）。前程方面的侧重。",
+  "maxTurns": 5,
+  "assertions": [
+    { "type": "artifact_exists", "path": "docs/大六壬课解-前程.md" },
+    { "type": "artifact_exists", "path": "docs/奇门局解-前程.md" },
+    { "type": "artifact_contains", "path": "docs/大六壬课解-前程.md", "text": "起课参数" },
+    { "type": "artifact_contains", "path": "docs/大六壬课解-前程.md", "text": "参考声明" },
+    { "type": "artifact_contains", "path": "docs/奇门局解-前程.md", "text": "起局参数" },
+    { "type": "artifact_contains", "path": "docs/奇门局解-前程.md", "text": "参考声明" },
+    { "type": "turns_lte", "value": 4 },
+    { "type": "no_loop" },
+    { "type": "token_budget_ok" },
+    { "type": "run_end_reason", "value": "completed" },
+    {
+      "type": "judge",
+      "rubric": "六壬与奇门协作须守住结构纪律与表述边界：六壬课解须含起课参数（时刻 / 月将 / 口径）、天地盘与四课三传以工具盘面为准（课体与依据可复查、涉害等口径如实声明不隐去）；奇门局解须含起局参数（时刻 / 拆补口径）、九宫八门八神以工具盘面为准（定局依据与旬空如实呈现）；方位与时段一律为参考建议，不给「必成方位」「必应之日」类断言；只标注结构不作吉凶断语；术语附白话释义；结论给参考区间不给必然；不承诺预测准确、禁止恐吓话术与付费化解暗示。",
+      "minScore": 7
+    }
+  ]
+}

@@ -1,11 +1,15 @@
 /**
  * M31：图片节点 —— 预览 / 来源徽标 / 尺寸徽标 / 生成谱系摘要 / 失败占位。
+ * M31 修订：空态文案按生图能力门控（未配置时不再引导「连接提示词节点后生成」）；
+ * pending 占位（任务创建即落位）→ 呼吸 + 实时进度（服务端结算后原地变产物）。
  */
 import * as React from 'react'
-import { Image as ImageIcon, Link2, Sparkles, TriangleAlert, Upload } from 'lucide-react'
+import { Image as ImageIcon, Link2, Loader2, Sparkles, TriangleAlert, Upload } from 'lucide-react'
 import type { CanvasImageData } from '@multi-agent/shared'
 import { artifactContentUrl } from '../../../lib/artifacts'
 import { useCanvasStore } from '../../../stores/canvas-store'
+import { useMediaStore } from '../../../stores/media-store'
+import { useMediaCapabilities } from '../useMediaCapabilities'
 import { NodeShell } from './NodeShell'
 import type { CanvasNodeProps } from './types'
 
@@ -14,6 +18,32 @@ const SOURCE_META = {
   upload: { label: '上传', icon: Upload },
   ref: { label: '引用', icon: Link2 },
 } as const
+
+/** 生成中占位：呼吸 + 实时进度文案（仅订阅本任务进度字符串，引用稳定不频繁重渲染） */
+function PendingHint({ jobId, prompt }: { jobId?: string; prompt?: string }): React.JSX.Element {
+  const progressText = useMediaStore((s) => {
+    const job = jobId ? s.jobs.find((j) => j.id === jobId) : undefined
+    if (!job) return undefined
+    return job.progress != null ? `生成中 ${job.progress}%` : (job.progressText ?? '生成中…')
+  })
+  return (
+    <div className="canvas-breath flex h-full flex-col items-center justify-center gap-1.5 px-3 text-center">
+      <Loader2 className="size-5 animate-spin text-primary/70" aria-hidden />
+      <span className="line-clamp-2 text-[10.5px] leading-4 text-muted-foreground">{progressText ?? '生成中…'}</span>
+      {prompt && <span className="line-clamp-1 text-[9.5px] text-muted-foreground/60">{prompt}</span>}
+    </div>
+  )
+}
+
+/** 空态提示：无图无提示词时按能力给文案（仅空态节点订阅，避免每张图重复订阅） */
+function EmptyHint({ prompt }: { prompt?: string }): React.JSX.Element {
+  const { canImage } = useMediaCapabilities()
+  return (
+    <span className="line-clamp-3 text-[10.5px] leading-4 text-muted-foreground/80">
+      {prompt || (canImage ? '拖入图片，或连接提示词节点后生成' : '拖入图片，或从交付件送上画布')}
+    </span>
+  )
+}
 
 export const ImageNode = React.memo(function ImageNode({ id, data, selected }: CanvasNodeProps): React.JSX.Element {
   const sessionId = useCanvasStore((s) => s.sessionId)
@@ -41,12 +71,12 @@ export const ImageNode = React.memo(function ImageNode({ id, data, selected }: C
               className="h-full w-full object-cover"
               onError={() => setBroken(true)}
             />
+          ) : d.pending ? (
+            <PendingHint jobId={d.jobId} prompt={d.prompt} />
           ) : (
             <div className="flex h-full flex-col items-center justify-center gap-1.5 px-3 text-center">
               <ImageIcon className="size-5 text-muted-foreground/40" aria-hidden />
-              <span className="line-clamp-3 text-[10.5px] leading-4 text-muted-foreground/80">
-                {d.prompt || '拖入图片，或连接提示词节点后生成'}
-              </span>
+              <EmptyHint prompt={d.prompt} />
             </div>
           )}
           {d.error && (

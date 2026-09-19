@@ -114,16 +114,27 @@ export class ApprovalService {
     }
   }
 
-  /** 用户决定；不存在或已决定 → null */
-  decide(runId: string, approvalId: string, decision: ApprovalDecision, feedback?: string): ApprovalRequest | null {
+  /** 用户决定；不存在或已决定 → null（M57：decidedBy = 决策人 users.id，多用户审计） */
+  decide(
+    runId: string,
+    approvalId: string,
+    decision: ApprovalDecision,
+    feedback?: string,
+    decidedBy?: string,
+  ): ApprovalRequest | null {
     const entry = this.entries.get(approvalId)
     if (!entry || entry.approval.runId !== runId) return null
     const status: ApprovalStatus = decision === 'reject' ? 'rejected' : 'approved'
-    this.settle(approvalId, status, {
-      decision,
-      feedback: feedback?.trim() || undefined,
-      timedOut: false,
-    })
+    this.settle(
+      approvalId,
+      status,
+      {
+        decision,
+        feedback: feedback?.trim() || undefined,
+        timedOut: false,
+      },
+      decidedBy,
+    )
     return { ...entry.approval }
   }
 
@@ -146,6 +157,7 @@ export class ApprovalService {
     approvalId: string,
     status: ApprovalStatus,
     outcome: { decision: ApprovalOutcome['decision']; feedback?: string; timedOut: boolean; cancelled?: boolean },
+    decidedBy?: string,
   ): void {
     const entry = this.entries.get(approvalId)
     if (!entry) return
@@ -158,21 +170,22 @@ export class ApprovalService {
     entry.resolve({ approval: entry.approval, decision: outcome.decision, feedback: outcome.feedback, timedOut: outcome.timedOut, cancelled: outcome.cancelled })
     this.history.push(entry.approval)
     if (this.history.length > HISTORY_LIMIT) this.history.splice(0, this.history.length - HISTORY_LIMIT)
-    this.persist(entry.approval)
+    this.persist(entry.approval, decidedBy)
   }
 
-  /** 审核 M-4：审批留痕落库（upsert 幂等；写失败不阻断审批主流程，仅记日志） */
-  private persist(approval: ApprovalRequest): void {
+  /** 审核 M-4：审批留痕落库（upsert 幂等；写失败不阻断审批主流程，仅记日志）；M57：decided_by 归因 */
+  private persist(approval: ApprovalRequest, decidedBy?: string): void {
     const db = this.deps.db
     if (!db) return
     try {
       db.run(
-        `INSERT INTO approvals (id, run_id, session_id, agent_id, action, detail, options, status, decision, feedback, created_at, decided_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO approvals (id, run_id, session_id, agent_id, action, detail, options, status, decision, feedback, decided_by, created_at, decided_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
            status = excluded.status,
            decision = excluded.decision,
            feedback = excluded.feedback,
+           decided_by = COALESCE(excluded.decided_by, approvals.decided_by),
            decided_at = excluded.decided_at`,
         approval.id,
         approval.runId,
@@ -184,6 +197,7 @@ export class ApprovalService {
         approval.status,
         approval.decision ?? null,
         approval.feedback ?? null,
+        decidedBy ?? null,
         approval.createdAt,
         approval.decidedAt ?? null,
       )

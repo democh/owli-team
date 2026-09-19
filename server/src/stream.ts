@@ -18,7 +18,7 @@
  *     { type:'state', topic, state, controller }
  *     { type:'step', topic, step }
  *     { type:'closed', topic, reason }
- *     { type:'error', topic?, message, code? }
+ *     { type:'error', topic?, message, code? }          （takeover_moved：同用户接管流转，旧视图降级观察）
  *     { type:'pong' }
  *
  * 帧交付（对标 agent-browser 生产实践）：
@@ -32,7 +32,8 @@ import type { IncomingMessage, Server as HttpServer } from 'node:http'
 import { WebSocket, WebSocketServer } from 'ws'
 import type { AppConfig } from './config.js'
 import { getLogger } from './logger.js'
-import { AUTH_COOKIE, parseCookie, safeEqual } from './middleware.js'
+import { AUTH_COOKIE, parseCookie, resolveUserFromHeaders, safeEqual } from './middleware.js'
+import type { AuthService } from './auth/service.js'
 import type { BrowserRuntime } from './browser/runtime.js'
 import type { HumanInput } from './browser/session.js'
 import type { StreamTokenService } from './browser/stream-token.js'
@@ -53,6 +54,8 @@ interface Client {
   alive: boolean
   maxFps: number
   subs: Map<string, SubState>
+  /** M57：连接用户（流 token 绑定比对） */
+  userId?: string
 }
 
 interface ClientMessage {
@@ -77,6 +80,8 @@ export class StreamHub {
     private readonly cfg: AppConfig,
     private readonly runtime: BrowserRuntime,
     private readonly tokens: StreamTokenService,
+    /** M57：认证依赖（惰性读取；缺省 = 旧语义（仅 token 校验，测试兼容）） */
+    private readonly getAuthDeps?: () => { auth: AuthService },
   ) {}
 
   attach(server: HttpServer): void {
@@ -84,41 +89,55 @@ export class StreamHub {
     server.on('upgrade', (req, socket, head) => {
       const url = new URL(req.url ?? '/', 'http://localhost')
       if (url.pathname !== '/ws/stream') return // 其他升级请求交由其它监听器处理
-      if (!this.authorized(req, url)) {
+      const verdict = this.authorize(req, url)
+      if (!verdict.ok) {
         socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n')
         socket.destroy()
         return
       }
       this.wss?.handleUpgrade(req, socket, head, (ws) => {
-        this.wss?.emit('connection', ws, req)
+        this.wss?.emit('connection', ws, req, verdict.userId)
       })
     })
-    this.wss.on('connection', (socket) => this.onConnection(socket))
+    this.wss.on('connection', (socket: WebSocket, _req: IncomingMessage, userId?: string) =>
+      this.onConnection(socket, userId),
+    )
     this.heartbeatTimer = setInterval(() => this.tick(), this.cfg.wsHeartbeatMs)
     this.heartbeatTimer.unref?.()
   }
 
-  /** 握手鉴权（与 /ws 通道一致：cookie / query token / Bearer） */
-  private authorized(req: IncomingMessage, url: URL): boolean {
-    if (!this.cfg.authToken) return true
+  /**
+   * 握手鉴权（M57）：已注入认证依赖时解析登录态；未注入时沿用 AUTH_TOKEN 校验（测试兼容）。
+   * 用户 id 随连接保存，订阅时与流 token 的绑定用户比对（M57）。
+   */
+  private authorize(req: IncomingMessage, url: URL): { ok: boolean; userId?: string } {
+    const deps = this.getAuthDeps?.()
+    if (deps) {
+      const user = resolveUserFromHeaders(deps.auth, this.cfg, req.headers, url.searchParams.get('token') ?? '')
+      if (user) return { ok: true, userId: user.id }
+      if (!deps.auth.multiUser && !this.cfg.authToken) return { ok: true }
+      return { ok: false }
+    }
+    if (!this.cfg.authToken) return { ok: true }
     const header = req.headers.authorization ?? ''
     const bearer = header.startsWith('Bearer ') ? header.slice(7) : ''
     const cookieToken = parseCookie(req.headers.cookie ?? '', AUTH_COOKIE)
     const queryToken = url.searchParams.get('token') ?? ''
-    return (
+    const ok =
       safeEqual(bearer, this.cfg.authToken) ||
       safeEqual(cookieToken, this.cfg.authToken) ||
       safeEqual(queryToken, this.cfg.authToken)
-    )
+    return { ok }
   }
 
-  private onConnection(socket: WebSocket): void {
+  private onConnection(socket: WebSocket, userId?: string): void {
     const client: Client = {
       id: `sc_${randomUUID().slice(0, 8)}`,
       socket,
       alive: true,
       maxFps: this.cfg.browserFrameMaxFps,
       subs: new Map(),
+      userId,
     }
     this.clients.set(client.id, client)
     this.send(client, { type: 'hello', clientId: client.id, maxFps: client.maxFps })
@@ -200,20 +219,36 @@ export class StreamHub {
       this.send(client, { type: 'error', topic, message: '浏览器会话不存在或已关闭', code: 'session_gone' })
       return
     }
-    // token 校验：优先 takeover（权限更高），失败再试 watch
+    // token 校验：优先 takeover（权限更高），失败再试 watch；M57：与连接用户绑定比对
     let mode: 'watch' | 'takeover' | undefined
     const token = msg.token ?? ''
     if (token) {
-      if (this.tokens.verify(token, topic, 'takeover').ok) mode = 'takeover'
-      else if (this.tokens.verify(token, topic, 'watch').ok) mode = 'watch'
+      if (this.tokens.verify(token, topic, 'takeover', client.userId).ok) mode = 'takeover'
+      else if (this.tokens.verify(token, topic, 'watch', client.userId).ok) mode = 'watch'
     }
     if (!mode) {
       this.send(client, { type: 'error', topic, message: '缺少有效的流 token', code: 'token_invalid' })
       return
     }
     if (mode === 'takeover' && !this.acquireTakeover(topic, client.id)) {
-      this.send(client, { type: 'error', topic, message: '已有其他客户端接管中', code: 'takeover_busy' })
-      return
+      // M62：同用户接管流转（右栏面板 / 直播窗 / 多标签页常态）：旧客户端降级观察；跨用户保持拒绝
+      const holderId = this.takeoverHolders.get(topic)
+      const holder = holderId ? this.clients.get(holderId) : undefined
+      const sameUser = Boolean(client.userId && holder?.userId && client.userId === holder.userId)
+      if (sameUser && holder) {
+        const holderSub = holder.subs.get(topic)
+        if (holderSub) holderSub.mode = 'watch'
+        this.takeoverHolders.set(topic, client.id)
+        this.send(holder, {
+          type: 'error',
+          topic,
+          message: '接管已转移到你打开的另一视图（本视图降级为观察）',
+          code: 'takeover_moved',
+        })
+      } else {
+        this.send(client, { type: 'error', topic, message: '已有其他客户端接管中', code: 'takeover_busy' })
+        return
+      }
     }
     const existing = client.subs.get(topic)
     if (existing?.flushTimer) clearTimeout(existing.flushTimer)
@@ -293,6 +328,15 @@ export class StreamHub {
       if (!sub) continue
       this.deliver(client, sub, message)
     }
+  }
+
+  /** M62：频道订阅者计数（浏览器实例空闲回收判定；0 = 无观察者） */
+  subscriberCount(topic: string): number {
+    let count = 0
+    for (const client of this.clients.values()) {
+      if (client.subs.has(topic)) count += 1
+    }
+    return count
   }
 
   private deliver(client: Client, sub: SubState, message: Record<string, unknown>): void {

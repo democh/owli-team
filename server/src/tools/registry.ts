@@ -39,6 +39,20 @@ export interface ToolRuntime {
   sessionId: string
   runId: string
   agentId: string
+  /** M77：本回合说话成员键（同角多魂/分身实例；经典实例缺省 = agentId）——计划作者 / 任务归属 / 成员寻址用 */
+  memberKey?: string
+  /** M57：会话属主用户 id（多用户隔离：remember global 记忆 / 归因；单用户兼容模式缺省） */
+  userId?: string
+  /**
+   * M57 P2：本 Run 触发者用户 id（发起消息的 userId；缺省 = 兼容模式 / 历史 run / 系统触发）。
+   * 用于共享会话下的连接最小权限复核（会话属主 ≠ 触发者时以触发者为准）。
+   */
+  triggerUserId?: string
+  /**
+   * M57 P2：连接最小权限复核（返回拒绝文案；undefined = 放行；未装配 = 不做复核）。
+   * 由 index 装配（createConnectionUseGuard），引擎透传；工具在解析连接后调用。
+   */
+  connectionGuard?: (connectionId: string, triggerUserId?: string) => string | undefined
   /** 会话工作区绝对路径（workspace/<sessionId>） */
   workspace: string
   artifacts: ArtifactStore
@@ -62,10 +76,16 @@ export interface ToolRuntime {
   allowedCommands: string[]
   /** 敏感文件策略开关（SENSITIVE_PATTERNS 默认拒绝读写） */
   allowSensitive: boolean
-  /** web_fetch 白名单域名（为空 = 禁用该工具） */
-  webFetchAllowedDomains: string[]
-  /** web_search 配置（enabled=false 时工具不可用；apiKey 非空 = 官方 API 模式） */
-  webSearch: { enabled: boolean; apiKey: string; apiUrl: string; htmlUrl: string }
+  /** web_search 配置（无启用开关，始终可用；apiKey 非空 = 官方 API 模式，否则免 Key 多引擎降级链） */
+  webSearch: {
+    apiKey: string
+    apiUrl: string
+    htmlUrl: string
+    /** 免 Key 引擎降级链（引擎 id 顺序：baidu / bing / sogou / so360；空/缺省 = 内置默认链） */
+    engines?: string[]
+    /** 引擎基址覆写（测试注入本地地址；生产不使用） */
+    engineUrls?: Record<string, string>
+  }
   /** 联网工具浏览器 UA 覆盖（空 = 内置 Chrome 桌面版） */
   httpUserAgent: string
   /** 联网工具同域名最小请求间隔（毫秒，反爬限速；0 = 不限速） */
@@ -193,6 +213,8 @@ export interface ToolResult {
   plan?: Plan
   /** M24：评审记录（引擎广播 review:submitted） */
   review?: ReviewRecord
+  /** M31 修订：结构化元信息（随 ToolCallRecord 持久化并广播给前端；如画布写入的 canvasNodes 节点 id 清单） */
+  meta?: Record<string, unknown>
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -397,8 +419,10 @@ export class ToolRegistry {
     }
 
     // 幂等缓存（仅只读工具）
+    // M57 P2：缓存键含会话与触发者——跨会话绑定不同 / 共享会话内角色不同（如连接最小权限复核）
+    // 的结果不得互相复用；否则同参调用会命中他人缓存而绕过复核（本回合同会话同用户仍正常去重）。
     const cacheable = tool.readOnly === true
-    const key = cacheable ? `${name}:${stableKey(rawArgs)}` : ''
+    const key = cacheable ? `${ctx.sessionId}:${ctx.triggerUserId ?? ''}:${name}:${stableKey(rawArgs)}` : ''
     if (cacheable) {
       const hit = this.readCache.get(key)
       if (hit && hit.expiresAt > Date.now()) {

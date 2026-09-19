@@ -61,17 +61,17 @@ export function AvatarPreview(): React.JSX.Element {
             </div>
             <div className="flex flex-wrap items-end gap-6">
               <div className="flex flex-col items-center gap-2">
-                <AgentAvatar agent={agent} size={96} animated={false} className="rounded-lg" />
+                <AgentAvatar agent={agent} size={96} animated={false} />
                 <span className="text-[11.5px] text-muted-foreground">96px 大图</span>
               </div>
               {STATES.map((state) => (
                 <div key={state} className="flex flex-col items-center gap-2">
-                  <AgentAvatar agent={agent} size={64} state={state} className="rounded-md" />
+                  <AgentAvatar agent={agent} size={64} state={state} />
                   <span className="text-[11.5px] text-muted-foreground">{STATE_LABEL[state]}</span>
                 </div>
               ))}
               <div className="flex flex-col items-center gap-2">
-                <AgentAvatar agent={agent} size={38} animated={false} className="rounded-md" />
+                <AgentAvatar agent={agent} size={38} animated={false} />
                 <span className="text-[11.5px] text-muted-foreground">38px 列表</span>
               </div>
               <div className="flex flex-col items-center gap-2">
@@ -79,7 +79,6 @@ export function AvatarPreview(): React.JSX.Element {
                   agent={{ ...agent, avatar: { ...agent.avatar, image: undefined } }}
                   size={38}
                   animated={false}
-                  className="rounded-md"
                 />
                 <span className="text-[11.5px] text-muted-foreground">回退（无图）</span>
               </div>

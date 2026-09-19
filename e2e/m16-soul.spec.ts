@@ -22,7 +22,8 @@ test('换灵魂：默认铁面 → 切亲和，输出风格随之变化', async 
   // 成员卡：灵魂徽标「铁面」→ 切换「亲和」
   const card = page.locator('[title="查看 诺娃 的档案"]')
   await card.getByRole('button', { name: /铁面/ }).click()
-  await card.getByRole('button', { name: /^亲和/ }).click()
+  // 灵魂菜单走 Portal（挂 body，不在卡片作用域内）
+  await page.getByText('灵魂变体').locator('..').getByRole('button', { name: /^亲和/ }).click()
 
   // system 事件条 + 会话覆盖标记
   await expect(log.getByText('诺娃 换上了『亲和』灵魂')).toBeVisible()

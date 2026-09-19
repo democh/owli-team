@@ -2,10 +2,12 @@
  * M34-3（P2c）：终局裁决卡（::: verdict <多方|空方|僵持> [标题]）——
  * 条目由 remark 侧转 data-items JSON（`- 项名 | 内容`，如 置信度 / 核心依据 / 翻盘条件）。
  * - 状态色：多方红（涨）/ 空方绿（跌）/ 僵持灰；未知首词降级无状态色（只显示标题）；
- * - 纯静态卡（无本地交互态）：解析失败 / 空条目 → raw 兜底渲染，其余内容照常。
+ * - 「复制裁决」：导出结构化 markdown 列表（标题 + 条目），便于转发 / 引用；
+ * - 解析失败 / 空条目 → raw 兜底渲染，其余内容照常。
  */
 import * as React from 'react'
 import { cn } from '../../../lib/utils'
+import { CopyButton } from './CopyButton'
 
 export interface VerdictItemData {
   label: string
@@ -35,6 +37,12 @@ const VERDICT_LABEL: Record<string, string> = {
   long: '多方',
   short: '空方',
   draw: '僵持',
+}
+
+/** 裁决条目 → 可复制结构化文本（markdown 列表，可直接粘贴回聊天 / 文档） */
+export function buildVerdictText(title: string | undefined, label: string | undefined, items: VerdictItemData[]): string {
+  const head = `《${title || '裁决'}》${label ? `（${label}）` : ''}`
+  return [head, ...items.map((it) => `- ${it.label}：${it.value}`)].join('\n')
 }
 
 export function VerdictCard({
@@ -67,10 +75,15 @@ export function VerdictCard({
 
   return (
     <div className={cls}>
-      <div className="md-verdict-head">
-        {label ? <span className="md-verdict-badge">{label}</span> : null}
-        {title ? <span className="md-verdict-title">{title}</span> : null}
-      </div>
+      {label || title ? (
+        <div className="md-verdict-head">
+          {label ? <span className="md-verdict-badge">{label}</span> : null}
+          {title ? <span className="md-verdict-title">{title}</span> : null}
+          <span className="md-verdict-actions">
+            <CopyButton text={() => buildVerdictText(title, label, parsed)} label="复制裁决" />
+          </span>
+        </div>
+      ) : null}
       <div className="md-verdict-body">
         {parsed.map((it, i) => (
           <div className="md-verdict-row" key={i}>

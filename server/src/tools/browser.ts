@@ -133,7 +133,8 @@ const browserOpenTool: AgentTool<{ url?: string; connection_id?: string; system?
 
 const browserNavigateTool: AgentTool<{ url?: string; direction?: 'back' | 'forward' }> = {
   name: 'browser_navigate',
-  description: '在已打开的浏览器中导航：打开 URL，或前进/后退（direction=back|forward）。',
+  description:
+    '在已打开的浏览器中导航：打开 URL（同页跳转），或前进/后退（direction=back|forward）。浏览器未开时用 browser_open 一步到位（可带 URL）；本工具用于打开后的再次导航与前进后退。',
   parameters: {
     type: 'object',
     properties: {
@@ -246,7 +247,8 @@ const browserClickTool: AgentTool<{ selector?: string; x?: number; y?: number }>
 
 const browserFillTool: AgentTool<{ selector: string; value: string; submit?: boolean }> = {
   name: 'browser_fill',
-  description: '在输入框中填写文本（先清空再输入）。submit=true 时填完后按回车（适合搜索框 / 简单表单）。',
+  description:
+    '在输入框中填写文本（先清空再输入）。selector 取自 browser_snapshot 清单，不要猜 CSS 路径；submit=true 时填完后按回车（适合搜索框 / 简单表单，复杂表单改用 browser_click 点提交）。',
   parameters: {
     type: 'object',
     properties: {
@@ -293,7 +295,8 @@ const browserPressTool: AgentTool<{ key: string }> = {
 
 const browserScrollTool: AgentTool<{ delta_y: number; delta_x?: number }> = {
   name: 'browser_scroll',
-  description: '滚动页面。delta_y 为正向下（典型值 600），负向上。',
+  description:
+    '滚动页面（目标内容在视口外 / 需要继续阅读时用）。delta_y 为正向下（典型值 600），负向上。滚动后重新 browser_snapshot 再定位元素，不要盲点坐标。',
   parameters: {
     type: 'object',
     properties: {

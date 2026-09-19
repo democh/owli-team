@@ -207,6 +207,7 @@ const LIST: Artifact[] = [
   makeArtifact('data/orders.csv', 'data'),
   makeArtifact('docs/周报.docx', 'office'),
   makeArtifact('notes.md', 'markdown'),
+  makeArtifact('docs/草稿.md', 'markdown'),
   makeArtifact('assets/logo.png', 'image'),
 ]
 
@@ -214,6 +215,7 @@ const CONTENT: Record<string, string> = {
   'site/index.html': '<!doctype html><html><body><h1>首页</h1></body></html>',
   'data/orders.csv': 'id,amount\n1,10\n2,20',
   'notes.md': '# 会议纪要\n\n结论：按计划推进。',
+  'docs/草稿.md': '# 草稿\n\n<!-- §1 待填 -->\n\n## 一节\n\n粗稿。',
 }
 
 const fetchMock = vi.fn(async (input: unknown) => {
@@ -303,5 +305,24 @@ describe('ArtifactsView 多格式分派', () => {
     expect(await screen.findByRole('heading', { name: '会议纪要' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '源码' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Diff' })).toBeInTheDocument()
+  })
+
+  it('markdown → 交付体检条（与 server write_file 同口径）：字数 / 章节 / 表格 / 来源', async () => {
+    const { container } = render(<ArtifactsView />)
+    await waitFirstFile(container)
+    await userEvent.click(screen.getByTitle('notes.md'))
+    expect(await screen.findByRole('heading', { name: '会议纪要' })).toBeInTheDocument()
+    expect(screen.getByText('交付体检')).toBeInTheDocument()
+    expect(screen.getByText(/\d+ 字/)).toBeInTheDocument()
+    expect(screen.getByText(/(\d+) 章节/)).toBeInTheDocument()
+    expect(screen.getByText(/表格 \d+/)).toBeInTheDocument()
+    expect(screen.getByText(/来源 \d+/)).toBeInTheDocument()
+  })
+
+  it('markdown 占位残留 → 体检条显示 ⚠ 警告', async () => {
+    const { container } = render(<ArtifactsView />)
+    await waitFirstFile(container)
+    await userEvent.click(screen.getByTitle('docs/草稿.md'))
+    expect(await screen.findByText(/占位残留 1 处/)).toBeInTheDocument()
   })
 })

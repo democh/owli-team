@@ -11,13 +11,14 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import type { CanvasNodeInput } from '@multi-agent/shared'
-import { CanvasDocConflictError, CanvasStore } from '../src/canvas/store.js'
+import { CanvasDocConflictError, CanvasStore, type CanvasChangeMeta } from '../src/canvas/store.js'
 import { makeTmpDir } from './helpers.js'
 
 interface PublishedChange {
   sessionId: string
   version: number
   by: string
+  meta: CanvasChangeMeta
 }
 
 function makeStore(dataDir = makeTmpDir('ma-canvas-')): {
@@ -28,7 +29,7 @@ function makeStore(dataDir = makeTmpDir('ma-canvas-')): {
   const published: PublishedChange[] = []
   const store = new CanvasStore({
     dataDir,
-    publish: (sessionId, version, by) => published.push({ sessionId, version, by }),
+    publish: (sessionId, version, by, meta) => published.push({ sessionId, version, by, meta }),
   })
   return { store, dataDir, published }
 }
@@ -60,7 +61,9 @@ describe('M31 画布文档：基础读写与持久化', () => {
       1,
     )
     expect(saved.version).toBe(2)
-    expect(published).toEqual([{ sessionId: 'sess_a', version: 2, by: 'user' }])
+    expect(published).toEqual([
+      { sessionId: 'sess_a', version: 2, by: 'user', meta: { touched: { added: [], updated: [], removed: [] }, reason: 'save' } },
+    ])
 
     // 磁盘为真相：新实例无缓存，读回内容一致
     const fresh = new CanvasStore({ dataDir })
@@ -143,7 +146,12 @@ describe('M31 画布文档：applyOps（agent 写入）', () => {
     const placed = second.doc.nodes[1]!
     expect(placed.position.x).toBeGreaterThan(100) // 自动排布在右侧
     expect(placed.position.y).toBe(50)
-    expect(published.at(-1)).toEqual({ sessionId: 'sess_ops', version: second.doc.version, by: 'agent' })
+    expect(published.at(-1)).toEqual({
+      sessionId: 'sess_ops',
+      version: second.doc.version,
+      by: 'agent',
+      meta: { actor: undefined, touched: { added: [placed.id], updated: [], removed: [] }, reason: 'ops' },
+    })
   })
 
   it('add_node：批量同一批内互推位置（第二张卡不叠在第一张上）', () => {
@@ -225,5 +233,56 @@ describe('M31 画布文档：applyOps（agent 写入）', () => {
       2,
     )
     expect(saved.version).toBe(3)
+  })
+})
+
+describe('M31 修订：写入者（by）与变更元信息', () => {
+  it('applyOps：opts.by 注入 add_node 节点 by；update 保留原作者', () => {
+    const { store } = makeStore()
+    const first = store.applyOps('sess_by', [{ op: 'add_node', node: noteNode('甲', 'nd_1') }], { by: 'backend' })
+    expect(first.doc.nodes[0]!.by).toBe('backend')
+    const second = store.applyOps('sess_by', [{ op: 'update_node', id: 'nd_1', data: { text: '乙' } }], { by: 'pm' })
+    expect(second.doc.nodes[0]!.by).toBe('backend') // 更新不改原作者（保留初始写入者）
+  })
+
+  it('applyOps：未给 by（用户 / 系统路径）节点不标作者', () => {
+    const { store } = makeStore()
+    const { doc } = store.applyOps('sess_noby', [{ op: 'add_node', node: noteNode('甲', 'nd_x') }])
+    expect(doc.nodes[0]!.by).toBeUndefined()
+    expect(doc.nodes[0]).not.toHaveProperty('by')
+  })
+
+  it('touched 全量记录（update / 级联删边）；广播 meta 带 actor 与 reason', () => {
+    const { store, published } = makeStore()
+    store.applyOps(
+      'sess_touch',
+      [
+        { op: 'add_node', node: noteNode('A', 'nd_a') },
+        { op: 'add_node', node: noteNode('B', 'nd_b') },
+        { op: 'connect', source: 'nd_a', target: 'nd_b' },
+      ],
+      { by: 'pm' },
+    )
+    const addedMeta = published.at(-1)!.meta
+    expect(addedMeta.actor).toBe('pm')
+    expect(addedMeta.reason).toBe('ops')
+    expect(addedMeta.touched.added).toContain('nd_a')
+    expect(addedMeta.touched.added).toContain('nd_b')
+    const edgeId = addedMeta.touched.added.find((id) => id.startsWith('ed_'))!
+    expect(edgeId).toBeDefined()
+
+    const { doc } = store.applyOps(
+      'sess_touch',
+      [
+        { op: 'update_node', id: 'nd_a', data: { text: 'A2' } },
+        { op: 'remove_node', id: 'nd_b' }, // 级联删边一并记入 removed
+      ],
+      { by: 'pm', reason: 'media' },
+    )
+    expect(doc.nodes.map((n) => n.id)).toEqual(['nd_a'])
+    const meta = published.at(-1)!.meta
+    expect(meta.reason).toBe('media')
+    expect(meta.touched.updated).toEqual(['nd_a'])
+    expect(meta.touched.removed).toEqual(expect.arrayContaining(['nd_b', edgeId]))
   })
 })

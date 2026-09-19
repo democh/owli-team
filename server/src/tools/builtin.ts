@@ -9,7 +9,7 @@ import { promisify } from 'node:util'
 import { createTwoFilesPatch } from 'diff'
 import { z } from 'zod'
 import type { MemoryKind, MemoryScope } from '@multi-agent/shared'
-import { USER_ALIASES } from '@multi-agent/shared'
+import { measureDoc, USER_ALIASES } from '@multi-agent/shared'
 import type { AppConfig } from '../config.js'
 import { classifyKind, isBinaryExt } from '../store/artifacts.js'
 import { DOCUMENT_EXTS, extractDocumentText } from '../util/document-extract.js'
@@ -48,6 +48,11 @@ import { createFinanceTools } from './finance.js'
 import { createFinanceQuantTools } from './finance_quant.js'
 // M51-E：命理排盘工具集（四柱 / 紫微 / 星盘 / 卦；纯计算只读，tier=deferred）
 import { createPanTools } from './pan.js'
+// M69：场景玩法工具集（trpg 掷骰 / tarot 抽牌；纯计算只读，tier=deferred）
+import { createDiceTools } from './dice.js'
+import { createTarotTools } from './tarot.js'
+import { createLuopanTools } from './luopan.js'
+import { createZeriTools } from './zeri.js'
 
 const exec = promisify(execCb)
 
@@ -285,22 +290,40 @@ const readFileTool = {
   },
 }
 
+/** 交付规格体检（仅 Markdown 类）：落盘后回灌结构化指标，供模型对照 <deliverable_spec> 自检 */
+function healthNote(rel: string, content: string): string {
+  if (!/\.(md|markdown)$/i.test(rel)) return ''
+  const m = measureDoc(content)
+  const warn = m.placeholders > 0 ? `⚠ 占位残留 ${m.placeholders} 处（待填 / TODO）——交付前请逐处替换为正文并清理。` : ''
+  return `\n体检：非空白字符 ${m.chars} / 二级章节 ${m.sections} / 表格 ${m.tables} / 来源标记 ${m.sources}——对照交付规格（速览 ≤800 / 标准 1500–4000 / 深度 ≥4000）自检；未达档位下限先补全再交还。${warn}`
+}
+
 const writeFileTool = {
   name: 'write_file',
   description:
-    '把交付件写入工作区（新建或覆盖，自动创建目录）。产出文档 / 代码 / 报告等成果时使用，这是团队交付件的主通道。覆盖已有文件时建议先 dry_run=true 预览 diff 再正式写入。',
+    '把交付件写入工作区（新建或覆盖，自动创建目录）。产出文档 / 代码 / 报告等成果时使用，这是团队交付件的主通道。覆盖已有文件时建议先 dry_run=true 预览 diff 再正式写入；长报告分章撰写时用 mode=append 逐节追加（先骨架后填充），避免单次成文被截断。',
   parameters: {
     type: 'object',
     properties: {
       path: { type: 'string', description: '工作区内相对路径，如 docs/需求文档.md' },
       content: { type: 'string', description: '完整文件内容' },
-      dry_run: { type: 'boolean', description: '仅预览：覆盖已有文件时返回 diff 摘要不写入（默认 false）' },
+      mode: {
+        type: 'string',
+        enum: ['overwrite', 'append'],
+        description: '写入模式：overwrite 覆盖（默认）/ append 追加到文件末尾（长文档逐节撰写；文件不存在时等价新建）',
+      },
+      dry_run: { type: 'boolean', description: '仅预览：对已有文件返回 diff 摘要不写入（默认 false）' },
     },
     required: ['path', 'content'],
   },
-  schema: z.object({ path: z.string().min(1), content: z.string(), dry_run: z.boolean().default(false) }),
+  schema: z.object({
+    path: z.string().min(1),
+    content: z.string(),
+    mode: z.enum(['overwrite', 'append']).default('overwrite'),
+    dry_run: z.boolean().default(false),
+  }),
   async execute(
-    args: { path: string; content: string; dry_run: boolean },
+    args: { path: string; content: string; mode: 'overwrite' | 'append'; dry_run: boolean },
     ctx: ToolRuntime,
   ): Promise<ToolResult> {
     try {
@@ -311,27 +334,32 @@ const writeFileTool = {
 
       const exists = fs.existsSync(full) && fs.statSync(full).isFile()
       const previous = exists ? fs.readFileSync(full, 'utf8') : ''
-      const diffSummary = exists ? summarizeDiff(rel, previous, args.content) : undefined
+      // 交付规格闭环：append 模式以空行衔接（长文档分节撰写）；文件不存在时等价新建
+      const appended = args.mode === 'append' && previous !== ''
+      const next = appended ? `${previous.replace(/\s+$/, '')}\n\n${args.content}` : args.content
+      const diffSummary = exists ? summarizeDiff(rel, previous, next) : undefined
 
       // M5：覆盖已有文件的 dry-run（供模型/审批先看改动）
       if (exists && args.dry_run) {
-        const patch = createTwoFilesPatch(rel, rel, previous, args.content, '原内容', '新内容', { context: 2 })
+        const patch = createTwoFilesPatch(rel, rel, previous, next, '原内容', '新内容', { context: 2 })
         return {
           ok: true,
-          summary: `dry-run：未写入。将覆盖 ${rel}（${diffSummary}）`,
-          detail: `以下是本次覆盖的 diff 预览（未写入）：\n${patch.slice(0, 3_000)}${patch.length > 3_000 ? '\n…（预览已截断）' : ''}`,
+          summary: `dry-run：未写入。将${appended ? '追加到' : '覆盖'} ${rel}（${diffSummary}）`,
+          detail: `以下是本次${appended ? '追加' : '覆盖'}的 diff 预览（未写入）：\n${patch.slice(0, 3_000)}${patch.length > 3_000 ? '\n…（预览已截断）' : ''}`,
         }
       }
 
       // M5：原子写（临时文件 → 检查中断 → rename）
-      writeFileAtomic(full, args.content, ctx.signal)
+      writeFileAtomic(full, next, ctx.signal)
       ctx.artifacts.markAuthor(ctx.sessionId, rel, ctx.agentId)
       return {
         ok: true,
-        summary: exists
-          ? `已覆盖 ${rel}（${diffSummary}）（${humanSize(Buffer.byteLength(args.content))}）`
-          : `已写入 ${rel}（${humanSize(Buffer.byteLength(args.content))}）`,
-        detail: `交付件 ${rel} 已写入工作区，可在交付件面板中查看。`,
+        summary: appended
+          ? `已追加到 ${rel}（+${humanSize(Buffer.byteLength(args.content))}，共 ${humanSize(Buffer.byteLength(next))}）`
+          : exists
+            ? `已覆盖 ${rel}（${diffSummary}）（${humanSize(Buffer.byteLength(next))}）`
+            : `已写入 ${rel}（${humanSize(Buffer.byteLength(next))}）`,
+        detail: `交付件 ${rel} 已写入工作区，可在交付件面板中查看。${healthNote(rel, next)}`,
         artifacts: [rel],
       }
     } catch (err) {
@@ -443,7 +471,7 @@ const searchTextTool = {
   },
 }
 
-/** M25：remember scope → owner 解析（project 未关联项目时不可写） */
+/** M25：remember scope → owner 解析（project 未关联项目时不可写）；M57：global 桶按用户切分 */
 function resolveMemoryOwner(
   scope: MemoryScope,
   ctx: ToolRuntime,
@@ -456,7 +484,8 @@ function resolveMemoryOwner(
         ? { ownerId: ctx.projectId }
         : { error: '本会话未关联项目，不能写入 project 记忆（可改用 session / agent / global）' }
     case 'global':
-      return { ownerId: 'global' }
+      // 多用户：global 记忆按用户隔离（owner = 用户 id）；单用户兼容模式回退旧口径 'global'
+      return { ownerId: ctx.userId || 'global' }
     default:
       return { ownerId: ctx.sessionId }
   }
@@ -505,6 +534,7 @@ const rememberTool = {
       importance: args.importance,
       sourceSessionId: ctx.sessionId,
       sourceRunId: ctx.runId,
+      userId: ctx.userId,
     })
     if (!result) return { ok: false, summary: '记忆内容不能为空' }
     // supersedes：仅同 scope+owner 的 active 旧条目可被取代（防跨作用域误伤）
@@ -570,7 +600,7 @@ const writeTodosTool = {
     const items = ctx.tasks.replace(
       ctx.sessionId,
       ctx.runId,
-      args.todos.map((t) => ({ content: t.content, status: t.status, ownerAgentId: ctx.agentId })),
+      args.todos.map((t) => ({ content: t.content, status: t.status, ownerAgentId: ctx.memberKey ?? ctx.agentId })),
     )
     ctx.todos.splice(0, ctx.todos.length, ...args.todos)
     const icon = { pending: '☐', in_progress: '◐', done: '☑' } as const
@@ -858,6 +888,13 @@ export function createToolRegistry(cfg: AppConfig): ToolRegistry {
     ...createScheduleTools(),
     // M51-E：命理排盘（bazi_pan / ziwei_pan / natal_pan / gua_pan；tier=deferred，经 tool_search「排盘 / 命盘 / 星盘」检索激活）
     ...createPanTools(),
+    // M69：场景玩法（dice_roll / tarot_draw；tier=deferred，经 tool_search「掷骰 / 骰子 / 塔罗 / 抽牌」检索激活）
+    ...createDiceTools(),
+    ...createTarotTools(),
+    // M66-A：罗盘排盘（luopan_pan；tier=deferred，经 tool_search「罗盘 / 风水 / 堪舆 / 阳宅 / 坐向 / 飞星」检索激活）
+    ...createLuopanTools(),
+    // M66 续完善：择日排盘（zeri_pan；tier=deferred，经 tool_search「择日 / 日课 / 吉日 / 黄道 / 建除」检索激活）
+    ...createZeriTools(),
   ]) {
     registry.register(tool)
   }

@@ -1,6 +1,6 @@
 /**
- * M31：画布工具栏（左上浮动）—— 添加节点 / 上传 / 媒体生成 / 脑图工坊 / 撤销重做 /
- * 对齐分布整理（含脑图整理）/ 适应视野 / 导出 JSON 与脑图 Markdown / 保存状态。
+ * M31：画布工具栏（左上浮动）—— 添加节点 / 上传 / 媒体生成（按能力门控）/ 脑图工坊 /
+ * 撤销重做 / 对齐分布整理（含脑图整理与网格吸附开关）/ 手型工具 / 适应视野 / 导出 / 保存状态。
  */
 import * as React from 'react'
 import {
@@ -14,10 +14,12 @@ import {
   AlignVerticalSpaceAround,
   Download,
   FileText,
+  Hand,
   LayoutGrid,
   Maximize,
   Plus,
   Redo2,
+  Search,
   Sparkles,
   Undo2,
   Upload,
@@ -27,6 +29,7 @@ import {
 import { cn } from '../../lib/utils'
 import { useCanvasStore } from '../../stores/canvas-store'
 import type { AlignMode } from '../../lib/canvas'
+import { useMediaCapabilities } from './useMediaCapabilities'
 
 function ToolBtn({
   title,
@@ -75,20 +78,32 @@ export interface CanvasToolbarProps {
   onAdd(): void
   onUpload(): void
   onGenerate(): void
+  onSearch(): void
   onMind(): void
   onFit(): void
   onExport(): void
   onExportMind(): void
+  /** 当前工具：选择（框选）/ 手型（拖动平移）；H / V 与工具栏按钮同源 */
+  tool: 'select' | 'hand'
+  onToolChange(tool: 'select' | 'hand'): void
+  /** 拖动吸附模式：智能参考线（默认）↔ 10px 网格（与参考线互斥） */
+  gridSnap: boolean
+  onGridSnapChange(on: boolean): void
 }
 
 export function CanvasToolbar({
   onAdd,
   onUpload,
   onGenerate,
+  onSearch,
   onMind,
   onFit,
   onExport,
   onExportMind,
+  tool,
+  onToolChange,
+  gridSnap,
+  onGridSnapChange,
 }: CanvasToolbarProps): React.JSX.Element {
   const selectedIds = useCanvasStore((s) => s.selectedIds)
   const undoDepth = useCanvasStore((s) => s.undoDepth)
@@ -100,6 +115,8 @@ export function CanvasToolbar({
   const hasMindSelected = useCanvasStore(
     (s) => s.selectedIds.length > 0 && s.selectedIds.some((id) => s.doc?.nodes.some((n) => n.id === id && n.type === 'mind')),
   )
+  // 能力门控（M31 修订）：未配置任何生图 / 生视频能力时，生成钮整钮不渲染（配置入口常驻设置页）
+  const { canGenerate } = useMediaCapabilities()
   const [alignOpen, setAlignOpen] = React.useState(false)
   const alignRef = React.useRef<HTMLDivElement>(null)
 
@@ -128,15 +145,20 @@ export function CanvasToolbar({
 
   return (
     <div className="absolute left-3 top-3 z-30 flex items-center gap-0.5 rounded-lg border bg-card/95 p-1 shadow-soft backdrop-blur">
+      <ToolBtn title="查找节点（/）" onClick={onSearch}>
+        <Search className="size-4" />
+      </ToolBtn>
       <ToolBtn title="添加节点" onClick={onAdd}>
         <Plus className="size-4" />
       </ToolBtn>
       <ToolBtn title="上传图片 / 视频" onClick={onUpload}>
         <Upload className="size-4" />
       </ToolBtn>
-      <ToolBtn title="媒体生成（文生图 / 视频）" onClick={onGenerate}>
-        <Sparkles className="size-4" />
-      </ToolBtn>
+      {canGenerate && (
+        <ToolBtn title="媒体生成（文生图 / 视频）" onClick={onGenerate}>
+          <Sparkles className="size-4" />
+        </ToolBtn>
+      )}
       <ToolBtn title="脑图工坊（AI 生成 / 大纲导入）" onClick={onMind}>
         <Waypoints className="size-4" />
       </ToolBtn>
@@ -199,6 +221,25 @@ export function CanvasToolbar({
               <LayoutGrid className="size-3.5 text-muted-foreground" aria-hidden />
               网格整理
             </button>
+            <span className="my-1 block h-px bg-border" aria-hidden />
+            <button
+              type="button"
+              className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[12px] transition-colors hover:bg-accent"
+              title="开启后拖动按 10px 网格取整（智能参考线让位）"
+              onClick={() => onGridSnapChange(!gridSnap)}
+            >
+              <LayoutGrid className="size-3.5 text-muted-foreground" aria-hidden />
+              对齐网格 10px
+              <span
+                className={cn(
+                  'ml-auto flex h-3.5 w-6 shrink-0 items-center rounded-full border px-0.5 transition-colors',
+                  gridSnap ? 'border-primary/60 bg-primary/20' : 'bg-muted',
+                )}
+                aria-hidden
+              >
+                <span className={cn('size-2.5 rounded-full transition-transform', gridSnap ? 'translate-x-2.5 bg-primary' : 'bg-muted-foreground/50')} />
+              </span>
+            </button>
             {hasMindSelected && (
               <button
                 type="button"
@@ -212,7 +253,14 @@ export function CanvasToolbar({
           </div>
         )}
       </div>
-      <ToolBtn title="适应视野" onClick={onFit}>
+      <ToolBtn
+        title={tool === 'hand' ? '手型工具（H）· 拖动平移画布' : '手型工具（H）· 当前为选择工具（V）'}
+        active={tool === 'hand'}
+        onClick={() => onToolChange(tool === 'hand' ? 'select' : 'hand')}
+      >
+        <Hand className="size-4" />
+      </ToolBtn>
+      <ToolBtn title="适应视野（⌘1）" onClick={onFit}>
         <Maximize className="size-4" />
       </ToolBtn>
       <ToolBtn title="导出画布 JSON" onClick={onExport}>

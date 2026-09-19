@@ -38,6 +38,8 @@ export interface RecallRequest {
   exclude?: Set<string>
   /** 跳过「语义召回开关」检查（评分调试接口用；休眠/超时仍静默跳过） */
   force?: boolean
+  /** M57：用户维度（多用户隔离：global 桶按用户切分 + 命中行按用户过滤；缺省 = 单用户兼容模式） */
+  userId?: string
 }
 
 export interface RecallOutcome extends RecallResult {
@@ -141,6 +143,7 @@ export class MemoryService {
             minScore: request.minScore ?? cfg.memoryRecallMinScore,
             budgetTokens: request.budgetTokens ?? cfg.memoryRecallBudgetTokens,
             exclude: request.exclude,
+            userId: request.userId,
           },
         )
       })
@@ -193,13 +196,13 @@ export class MemoryService {
     }
   }
 
-  /** 召回桶：session + agent + project + global（缺省维度自动跳过） */
+  /** 召回桶：session + agent + project + global（缺省维度自动跳过；M57：global 桶按用户切分） */
   private bucketsOf(request: RecallRequest): string[] {
     const buckets: string[] = []
     if (request.sessionId) buckets.push(bucketOf('session', request.sessionId))
     if (request.agentId) buckets.push(bucketOf('agent', request.agentId))
     if (request.projectId) buckets.push(bucketOf('project', request.projectId))
-    buckets.push(bucketOf('global', 'global'))
+    buckets.push(bucketOf('global', request.userId || 'global'))
     return buckets
   }
 

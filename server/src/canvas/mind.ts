@@ -128,6 +128,8 @@ export class MindGenerator {
           { role: 'user', content: `<material source="${input.source}">\n${assembled.text}\n</material>` },
         ],
         model: this.deps.cfg.summaryModel || undefined,
+        // M57 P3：BYOK 凭据按会话属主解析
+        sessionId: input.sessionId,
         temperature: 0.3,
         responseFormat: { type: 'json_schema', name: 'mind_tree', schema: MIND_TREE_SCHEMA },
         meta: { agentId: MIND_AGENT_ID, participantIds: [], stepIndex: 0 },

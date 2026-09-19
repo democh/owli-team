@@ -1,12 +1,15 @@
 /**
  * M31：节点统一外壳 —— 选中描边 / 悬停操作行（副本 · 删除）/ NodeResizer / 左右连线把手。
  * 说明：节点内容由各类型组件提供；画框（GroupNode）样式差异大，单独实现不走上壳。
+ * M31 修订：作者徽标 —— agent 写入（node.by）的节点左下角挂头像（内部查 store，零侵入子节点组件）。
  */
 import * as React from 'react'
 import { Handle, NodeResizer, Position } from '@xyflow/react'
 import { Copy, Trash2 } from 'lucide-react'
 import { cn } from '../../../lib/utils'
+import { useAgentStore } from '../../../stores/agent-store'
 import { useCanvasStore } from '../../../stores/canvas-store'
+import { AgentAvatar } from '../../agents/AgentAvatar'
 
 export interface NodeShellProps {
   nodeId: string
@@ -60,6 +63,9 @@ export function NodeShell({
 }: NodeShellProps): React.JSX.Element {
   const duplicateNodes = useCanvasStore((s) => s.duplicateNodes)
   const removeNodes = useCanvasStore((s) => s.removeNodes)
+  // M31 修订：作者徽标数据源（选择器返回字符串 / 对象引用稳定，不引起额外重渲染）
+  const authorId = useCanvasStore((s) => s.doc?.nodes.find((n) => n.id === nodeId)?.by)
+  const authorAgent = useAgentStore((s) => (authorId ? s.agents.find((a) => a.id === authorId) : undefined))
   return (
     <div
       className={cn(
@@ -79,6 +85,11 @@ export function NodeShell({
         />
       )}
       {children}
+      {authorAgent && (
+        <span className="absolute -bottom-2 left-1.5 z-20" title={`由「${authorAgent.name}」写入`}>
+          <AgentAvatar agent={authorAgent} size={14} animated={false} />
+        </span>
+      )}
       <div className="absolute -top-3 right-1.5 z-20 hidden items-center gap-0.5 rounded-md border bg-card/95 p-0.5 shadow-sm backdrop-blur group-hover/cnode:flex">
         <ShellAction title="创建副本" onClick={() => duplicateNodes([nodeId])}>
           <Copy className="size-3" />

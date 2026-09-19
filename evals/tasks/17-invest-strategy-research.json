@@ -13,6 +13,8 @@
     { "type": "artifact_contains", "path": "docs/策略方案-增长.md", "text": "失效条件" },
     { "type": "artifact_contains", "path": "docs/基本面分析-增长.md", "text": "估值三口径" },
     { "type": "artifact_contains", "path": "docs/投研报告-增长.md", "text": "免责声明" },
+    { "type": "min_sections", "path": "docs/投研报告-增长.md", "value": 6 },
+    { "type": "min_chars", "path": "docs/投研报告-增长.md", "value": 300 },
     { "type": "handoff_targets", "values": ["analyst-fa", "quant", "analyst-ta"] },
     { "type": "turns_lte", "value": 5 },
     { "type": "no_loop" },

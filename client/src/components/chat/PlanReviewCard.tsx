@@ -27,6 +27,7 @@ import { useAgentStore } from '../../stores/agent-store'
 import { usePlanStore } from '../../stores/plan-store'
 import { useSessionStore } from '../../stores/session-store'
 import { cn } from '../../lib/utils'
+import { memberDisplayList } from '../../lib/members'
 import { formatClock } from '../../lib/time'
 import { Button } from '../ui/button'
 import { Badge } from '../ui/badge'
@@ -107,7 +108,7 @@ function StepRow({
           <span>{meta.label}</span>
           {member && (
             <span className="flex items-center gap-1">
-              <AgentAvatar agent={member} size={13} animated={false} className="rounded" />
+              <AgentAvatar agent={member} size={13} animated={false} />
               {member.name}
             </span>
           )}
@@ -144,7 +145,7 @@ function CardHeader({ plan, author }: { plan: Plan; author?: AgentDefinition }):
       <ClipboardList className="size-4 shrink-0 text-primary" />
       {author && (
         <span className="flex items-center gap-1 text-[11px] text-muted-foreground">
-          <AgentAvatar agent={author} size={15} animated={false} className="rounded" />
+          <AgentAvatar agent={author} size={15} animated={false} />
           {author.name}
         </span>
       )}
@@ -517,7 +518,7 @@ function PlanProgressCard({ plan, members, reviews }: { plan: Plan; members: Age
               const reviewer = members.find((m) => m.id === r.agentId)
               return (
                 <span key={r.id} className="flex items-center gap-1" title={r.findings.join('；') || r.target}>
-                  {reviewer && <AgentAvatar agent={reviewer} size={12} animated={false} className="rounded" />}
+                  {reviewer && <AgentAvatar agent={reviewer} size={12} animated={false} />}
                   {reviewer?.name ?? r.agentId}
                   <Badge variant={VERDICT_META[r.verdict].variant} className="px-1.5 py-0 text-[10px]">
                     {VERDICT_META[r.verdict].label}
@@ -558,9 +559,12 @@ export function PlanReviewCard(): React.JSX.Element | null {
 
   if (!currentId || visible.length === 0) return null
 
-  const members = (session?.participantIds ?? [])
-    .map((id) => agents.find((a) => a.id === id))
-    .filter(Boolean) as AgentDefinition[]
+  // M77：成员实例投影（id = 成员键、name = 展示标签）+ 幽灵补位（作者/负责人/评审人已离场时仍可读）
+  // 注：早退之后不得引入 hook（保持 hook 调用顺序不变）
+  const members = memberDisplayList(agents, session, [
+    ...visible.flatMap((p) => [p.agentId, ...p.steps.map((s) => s.ownerAgentId ?? p.agentId)]),
+    ...reviews.map((r) => r.agentId),
+  ])
 
   return (
     <div className="min-h-[80px] max-h-[62vh] space-y-2 overflow-y-auto px-4 pb-1">

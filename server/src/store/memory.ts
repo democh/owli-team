@@ -62,6 +62,8 @@ interface MemoryRow {
   id: string
   scope: string
   owner_id: string
+  /** M57：用户维度（access 归属；global scope 即用户 id，其余 scope 从来源会话推导） */
+  user_id?: string | null
   session_id: string | null
   kind: string
   content: string
@@ -102,6 +104,7 @@ function rowToItem(row: MemoryRow): MemoryItem {
     sessionId: row.session_id ?? undefined,
     scope: row.scope as MemoryScope,
     ownerId: row.owner_id,
+    userId: row.user_id ?? undefined,
     kind: row.kind as MemoryKind,
     content: row.content,
     source: row.source ?? undefined,
@@ -146,12 +149,16 @@ export interface MemoryUpsertExtra {
   sourceSessionId?: string
   sourceRunId?: string
   status?: MemoryStatus
+  /** M57：用户维度（多用户隔离；单用户兼容模式缺省 = NULL） */
+  userId?: string
 }
 
 export interface MemoryListFilter {
   kind?: MemoryKind
   status?: MemoryStatus
   limit?: number
+  /** M57：用户维度过滤（多用户隔离；缺省 = 不过滤） */
+  userId?: string
 }
 
 /** M25 管理查询过滤（跨 scope 列表接口） */
@@ -164,6 +171,8 @@ export interface MemoryQueryFilter {
   q?: string
   limit?: number
   offset?: number
+  /** M57：用户维度过滤（多用户隔离；缺省 = 不过滤） */
+  userId?: string
 }
 
 /**
@@ -217,7 +226,11 @@ export class MemoryStore {
     return this.countScoped('session', sessionId)
   }
 
-  countScoped(scope: MemoryScope, ownerId: string, filter: Pick<MemoryListFilter, 'kind' | 'status'> = {}): number {
+  countScoped(
+    scope: MemoryScope,
+    ownerId: string,
+    filter: Pick<MemoryListFilter, 'kind' | 'status' | 'userId'> = {},
+  ): number {
     const where = ['scope = ?', 'owner_id = ?']
     const params: Array<string | number> = [scope, ownerId]
     if (filter.kind) {
@@ -227,6 +240,10 @@ export class MemoryStore {
     if (filter.status) {
       where.push('status = ?')
       params.push(filter.status)
+    }
+    if (filter.userId) {
+      where.push('user_id = ?')
+      params.push(filter.userId)
     }
     return Number(
       this.db.get<{ n: number }>(`SELECT COUNT(*) AS n FROM memory WHERE ${where.join(' AND ')}`, ...params)?.n ?? 0,
@@ -238,7 +255,7 @@ export class MemoryStore {
     return row ? rowToItem(row) : undefined
   }
 
-  /** 按 scope/owner 列出（管理接口与召回取行共用） */
+  /** 按 scope/owner 列出（管理接口与召回取行共用；M57：userId = 多用户隔离过滤） */
   listScoped(scope: MemoryScope, ownerId: string, filter: MemoryListFilter = {}): MemoryItem[] {
     const where = ['scope = ?', 'owner_id = ?']
     const params: Array<string | number> = [scope, ownerId]
@@ -250,6 +267,10 @@ export class MemoryStore {
       where.push('status = ?')
       params.push(filter.status)
     }
+    if (filter.userId) {
+      where.push('user_id = ?')
+      params.push(filter.userId)
+    }
     params.push(filter.limit ?? 500)
     return this.db
       .all<MemoryRow>(
@@ -259,13 +280,18 @@ export class MemoryStore {
       .map(rowToItem)
   }
 
-  /** 按 id 批量取行（向量检索结果取回内容） */
-  rowsByIds(ids: string[]): MemoryItem[] {
+  /** 按 id 批量取行（向量检索结果取回内容；M57：userId 提供时严格按用户过滤——NULL 行不返回，安全侧默认） */
+  rowsByIds(ids: string[], userId?: string): MemoryItem[] {
     if (ids.length === 0) return []
     const placeholders = ids.map(() => '?').join(',')
-    return this.db
-      .all<MemoryRow>(`SELECT * FROM memory WHERE id IN (${placeholders})`, ...ids)
-      .map(rowToItem)
+    const rows = userId
+      ? this.db.all<MemoryRow>(
+          `SELECT * FROM memory WHERE id IN (${placeholders}) AND user_id = ?`,
+          ...ids,
+          userId,
+        )
+      : this.db.all<MemoryRow>(`SELECT * FROM memory WHERE id IN (${placeholders})`, ...ids)
+    return rows.map(rowToItem)
   }
 
   /** 全局统计（管理接口） */
@@ -300,6 +326,10 @@ export class MemoryStore {
     if (filter.q) {
       where.push('content LIKE ?')
       params.push(`%${filter.q}%`)
+    }
+    if (filter.userId) {
+      where.push('user_id = ?')
+      params.push(filter.userId)
     }
     params.push(Math.max(1, Math.min(filter.limit ?? 200, 1000)))
     const tail = filter.offset ? ' LIMIT ? OFFSET ?' : ' LIMIT ?'
@@ -364,6 +394,7 @@ export class MemoryStore {
       id: `mem_${randomUUID().slice(0, 8)}`,
       scope,
       owner_id: ownerId,
+      user_id: extra.userId ?? null,
       // 仅 session scope 落 session_id（FK 级联）；agent/project/global 在源会话删除后仍存活
       session_id: scope === 'session' ? ownerId : null,
       kind,
@@ -386,13 +417,14 @@ export class MemoryStore {
     }
     this.db.tx(() => {
       this.db.run(
-        `INSERT INTO memory (id, scope, owner_id, session_id, kind, content, hash, source, importance, entities,
+        `INSERT INTO memory (id, scope, owner_id, user_id, session_id, kind, content, hash, source, importance, entities,
            status, supersedes, superseded_by, valid_from, valid_to, source_session_id, source_run_id, hits, last_used_at,
            created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         row.id,
         row.scope,
         row.owner_id,
+        row.user_id ?? null,
         row.session_id,
         row.kind,
         row.content,

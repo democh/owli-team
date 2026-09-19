@@ -15,6 +15,7 @@
 import type { AgentDefinition, ChatMessage, MessageAttachment, Plan, SoulMeta, ToolCallRecord, TurnMode } from '@multi-agent/shared'
 import type { LlmContentPart, LlmMessageInput } from '../llm/provider.js'
 import { isVisionImage } from '../util/mime.js'
+import { buildSpecInstructionLine, type DeliverableTier } from './deliverable-spec.js'
 import { countTokensCalibrated, VISION_TOKENS_PER_IMAGE } from './tokenizer.js'
 
 // ---------- L0-L3：system 提示 ----------
@@ -26,6 +27,27 @@ export interface SoulSegment {
   body: string
 }
 
+/**
+ * M77：花名册成员（成员实例投影）。经典实例 = agentId；分身实例 = `agentId~soulId`；
+ * label 为展示 token（多实例时含 `·灵魂名` 后缀）。存量调用方可直接传 AgentDefinition[]（自动归一）。
+ */
+export interface RosterMember {
+  /** 成员键（@ 寻址与队列/计划归属依据） */
+  key: string
+  /** 基础角色 id */
+  agentId: string
+  /** 展示 token（裸名或 `名字·灵魂名`） */
+  label: string
+  role: string
+}
+
+/** 花名册归一（兼容存量调用方的 AgentDefinition[]） */
+function toRosterMembers(roster: Array<RosterMember | AgentDefinition>): RosterMember[] {
+  return roster.map((item) =>
+    'key' in item ? item : { key: item.id, agentId: item.id, label: item.name, role: item.role },
+  )
+}
+
 export interface SystemPromptInput {
   protocol: string
   /** 场景协议（可选，追加在全局协议之后） */
@@ -34,8 +56,10 @@ export interface SystemPromptInput {
   agentBody: string
   /** 灵魂段（可选：会话覆盖 > 角色默认；无灵魂 = 不注入） */
   soul?: SoulSegment
-  /** 团队成员（含自己） */
-  roster: AgentDefinition[]
+  /** 团队成员（含自己；M77：成员实例投影，兼容 AgentDefinition[]） */
+  roster: Array<RosterMember | AgentDefinition>
+  /** M77：本回合说话成员键（分身实例标识；缺省 = 经典实例） */
+  selfKey?: string
   /** 预载 Skill（front-matter skills，正文直接进提示） */
   preloadedSkills: Array<{ name: string; body: string }>
   /** <available_skills> 常驻索引 */
@@ -101,18 +125,33 @@ function buildSoulSection(soul: SoulSegment): string {
 }
 
 export function buildSystemPrompt(input: SystemPromptInput): SystemPromptOutput {
-  const { protocol, groupProtocol, agent, agentBody, roster, preloadedSkills, skillsIndex, workspaceListing, soul } = input
-  const rosterLine = roster.map((a) => `${a.name}（${a.id}｜${a.role}）`).join('、')
+  const { protocol, groupProtocol, agent, agentBody, preloadedSkills, skillsIndex, workspaceListing, soul } = input
+  const roster = toRosterMembers(input.roster)
+  const rosterLine = roster.map((m) => `${m.label}（${m.key}｜${m.role}）`).join('、')
+  // 交接对象：角色 id → 实例（优先经典实例，否则该角色首个实例）
+  const memberOfAgent = (agentId: string): RosterMember | undefined =>
+    roster.find((m) => m.key === agentId) ?? roster.find((m) => m.agentId === agentId)
   const handoffLine = agent.handoff.length
     ? agent.handoff
-        .map((id) => roster.find((a) => a.id === id))
-        .filter((a): a is AgentDefinition => Boolean(a))
-        .map((a) => `${a.name}（${a.id}）`)
+        .map((id) => memberOfAgent(id))
+        .filter((m): m is RosterMember => Boolean(m))
+        .map((m) => `${m.label}（${m.key}）`)
         .join('、')
     : '（无预设，按需选择）'
+  // M77：同角多实例寻址指南（仅真有分身时注入，避免无谓提示）
+  const multiCounts = new Map<string, number>()
+  for (const m of roster) multiCounts.set(m.agentId, (multiCounts.get(m.agentId) ?? 0) + 1)
+  const hasMulti = [...multiCounts.values()].some((n) => n > 1)
+  const self = input.selfKey ? roster.find((m) => m.key === input.selfKey) : undefined
+  const identityNote = self && self.label !== agent.name ? `\n\n你在本会话的身份标识：${self.label}（${self.key}）——与其他同名分身区分使用。` : ''
 
   // L0：全局协议 +（场景协议）+ 人设 +（灵魂段）——顺序与内容在会话内稳定，命中 prompt cache
-  const l0 = [protocol.trim(), (groupProtocol ?? '').trim(), `# 你当前的角色\n\n你是 **${agent.name}**（${agent.role}）。\n\n${agentBody.trim()}`, soul ? buildSoulSection(soul) : '']
+  const l0 = [
+    protocol.trim(),
+    (groupProtocol ?? '').trim(),
+    `# 你当前的角色\n\n你是 **${agent.name}**（${agent.role}）。${identityNote}\n\n${agentBody.trim()}`,
+    soul ? buildSoulSection(soul) : '',
+  ]
     .filter((s) => s !== '')
     .join('\n\n---\n\n')
 
@@ -127,7 +166,11 @@ export function buildSystemPrompt(input: SystemPromptInput): SystemPromptOutput 
 
   // L3：花名册 / 技能 / 工作区（可裁剪）
   const l3Sections: string[] = [
-    `# 团队花名册\n\n本会话成员：${rosterLine}\n\n你的常用交接对象：${handoffLine}`,
+    `# 团队花名册\n\n本会话成员：${rosterLine}\n\n你的常用交接对象：${handoffLine}${
+      hasMulti
+        ? '\n\n同名多实例寻址：@名字 只召集该角色的主实例（编制首位）；想让同角多位分身同时上场，请逐一点名（@名字·灵魂名）。'
+        : ''
+    }`,
   ]
   if (preloadedSkills.length > 0) {
     l3Sections.push(preloadedSkills.map((s) => `# 已装载技能：${s.name}\n\n${s.body.trim()}`).join('\n\n'))
@@ -163,6 +206,10 @@ export interface WindowInput {
   /** 会话全部消息（按 seq 升序） */
   messages: ChatMessage[]
   agentId: string
+  /** M77：本回合说话成员键（分身实例；缺省 = 经典实例 agentId） */
+  selfKey?: string
+  /** M77：成员键 → 展示标签（他人消息前缀用；缺省 = 角色名） */
+  memberLabels?: Record<string, string>
   agents: AgentDefinition[]
   /** 压缩水位：只取 seq > fromSeq 的消息 */
   fromSeq: number
@@ -175,6 +222,11 @@ export interface WindowInput {
    * 由 ContextService 注入（读文件 + 会话内缓存 + 体积护栏）。
    */
   loadImage?: (relPath: string) => { mime: string; dataUrl: string } | undefined
+  /**
+   * M57 P2：共享会话（≥2 人类）的人类消息署名解析（返回昵称；缺省 / 未命中 = 【用户】）。
+   * 由 ContextService 注入（共享会话才提供；单用户 / 独占会话行为零差异）。
+   */
+  userLabel?: (message: ChatMessage) => string | undefined
 }
 
 export interface WindowOutput {
@@ -241,13 +293,21 @@ function renderToolCall(call: ToolCallRecord, detail: boolean): string {
   return `- ${call.name}${args === '{}' ? '' : `(${args})`} → ${summary}`
 }
 
-/** 对话窗口投影：自己 → assistant；他人 → assistant + 身份前缀；用户 → user + 【用户】前缀 */
-function projectContent(message: ChatMessage, agentId: string, agents: AgentDefinition[]): string {
-  if (message.role === 'user') return `【用户】${message.content}`
-  if (message.agentId === agentId) return message.content
+/** 对话窗口投影：自己 → assistant；他人 → assistant + 身份前缀；用户 → user + 【昵称 / 用户】前缀（共享会话署昵称） */
+function projectContent(
+  message: ChatMessage,
+  selfKey: string,
+  agents: AgentDefinition[],
+  memberLabels?: Record<string, string>,
+  userLabel?: (message: ChatMessage) => string | undefined,
+): string {
+  if (message.role === 'user') return `【${userLabel?.(message) ?? '用户'}】${message.content}`
+  const key = message.memberKey ?? message.agentId
+  if (key === selfKey) return message.content
   const other = agents.find((a) => a.id === message.agentId)
-  const label = other ? `${other.name}｜${other.role}` : (message.agentId ?? '未知成员')
-  return `【${label}】${message.content}`
+  const label = memberLabels?.[key ?? ''] ?? other?.name
+  const prefix = other ? `${label ?? other.name}｜${other.role}` : label ?? (message.agentId ?? '未知成员')
+  return `【${prefix}】${message.content}`
 }
 
 /**
@@ -257,7 +317,8 @@ function projectContent(message: ChatMessage, agentId: string, agents: AgentDefi
  * 3. 最近的组超预算时对其内部消息做行级截断（保证至少带回最后一个回合）。
  */
 export function buildWindow(input: WindowInput): WindowOutput {
-  const { messages, agentId, agents, fromSeq, budgetTokens, toolDetailKeep, loadImage } = input
+  const { messages, agentId, agents, fromSeq, budgetTokens, toolDetailKeep, loadImage, userLabel } = input
+  const selfKey = input.selfKey ?? agentId
 
   const visible = messages.filter(
     (m) =>
@@ -279,7 +340,7 @@ export function buildWindow(input: WindowInput): WindowOutput {
   const detailSet = new Set(toolEntries.slice(detailFrom).map((e) => `${e.m}:${e.c}`))
 
   const rendered: RenderedMessage[] = visible.map((m, i) => {
-    const base = projectContent(m, agentId, agents)
+    const base = projectContent(m, selfKey, agents, input.memberLabels, userLabel)
     const attachmentBlock = renderAttachments(m)
     const callLines = (m.toolCalls ?? []).map((call, c) => renderToolCall(call, detailSet.has(`${i}:${c}`)))
     const toolBlock = callLines.length > 0 ? `\n\n[工具调用]\n${callLines.join('\n')}` : ''
@@ -381,9 +442,10 @@ function splitLinesByTokens(text: string, maxTokens: number): string {
 /** M24：执行中计划块（L3；用户可见字段与任务面板同口径，步骤负责人全员可读） */
 const PLAN_STEP_ICON = { pending: '☐', in_progress: '◐', done: '☑', blocked: '⛔', skipped: '⇥' } as const
 
-export function buildActivePlansBlock(plans: Plan[], roster: AgentDefinition[]): string {
+export function buildActivePlansBlock(plans: Plan[], roster: Array<RosterMember | AgentDefinition>): string {
   if (plans.length === 0) return ''
-  const nameOf = (id: string) => roster.find((a) => a.id === id)?.name ?? id
+  const members = toRosterMembers(roster)
+  const nameOf = (id: string) => members.find((m) => m.key === id)?.label ?? id
   const blocks: string[] = []
   for (const plan of plans) {
     const doneCount = plan.steps.filter((s) => s.status === 'done' || s.status === 'skipped').length
@@ -413,21 +475,26 @@ export interface TurnInstructionExtra {
   reviewTargets?: Array<{ target: string; content?: string }>
   /** 收到的交接期望（仅有 expectedOutput 时渲染「上一棒期望」行，保证旧文本不变） */
   handoffs?: Array<{ from: string; expectedOutput?: string }>
+  /** M77：本回合说话成员键（分身实例；缺省 = 经典实例 agent.id） */
+  selfKey?: string
+  /** 交付规格声明（用户消息解析；execute 波注入档位提示行） */
+  deliverableSpec?: DeliverableTier
 }
 
 /** 回合指令：附加在窗口末尾的最后一条 user 消息（M24：按范式选择模板；execute 保持现文本） */
 export function buildTurnInstruction(
   agent: AgentDefinition,
-  roster: AgentDefinition[],
+  roster: Array<RosterMember | AgentDefinition>,
   queue: string[],
   parallelPeers: string[] = [],
   mode: TurnMode = 'execute',
   extra: TurnInstructionExtra = {},
 ): string {
-  const others = roster.filter((a) => a.id !== agent.id).map((a) => `${a.name}（${a.id}）`)
-  const queueLine = queue.length
-    ? queue.map((id) => roster.find((a) => a.id === id)?.name ?? id).join(' → ')
-    : '（无）'
+  const members = toRosterMembers(roster)
+  const selfKey = extra.selfKey ?? agent.id
+  const labelOf = (key: string): string => members.find((m) => m.key === key)?.label ?? key
+  const others = members.filter((m) => m.key !== selfKey).map((m) => `${m.label}（${m.key}）`)
+  const queueLine = queue.length ? queue.map((id) => labelOf(id)).join(' → ') : '（无）'
   const lines: string[] = []
   if (mode === 'plan') {
     lines.push(
@@ -458,11 +525,15 @@ export function buildTurnInstruction(
       `- 可交接成员：${others.join('、')}；`,
       `- 已排队的后续发言：${queueLine}。`,
     )
+    const specLine = buildSpecInstructionLine(extra.deliverableSpec)
+    if (specLine) lines.push(specLine)
   }
   if (parallelPeers.length > 0) {
-    const peers = parallelPeers.map((id) => roster.find((a) => a.id === id)?.name ?? id).join('、')
+    const peers = parallelPeers.map((id) => labelOf(id)).join('、')
     lines.splice(1, 0, `- 本波并行成员：${peers}（你们同时工作、各自独立输出，完成后统一汇总；不要依赖对方的本轮输出）。`)
   }
+  // 输出语言纪律（全局协议 <output_contract> 的回合级复述）：防止工具调用前的说明句漂移为英文
+  lines.splice(1, 0, '- 全程使用简体中文输出（含工具调用前的说明句）；技术术语 / 工具名 / 文件路径可保留英文。')
   // M24：计划派发 —— 你负责的步骤（完成后用 update_plan_step 汇报）
   if (extra.planSteps?.length) {
     const assigned = extra.planSteps

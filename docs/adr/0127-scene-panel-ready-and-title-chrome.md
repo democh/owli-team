@@ -14,7 +14,7 @@
 
 1. **面板就绪判定（「无数据不展示」单一事实来源）**：新增 `panelReady(panel, { containers, verdicts, messages })` 纯函数 + `useScenePanelReady(panel)` hook（`panel-ready.ts`）——六面板逐一口径（宁可多显示不可漏显示）：chartboard = 有 `::: pan` 容器；pool = 有「结构化行或带标题」容器；versus = 有 `::: verdict` 裁决实例；board = 成员消息带 Markdown 标题或存在交付件；console = 成员消息 / 管道列容器 / 交付件任一非空；coach = 有 `::: checklist` 容器。SceneStage 接入：未就绪 → `panel` 不下传（dock 直通纯对话流 / roundtable 无汇聚板 aside / 窄屏无抽屉），有内容自动出现。
 2. **标题合行（PanelChrome 注入）**：PanelShell 标题行统一「图标 + 标题 + 徽标（贴左）+ 操作区（右推）」；宿主经 `PanelChromeContext` 注入折叠 / 关闭钮（DockStage 注入，`actions` prop 可覆盖）；独立操作条 `.scene-dock-bar` 删除；滚动下沉——标题行固定（border-bottom）+ `.scene-panel-body` 内部滚动，右区 / 抽屉 / 汇聚板三宿主同构。
-3. **宽度与拖拽增强**：默认 340 → 360px，clamp 260–520 → 280–640px；拖拽零 React 渲染（ref 直改 aside 宽度，抬手一次落态 + 落盘）；双击把手复位默认宽；把手键盘可达（`role=separator` / `aria-valuenow·min·max`；← → 步进 16px、Shift 加速 48px）；pointercancel 回滚起始宽度（不落盘）；拖拽中 `.scene-dock-resizing`（全域 col-resize 光标 + 把手高亮 + 禁止选择）；组件卸载清理 body 光标 / 选择态。
+3. **宽度与拖拽增强**：默认 340 → 360px，clamp 260–520 → 280–640px；拖拽零 React 渲染（ref 直改 aside 宽度，抬手一次落态 + 落盘）；双击把手复位默认宽；把手键盘可达（`role=separator` / `aria-valuenow·min·max`；← → 步进 16px、Shift 加速 48px）；pointercancel 回滚起始宽度（不落盘）；拖拽中 `.scene-dock-resizing`（全域 col-resize 光标 + 把手高亮 + 禁止选择）；组件卸载清理 body 光标 / 选择态。**（宽度口径由 [0183](0183-dock-width-adaptive-half.md) 修订：固定 360 / clamp 280–640 → 默认容器 1/3（clamp 380–600）/ 上限容器一半；双击复位改回自适应 `width: null`；拖拽 / 键盘 / aria 实时化口径不变，仅上限与复位语义变化。）**
 4. **入场动画与降噪**：右区 / 汇聚板 aside 就绪挂载入场 `scene-aside-in`（0.18s，opacity + translateX(10px)）；quiet-mode 与 `prefers-reduced-motion` 下全关。
 5. **组件级空态保留为兜底**：PanelEmpty 分支不删除（就绪判定与容器渲染间的时序兜底）；单测双层口径——宿主用例断言「不渲染」，组件用例断言「空态」。
 

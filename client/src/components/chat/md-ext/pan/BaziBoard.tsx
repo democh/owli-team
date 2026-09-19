@@ -16,6 +16,25 @@ const GAN_WX: Record<string, WxKey> = { 甲: '木', 乙: '木', 丙: '火', 丁:
 const ZHI_WX: Record<string, WxKey> = { 寅: '木', 卯: '木', 巳: '火', 午: '火', 辰: '土', 戌: '土', 丑: '土', 未: '土', 申: '金', 酉: '金', 亥: '水', 子: '水' }
 
 const PILLAR_LABEL = ['年柱', '月柱', '日柱', '时柱'] as const
+const PILLAR_CHAR = ['年', '月', '日', '时'] as const
+
+/** 柱间关系符号（类型按 label 尾词判定；颜色 + 符号双编码） */
+const relSymbol = (label: string): string => {
+  if (label.includes('三合')) return '◆'
+  if (label.includes('三会')) return '▲'
+  if (label.endsWith('合')) return '○'
+  if (label.endsWith('冲')) return '✕'
+  if (label.endsWith('刑')) return '△'
+  if (label.endsWith('害')) return '◇'
+  if (label.endsWith('破')) return '◇'
+  return '·'
+}
+
+/** 柱间关系请教草稿（M63-A §5.10 模板 13） */
+const relAsk = (label: string, pair: string): string =>
+  pair.length === 2
+    ? `请解读${pair[0]}柱与${pair[1]}柱之间的「${label}」结构含义与依据。`
+    : `请解读${pair}柱组合的「${label}」结构含义与依据。`
 
 export function BaziBoard({ model, onAsk }: { model: BaziModel; onAsk?: (text: string) => void }): React.JSX.Element {
   const detailVal = (label: string): string => model.detail.find((d) => d.label === label)?.value ?? ''
@@ -30,6 +49,22 @@ export function BaziBoard({ model, onAsk }: { model: BaziModel; onAsk?: (text: s
   const [dy, setDy] = React.useState(currentDy)
   const [year, setYear] = React.useState<number | null>(null)
   const [wx, setWx] = React.useState<WxKey | null>(null)
+  // M63-A：柱间关系选中（高亮两柱）+ 神煞 / 小运 / 流月派生
+  const [rel, setRel] = React.useState<number | null>(null)
+
+  // 神煞按柱分组（逐柱命中制；缺失 / 损坏 → 不渲染）
+  const shenShaByPillar: Array<NonNullable<BaziModel['shenSha']>> = [[], [], [], []]
+  for (const s of model.shenSha ?? []) {
+    for (const p of s.pillars) {
+      const idx = PILLAR_CHAR.indexOf(p as '年')
+      if (idx >= 0) shenShaByPillar[idx]!.push(s)
+    }
+  }
+  const columnar = model.columnar ?? []
+  const relItem = rel !== null ? columnar[rel] ?? null : null
+  const relHit = (i: number): boolean => relItem !== null && relItem.pair.includes(PILLAR_CHAR[i]!)
+  const curAge = model.liuNian.find((v) => v.current)?.age ?? null
+  const liuYueMatched = year !== null && model.liuYueOf?.year === year
 
   const dyItem = model.daYun[dy]!
   const isCurrentDy = dy === currentDy
@@ -91,6 +126,13 @@ export function BaziBoard({ model, onAsk }: { model: BaziModel; onAsk?: (text: s
         ),
     })
   }
+  // M63-A：柱间关系请教（选中关系时出现）
+  if (relItem) {
+    askItems.push({
+      text: `请教关系 ${relItem.label}`,
+      onPick: () => onAsk?.(relAsk(relItem.label, relItem.pair)),
+    })
+  }
 
   const pillarHit = (i: number): boolean => wx !== null && (GAN_WX[model.pillars[i]!.gan] === wx || ZHI_WX[model.pillars[i]!.zhi] === wx)
 
@@ -99,24 +141,40 @@ export function BaziBoard({ model, onAsk }: { model: BaziModel; onAsk?: (text: s
       <div className="pn-bazi-top">
         <div className="pn-pillars" role="group" aria-label="四柱">
           {model.pillars.map((p, i) => (
-            <button
-              type="button"
-              key={p.name}
-              className={`pn-pillar${pillar === i ? ' is-on' : ''}${pillarHit(i) ? ' is-hit' : ''}`}
-              aria-pressed={pillar === i}
-              onClick={() => setPillar(pillar === i ? null : i)}
-              onMouseEnter={() => setHoverPillar(i)}
-              onMouseLeave={() => setHoverPillar(null)}
-              onFocus={() => setHoverPillar(i)}
-              onBlur={() => setHoverPillar(null)}
-            >
-              <span className="pn-pillar-gz">
-                <span className="pn-pillar-gan">{p.gan}</span>
-                <span className="pn-pillar-zhi">{p.zhi}</span>
-              </span>
-              {p.shiShen ? <span className="pn-pillar-shi">{p.shiShen}</span> : null}
-              <span className="pn-pillar-name">{PILLAR_LABEL[i]}</span>
-            </button>
+            <div className="pn-pillar-col" key={p.name}>
+              <button
+                type="button"
+                className={`pn-pillar${pillar === i ? ' is-on' : ''}${pillarHit(i) ? ' is-hit' : ''}${relHit(i) ? ' is-rel' : ''}`}
+                aria-pressed={pillar === i}
+                onClick={() => setPillar(pillar === i ? null : i)}
+                onMouseEnter={() => setHoverPillar(i)}
+                onMouseLeave={() => setHoverPillar(null)}
+                onFocus={() => setHoverPillar(i)}
+                onBlur={() => setHoverPillar(null)}
+              >
+                <span className="pn-pillar-gz">
+                  <span className="pn-pillar-gan">{p.gan}</span>
+                  <span className="pn-pillar-zhi">{p.zhi}</span>
+                </span>
+                {p.shiShen ? <span className="pn-pillar-shi">{p.shiShen}</span> : null}
+                <span className="pn-pillar-name">{PILLAR_LABEL[i]}</span>
+              </button>
+              {shenShaByPillar[i]!.length > 0 ? (
+                <div className="pn-ss-col">
+                  {shenShaByPillar[i]!.map((s) => (
+                    <button
+                      type="button"
+                      key={`${s.name}${s.basis}`}
+                      className="pn-ss-chip"
+                      title={`${s.name}（${s.basis}）`}
+                      onClick={() => onAsk?.(`请解读${PILLAR_LABEL[i]}神煞「${s.name}」的白话含义与盘面依据（参考区间）。`)}
+                    >
+                      {s.name}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+            </div>
           ))}
         </div>
         <div className="pn-wx" role="group" aria-label="五行能量">
@@ -142,6 +200,43 @@ export function BaziBoard({ model, onAsk }: { model: BaziModel; onAsk?: (text: s
           ) : null}
         </div>
       </div>
+
+      {/* M63-A：柱间关系（点击高亮两柱 + 请教）；无该字段 → 整行不渲染 */}
+      {columnar.length > 0 ? (
+        <div className="pn-rel-row" role="group" aria-label="柱间关系">
+          <span className="pn-rel-head">柱间</span>
+          {columnar.map((r, i) => (
+            <button
+              type="button"
+              key={`${r.scope}${r.label}${r.pair}`}
+              className={`pn-rel-chip${rel === i ? ' is-on' : ''}`}
+              data-scope={r.scope}
+              aria-pressed={rel === i}
+              title={`${r.scope}·${r.pair}`}
+              onClick={() => setRel(rel === i ? null : i)}
+            >
+              <span className="pn-rel-sym" aria-hidden>
+                {relSymbol(r.label)}
+              </span>
+              {r.label}
+              <span className="pn-rel-pair">{r.pair}</span>
+            </button>
+          ))}
+        </div>
+      ) : null}
+
+      {/* M63-A：小运（当前岁数高亮）；无该字段 → 不渲染 */}
+      {model.xiaoYun && model.xiaoYun.length > 0 ? (
+        <div className="pn-xiaoyun" role="group" aria-label="小运">
+          <span className="pn-xiaoyun-label">小运</span>
+          {model.xiaoYun.map((x) => (
+            <span key={`${x.ganZhi}${x.age}`} className={`pn-xy-chip${curAge === x.age ? ' is-current' : ''}`}>
+              {x.ganZhi}
+              <em>{x.age}</em>
+            </span>
+          ))}
+        </div>
+      ) : null}
 
       {pillar !== null ? (
         <div className="pn-detail" role="region" aria-label={`${PILLAR_LABEL[pillar]}详情`}>
@@ -225,6 +320,46 @@ export function BaziBoard({ model, onAsk }: { model: BaziModel; onAsk?: (text: s
           </button>
         </div>
       )}
+
+      {/* M63-A：流月（选中流年且卡内含该年流月 → 展开；否则补算草稿）；无选中 → 不渲染 */}
+      {selectedYear ? (
+        liuYueMatched && model.liuYue ? (
+          <div className="pn-ly" role="group" aria-label={`${selectedYear.year} 年流月`}>
+            <div className="pn-ln-head">
+              流月（{model.liuYueOf!.year} {model.liuYueOf!.ganZhi} · {model.liuYue.length} 条）
+            </div>
+            <div className="pn-ly-row">
+              {model.liuYue.map((ly) => (
+                <button
+                  type="button"
+                  key={ly.month}
+                  className="pn-lychip"
+                  onClick={() =>
+                    onAsk?.(
+                      `请解读 ${selectedYear.year} 年${ly.month}（${ly.ganZhi}）在${model.daYun[currentDy]!.ganZhi}大运背景下的参考区间与依据。`,
+                    )
+                  }
+                >
+                  {ly.month} {ly.ganZhi}
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <div className="pn-ly-empty">
+            <span>该年流月未随盘计算</span>
+            <button
+              type="button"
+              className="pn-ask-btn"
+              onClick={() =>
+                onAsk?.(`请补算 ${selectedYear.year} ${selectedYear.ganZhi}年的十二流月（干支与节气），并标注当前流月。`)
+              }
+            >
+              请研习师补算该年流月
+            </button>
+          </div>
+        )
+      ) : null}
 
       <div className="pn-axis">
         <div className="pn-axis-track">

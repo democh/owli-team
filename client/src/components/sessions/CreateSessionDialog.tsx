@@ -8,11 +8,13 @@
 import * as React from 'react'
 import { toast } from 'sonner'
 import { Check, Layers, Loader2, Search, Sparkles, X, Zap } from 'lucide-react'
-import { BLANK_SCENE_ID } from '@multi-agent/shared'
+import type { AgentDefinition } from '@multi-agent/shared'
+import { BLANK_SCENE_ID, baseAgentId } from '@multi-agent/shared'
 import { useAgentStore } from '../../stores/agent-store'
 import { useSessionStore } from '../../stores/session-store'
 import { useMediaQuery } from '../../lib/hooks'
 import { resolveIcon } from '../../lib/avatar-icons'
+import { encodeParticipation, participationOf } from '../../lib/members'
 import { cn } from '../../lib/utils'
 import { Button } from '../ui/button'
 import { Input } from '../ui/input'
@@ -20,7 +22,7 @@ import { Dialog, DialogContent, DialogTitle } from '../ui/dialog'
 import { AgentAvatar } from '../agents/AgentAvatar'
 import { AgentPicker } from '../agents/AgentPicker'
 import { GroupBadge } from '../agents/GroupBadge'
-import { SoulPicker } from '../agents/SoulPicker'
+import { SoulParticipantPicker } from '../agents/SoulPicker'
 
 /** 组队来源（快速组队 preset / 场景 scene 二选一；命令面板 pendingCreate 与此共用） */
 export interface CreateSource {
@@ -92,6 +94,23 @@ export function CreateSessionDialog({
 
   const preset = source?.kind === 'preset' ? presets.find((p) => p.id === source.id) : undefined
   const group = source?.kind === 'scene' ? groups.find((g) => g.id === source.id) : undefined
+  // M77：编制按「成员键」组织（分身 = `agentId~soulId`）；行视图按角色聚合（一角色一行，行内选参与性格）
+  const lineupItems = React.useMemo(() => {
+    const byAgent = new Map<string, { agent: AgentDefinition; keys: string[] }>()
+    const order: string[] = []
+    for (const key of picked) {
+      const agent = agents.find((a) => a.id === baseAgentId(key))
+      if (!agent) continue
+      let item = byAgent.get(agent.id)
+      if (!item) {
+        item = { agent, keys: [] }
+        byAgent.set(agent.id, item)
+        order.push(agent.id)
+      }
+      item.keys.push(key)
+    }
+    return order.map((id) => byAgent.get(id)!)
+  }, [picked, agents])
   const q = query.trim().toLowerCase()
   const presetList = q
     ? presets.filter((p) => p.name.toLowerCase().includes(q) || p.description.toLowerCase().includes(q))
@@ -104,9 +123,6 @@ export function CreateSessionDialog({
   const groupList = (
     q ? groups.filter((g) => g.name.toLowerCase().includes(q) || g.description.toLowerCase().includes(q)) : groups
   ).filter((g) => g.id !== BLANK_SCENE_ID)
-  const lineupAgents = picked
-    .map((id) => agents.find((a) => a.id === id))
-    .filter((a): a is NonNullable<typeof a> => Boolean(a))
   // 「已微调」提示：编制与来源推荐不一致（仅比较成员集合；顺序语义 = 链序，本期不排序）
   const recommended = preset?.members ?? group?.chain ?? []
   const tuned = Boolean(source) && (picked.length !== recommended.length || picked.some((id) => !recommended.includes(id)))
@@ -141,17 +157,34 @@ export function CreateSessionDialog({
     setSouls({})
   }
 
-  const unpick = (id: string): void => {
-    setPicked((prev) => prev.filter((x) => x !== id))
-  }
-
-  /** 灵魂覆盖增删（null = 恢复默认） */
-  const handleSoul = (agentId: string, soul: string | null): void => {
+  const unpick = (agentId: string): void => {
+    setPicked((prev) => prev.filter((key) => baseAgentId(key) !== agentId))
     setSouls((prev) => {
       const next = { ...prev }
-      if (soul) next[agentId] = soul
-      else delete next[agentId]
+      delete next[agentId]
       return next
+    })
+  }
+
+  /**
+   * M77：勾选/取消一个「参与性格」（灵魂维度）——重算该角色成员键（确定性编码）：
+   * 集合首个人格走经典键（= 默认灵魂则免覆盖），其余为分身键；全部取消 = 默认单人参与。
+   */
+  const toggleSoul = (agent: AgentDefinition, soulId: string): void => {
+    const current = participationOf(agent, picked, souls)
+    const next = current.includes(soulId) ? current.filter((s) => s !== soulId) : [...current, soulId]
+    const { keys, soulOverrides } = encodeParticipation(agent, next)
+    setPicked((prev) => {
+      const firstIdx = prev.findIndex((key) => baseAgentId(key) === agent.id)
+      const kept = prev.filter((key) => baseAgentId(key) !== agent.id)
+      if (firstIdx < 0) return [...kept, ...keys]
+      return [...kept.slice(0, firstIdx), ...keys, ...kept.slice(firstIdx)]
+    })
+    setSouls((prev) => {
+      const nextSouls = { ...prev }
+      delete nextSouls[agent.id]
+      for (const [key, soul] of Object.entries(soulOverrides)) nextSouls[key] = soul
+      return nextSouls
     })
   }
 
@@ -279,7 +312,7 @@ export function CreateSessionDialog({
                             agent={a}
                             size={13}
                             animated={false}
-                            className="rounded-full ring-1 ring-background"
+                            className="ring-1 ring-background"
                           />
                         ))}
                         {memberAgents.length > 4 && (
@@ -350,7 +383,7 @@ export function CreateSessionDialog({
                             agent={a}
                             size={13}
                             animated={false}
-                            className="rounded-full ring-1 ring-background"
+                            className="ring-1 ring-background"
                           />
                         ))}
                         {chainAgents.length > 6 && (
@@ -436,28 +469,49 @@ export function CreateSessionDialog({
       </div>
 
       <div className="min-h-0 flex-1 space-y-1 overflow-y-auto px-2.5 py-2">
-        {lineupAgents.map((a) => (
-          <div
-            key={a.id}
-            className="lineup-enter flex items-center gap-2 rounded-lg border border-border/70 bg-card px-2 py-1.5"
-          >
-            <AgentAvatar agent={a} size={26} animated={false} className="rounded-md" />
-            <div className="min-w-0 flex-1">
-              <div className="truncate text-[12px] font-medium">{a.name}</div>
-              <div className="truncate text-[10.5px] text-muted-foreground">{a.role}</div>
-            </div>
-            <SoulPicker agent={a} override={souls[a.id]} onPick={(soul) => handleSoul(a.id, soul)} />
-            <button
-              type="button"
-              aria-label="移出编制"
-              title={`移出 ${a.name}`}
-              onClick={() => unpick(a.id)}
-              className="rounded p-0.5 text-muted-foreground transition-colors hover:bg-accent hover:text-destructive"
+        {lineupItems.map(({ agent, keys }) => {
+          const participating = participationOf(agent, keys, souls)
+          const multi = keys.length > 1
+          return (
+            <div
+              key={agent.id}
+              className="lineup-enter grid grid-cols-[26px_minmax(0,1fr)_auto] items-center gap-x-2 rounded-lg border border-border/70 bg-card px-2 py-1.5"
             >
-              <X className="size-3.5" />
-            </button>
-          </div>
-        ))}
+              <AgentAvatar agent={agent} size={26} animated={false} />
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-x-1 gap-y-0.5">
+                  <span className="truncate text-[12px] font-medium">{agent.name}</span>
+                  {multi && (
+                    <span
+                      className="shrink-0 rounded bg-violet-500/10 px-1 text-[9.5px] font-medium text-violet-700"
+                      title="同一角色的多个性格分身同台协作"
+                    >
+                      ×{keys.length} 分身同台
+                    </span>
+                  )}
+                </div>
+                <div className="truncate text-[10.5px] text-muted-foreground">{agent.role}</div>
+              </div>
+              {/* 右侧组：参与性格（无 souls 则不占位）+ 移出编制 X 恒贴行右缘，跨行对齐不随内容漂移 */}
+              <div className="flex items-center gap-2 justify-self-end">
+                <SoulParticipantPicker
+                  agent={agent}
+                  value={participating}
+                  onToggle={(soulId) => toggleSoul(agent, soulId)}
+                />
+                <button
+                  type="button"
+                  aria-label="移出编制"
+                  title={`移出 ${agent.name}`}
+                  onClick={() => unpick(agent.id)}
+                  className="rounded p-0.5 text-muted-foreground transition-colors hover:bg-accent hover:text-destructive"
+                >
+                  <X className="size-3.5" />
+                </button>
+              </div>
+            </div>
+          )
+        })}
       </div>
 
       <div className="shrink-0 space-y-2 border-t px-2.5 py-2">

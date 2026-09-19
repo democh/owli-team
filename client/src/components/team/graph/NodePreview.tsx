@@ -58,7 +58,7 @@ export function NodePreview({
       style={{ left, top }}
     >
       <div className="flex items-center gap-2">
-        <AgentAvatar agent={agent} size={26} animated={false} className="shrink-0 rounded-md" />
+        <AgentAvatar agent={agent} size={26} animated={false} className="shrink-0" />
         <span className="min-w-0 flex-1 truncate text-[11.5px] font-medium leading-4">{agent.name}</span>
         <span
           className={cn(

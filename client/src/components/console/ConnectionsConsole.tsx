@@ -19,10 +19,12 @@ import {
   Link2,
   Loader2,
   Lock,
+  MonitorSmartphone,
   Pencil,
   Play,
   Plus,
   RefreshCw,
+  Server,
   Sparkles,
   Terminal,
   Trash2,
@@ -30,12 +32,15 @@ import {
   XCircle,
 } from 'lucide-react'
 import { toast } from 'sonner'
-import type { ConnectionDefinition, ConnectionKind, ConnectionStatus } from '@multi-agent/shared'
+import type { ConnectionDefinition, ConnectionKind, ConnectionStatus, SshLocalPreset } from '@multi-agent/shared'
+import { useAuthStore } from '../../stores/auth-store'
+import { useBrowserStore } from '../../stores/browser-store'
 import { useConnectionsStore } from '../../stores/connections-store'
 import { useDatabaseStore } from '../../stores/database-store'
 import { useSessionStore } from '../../stores/session-store'
 import { useTerminalStore } from '../../stores/terminal-store'
 import { useUiStore } from '../../stores/ui-store'
+import { apiGet } from '../../lib/api'
 import { formatClock } from '../../lib/time'
 import { cn } from '../../lib/utils'
 import { Button } from '../ui/button'
@@ -50,10 +55,12 @@ const KIND_META: Record<ConnectionKind, { label: string; icon: React.ReactNode; 
   embedding: { label: '嵌入模型', icon: <Sparkles className="size-3.5" />, hint: '向量记忆' },
   // M56：媒体生成已迁「设置 → 媒体生成」（本视图不呈现 / 不创建；元数据保留以维持 ConnectionKind 完整映射）
   media: { label: '媒体生成', icon: <Clapperboard className="size-3.5" />, hint: '已迁至设置' },
+  // 多 Provider：模型服务在「设置 → 模型与生成 → 模型服务」维护（本视图不呈现 / 不创建）
+  llm: { label: '模型服务', icon: <Server className="size-3.5" />, hint: '已迁至设置' },
 }
 
-/** 可创建的连接类型（M56：媒体生成迁入「设置」后不再在此创建） */
-const CREATE_KINDS = (Object.keys(KIND_META) as ConnectionKind[]).filter((k) => k !== 'media')
+/** 可创建的连接类型（M56：媒体生成迁入「设置」；多 Provider：模型服务同迁「设置」） */
+const CREATE_KINDS = (Object.keys(KIND_META) as ConnectionKind[]).filter((k) => k !== 'media' && k !== 'llm')
 
 const STATUS_DOT: Record<ConnectionStatus, string> = {
   idle: 'bg-slate-300',
@@ -63,6 +70,8 @@ const STATUS_DOT: Record<ConnectionStatus, string> = {
 
 interface FormState {
   name: string
+  /** M57 P3：允许成员使用（system 连接；默认 true） */
+  memberUse: boolean
   host: string
   port: string
   database: string
@@ -95,6 +104,7 @@ interface FormState {
 
 const EMPTY_FORM: FormState = {
   name: '',
+  memberUse: true,
   host: '127.0.0.1',
   port: '',
   database: '',
@@ -129,6 +139,7 @@ function formOf(connection?: ConnectionDefinition): FormState {
   return {
     ...EMPTY_FORM,
     name: connection.name,
+    memberUse: connection.memberUse !== false,
     host: str('host') || '127.0.0.1',
     port: c.port !== undefined ? String(c.port) : '',
     database: str('database'),
@@ -243,8 +254,38 @@ function ConnectionForm({
 }): React.JSX.Element {
   const [form, setForm] = React.useState<FormState>(() => formOf(initial))
   const [saving, setSaving] = React.useState(false)
+  /** SSH「本地」预置：拉取中标记 + 填入后的探测结论提示 */
+  const [presetBusy, setPresetBusy] = React.useState(false)
+  const [presetNote, setPresetNote] = React.useState<string | null>(null)
   const patch = (next: Partial<FormState>): void => setForm((f) => ({ ...f, ...next }))
   const isDb = kind === 'postgres' || kind === 'mysql'
+
+  /** 「本地（本机）」：服务端探测本机默认配置（用户名 / Agent / 默认私钥 / 22 端口）一键填入（凭据字段不动） */
+  const applyLocalSshPreset = async (): Promise<void> => {
+    setPresetBusy(true)
+    try {
+      const res = await apiGet<{ preset: SshLocalPreset }>('/api/connections/ssh-preset')
+      const p = res.preset
+      patch({
+        name: form.name.trim() ? form.name : p.name,
+        host: p.host,
+        port: String(p.port),
+        username: p.username,
+        authMethod: p.authMethod,
+        privateKeyPath: p.privateKeyPath ?? '',
+      })
+      const parts = [`已填入本机配置：${p.username}@${p.host}`]
+      if (p.authMethod === 'agent') parts.push('本机 SSH Agent')
+      else if (p.authMethod === 'key') parts.push(`私钥 ${p.privateKeyPath ?? ''}`)
+      else parts.push('需填写本机登录密码')
+      if (!p.sshdReachable) parts.push('本机 22 端口未监听：请先开启系统「远程登录」')
+      setPresetNote(parts.join(' · '))
+    } catch (err) {
+      toast.error((err as Error).message)
+    } finally {
+      setPresetBusy(false)
+    }
+  }
 
   const save = async (testAfter = false): Promise<void> => {
     if (!form.name.trim()) {
@@ -283,11 +324,11 @@ function ConnectionForm({
       const store = useConnectionsStore.getState()
       let savedId: string | undefined
       if (initial) {
-        const saved = await store.update(initial.id, { name: form.name.trim(), config, secret: secret ?? undefined })
+        const saved = await store.update(initial.id, { name: form.name.trim(), config, secret: secret ?? undefined, memberUse: form.memberUse })
         savedId = saved.id
         toast('连接已更新')
       } else {
-        const saved = await store.create({ name: form.name.trim(), kind, config, secret: secret ?? undefined })
+        const saved = await store.create({ name: form.name.trim(), kind, config, secret: secret ?? undefined, memberUse: form.memberUse })
         savedId = saved.id
         toast('连接已创建')
       }
@@ -322,6 +363,12 @@ function ConnectionForm({
           onChange={(e) => patch({ name: e.target.value })}
         />
       </Field>
+
+      {/* M57 P3：成员可用开关（system 连接；关闭后成员既不可见也不可绑定/使用） */}
+      <label className="flex items-center gap-2 text-[12px] text-muted-foreground">
+        <input type="checkbox" checked={form.memberUse} onChange={(e) => patch({ memberUse: e.target.checked })} />
+        允许成员使用（关闭后仅管理员可用）
+      </label>
 
       {(kind === 'postgres' || kind === 'mysql') && (
         <>
@@ -443,6 +490,22 @@ function ConnectionForm({
 
       {kind === 'ssh' && (
         <>
+          {!initial && (
+            <div className="flex flex-wrap items-center gap-1.5">
+              <button
+                type="button"
+                className="inline-flex items-center gap-1 rounded-full border border-primary/30 bg-primary/5 px-2 py-0.5 text-[10.5px] text-primary transition-colors hover:bg-primary/10 disabled:opacity-50"
+                disabled={presetBusy}
+                title="一键填入本机（127.0.0.1）默认配置"
+                onClick={() => void applyLocalSshPreset()}
+              >
+                <MonitorSmartphone className="size-3" />
+                本地（本机）
+              </button>
+              {presetBusy && <Loader2 className="size-3 animate-spin text-muted-foreground" />}
+              {presetNote && <span className="text-[10.5px] leading-4 text-muted-foreground">{presetNote}</span>}
+            </div>
+          )}
           <div className="grid grid-cols-3 gap-1.5">
             <div className="col-span-2">
               <Field label="主机">
@@ -596,9 +659,6 @@ function ConnectionForm({
               />
             </Field>
           </div>
-          <p className="rounded-md border border-dashed px-2 py-1.5 text-[10.5px] text-muted-foreground">
-            供「向量记忆」语义召回使用，不参与会话绑定。「保存并测试」会真实调用端点探测模型与维度，随后在「设置 → 向量记忆」中选中启用。
-          </p>
         </>
       )}
 
@@ -832,12 +892,106 @@ function OpFeed(): React.JSX.Element {
   )
 }
 
+/** M62：空闲时长展示（与实例回收判定同源数据） */
+function formatIdle(ms: number): string {
+  const minutes = Math.floor(ms / 60_000)
+  if (minutes < 1) return '刚刚'
+  if (minutes < 60) return `${minutes} 分钟`
+  return `${(minutes / 60).toFixed(1)} 小时`
+}
+
+/** M62：活跃浏览器实例总览（admin）：观测 / 关闭（空闲回收前的显式入口） */
+function InstancesFeed(): React.JSX.Element {
+  const instances = useBrowserStore((s) => s.instances)
+  const loading = useBrowserStore((s) => s.instancesLoading)
+  const [busyId, setBusyId] = React.useState<string | null>(null)
+  const refresh = (): void => {
+    void useBrowserStore
+      .getState()
+      .loadInstances()
+      .catch((err: Error) => toast.error(err.message))
+  }
+  React.useEffect(() => {
+    void useBrowserStore
+      .getState()
+      .loadInstances()
+      .catch((err: Error) => toast.error(err.message))
+  }, [])
+  const close = async (id: string): Promise<void> => {
+    setBusyId(id)
+    try {
+      await useBrowserStore.getState().closeInstance(id)
+      toast('浏览器实例已关闭')
+    } catch (err) {
+      toast.error((err as Error).message)
+    } finally {
+      setBusyId(null)
+    }
+  }
+  return (
+    <div className="space-y-1 p-2">
+      <div className="flex items-center gap-1 text-[10.5px] text-muted-foreground">
+        <span>活跃实例（{instances.length}）</span>
+        <Button size="xs" variant="ghost" className="ml-auto" title="刷新" disabled={loading} onClick={refresh}>
+          <RefreshCw className={cn('size-3', loading && 'animate-spin')} />
+        </Button>
+      </div>
+      {instances.length === 0 && (
+        <p className="px-1 py-6 text-center text-[11.5px] text-muted-foreground">当前没有活跃浏览器实例</p>
+      )}
+      {instances.map((item) => (
+        <div key={item.id} className="flex items-start gap-1.5 rounded-lg border bg-card px-2 py-1.5">
+          <Chrome className="mt-px size-3 shrink-0 text-muted-foreground" />
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-1 text-[11.5px]">
+              <span className="font-medium">{item.ownerName ?? item.ownerId ?? '本机'}</span>
+              <span className="rounded-full border px-1.5 text-[9.5px] text-muted-foreground">
+                {item.backend}
+                {item.headless ? ' · 无头' : ''}
+              </span>
+              <span className="rounded-full border px-1.5 text-[9.5px] text-muted-foreground">
+                {item.state}
+                {item.controller === 'human' ? ' · 人工' : ''}
+              </span>
+              {item.subscribers > 0 && (
+                <span className="rounded-full border px-1.5 text-[9.5px] text-muted-foreground">
+                  观察 {item.subscribers}
+                </span>
+              )}
+              {item.external && (
+                <span className="rounded-full border px-1.5 text-[9.5px] text-muted-foreground">复用实例</span>
+              )}
+            </div>
+            <p className="mt-0.5 truncate font-mono text-[10px] text-muted-foreground">
+              {item.currentUrl ?? item.endpoint ?? item.id}
+            </p>
+            <p className="mt-0.5 text-[10px] text-muted-foreground">
+              无操作 {formatIdle(item.idleMs)} · {formatClock(item.createdAt)} 启动
+            </p>
+          </div>
+          <Button
+            size="xs"
+            variant="ghost"
+            className="text-rose-600 hover:text-rose-700"
+            disabled={busyId === item.id}
+            title="关闭该浏览器实例（Agent 再次调用 browser_* 时会重新启动）"
+            onClick={() => void close(item.id)}
+          >
+            <XCircle className="size-3" />
+          </Button>
+        </div>
+      ))}
+    </div>
+  )
+}
+
 export function ConnectionsConsole(): React.JSX.Element {
   const sessionId = useSessionStore((s) => s.currentId)
   const connections = useConnectionsStore((s) => s.connections)
   const bindings = useConnectionsStore((s) => s.bindings)
   const busyId = useConnectionsStore((s) => s.busyId)
-  const [tab, setTab] = React.useState<'list' | 'ops'>('list')
+  const isAdmin = useAuthStore((s) => s.isAdmin)
+  const [tab, setTab] = React.useState<'list' | 'ops' | 'instances'>('list')
   const [creating, setCreating] = React.useState<ConnectionKind | null>(null)
   const [editingId, setEditingId] = React.useState<string | null>(null)
   const scrollRef = React.useRef<HTMLDivElement>(null)
@@ -852,10 +1006,11 @@ export function ConnectionsConsole(): React.JSX.Element {
 
   const boundIds = React.useMemo(() => new Set(bindings.map((b) => b.connection.id)), [bindings])
   // M56：媒体生成连接（kind = 'media'）在「设置 → 媒体生成」维护，本视图不呈现
+  // 多 Provider：模型服务（kind = 'llm'）在「设置 → 模型与生成」维护，本视图不呈现
   const sorted = React.useMemo(
     () =>
       [...connections]
-        .filter((c) => c.kind !== 'media')
+        .filter((c) => c.kind !== 'media' && c.kind !== 'llm')
         .sort((a, b) => a.kind.localeCompare(b.kind) || a.name.localeCompare(b.name)),
     [connections],
   )
@@ -882,9 +1037,9 @@ export function ConnectionsConsole(): React.JSX.Element {
         </div>
       </div>
 
-      {/* 分段：连接清单 / 操作流水 */}
+      {/* 分段：连接清单 / 操作流水 / 实例（M62，admin） */}
       <div className="flex shrink-0 items-center gap-1 border-b px-4 py-2">
-        {(['list', 'ops'] as const).map((key) => (
+        {([...(isAdmin ? (['list', 'ops', 'instances'] as const) : (['list', 'ops'] as const))]).map((key) => (
           <button
             key={key}
             type="button"
@@ -894,7 +1049,7 @@ export function ConnectionsConsole(): React.JSX.Element {
             )}
             onClick={() => setTab(key)}
           >
-            {key === 'list' ? `连接（${sorted.length}）` : '操作'}
+            {key === 'list' ? `连接（${sorted.length}）` : key === 'ops' ? '操作' : '实例'}
           </button>
         ))}
       </div>
@@ -903,6 +1058,10 @@ export function ConnectionsConsole(): React.JSX.Element {
         {tab === 'ops' ? (
           <div className="mx-auto max-w-3xl">
             <OpFeed />
+          </div>
+        ) : tab === 'instances' ? (
+          <div className="mx-auto max-w-3xl">
+            <InstancesFeed />
           </div>
         ) : (
           <div className="space-y-3">

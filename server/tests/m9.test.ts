@@ -12,7 +12,13 @@ import type { AddressInfo } from 'node:net'
 import express from 'express'
 import { describe, expect, it } from 'vitest'
 import type { ChatMessage, TraceEntry } from '@multi-agent/shared'
-import { parseAssertions, runAssertions, type Assertion, type AssertionContext } from '../src/eval/assertions.js'
+import {
+  parseAssertions,
+  runAssertions,
+  schedulingCounts,
+  type Assertion,
+  type AssertionContext,
+} from '../src/eval/assertions.js'
 import { createFeedbackRouter } from '../src/routes/feedback.js'
 import { createMetricsRouter } from '../src/routes/metrics.js'
 import type { ApiDeps } from '../src/routes/index.js'
@@ -117,7 +123,13 @@ describe('M9 指标与反馈 API', () => {
     const api = await mountApi(env)
     try {
       const metrics = (await (await fetch(`${api.url}/api/metrics/summary`)).json()) as {
-        summary: { runs: number; turns: number; promptTokens: number; toolCalls: number; toolFailures: number }
+        summary: {
+          runs: number
+          turns: number
+          promptTokens: number
+          toolCalls: number
+          toolFailures: number
+        }
         tools: Array<{ toolName: string; calls: number }>
         feedback: { total: number; up: number; down: number }
       }
@@ -264,12 +276,15 @@ describe('M9 eval 断言器', () => {
       events: [
         traceEntry({ type: 'turn:end', payload: { status: 'complete' } }),
         traceEntry({ type: 'schedule', payload: { loopSuppressed: false } }),
-        traceEntry({ type: 'routing:dispatched', payload: { source: 'route', members: ['architect', 'qa'], reason: '平台组队' } }),
+        traceEntry({
+          type: 'routing:dispatched',
+          payload: { source: 'route', members: ['architect', 'qa'], reason: '平台组队' },
+        }),
         traceEntry({ type: 'run:end', payload: { reason: 'completed' } }),
       ],
       messages,
       context: { estimatedTokens: 1000, budgetTokens: 60000 },
-      ...over
+      ...over,
     }
   }
 
@@ -280,6 +295,8 @@ describe('M9 eval 断言器', () => {
       { assertion: { type: 'artifact_exists', path: 'docs/无.md' }, ok: false },
       { assertion: { type: 'artifact_contains', path: 'docs/需求文档.md', text: '验收标准' }, ok: true },
       { assertion: { type: 'artifact_contains', path: 'docs/需求文档.md', text: '不存在' }, ok: false },
+      { assertion: { type: 'min_chars', path: 'docs/需求文档.md', value: 10 }, ok: true },
+      { assertion: { type: 'min_chars', path: 'docs/需求文档.md', value: 9999 }, ok: false },
       { assertion: { type: 'run_end_reason', value: 'completed' }, ok: true },
       { assertion: { type: 'run_end_reason', value: 'stopped' }, ok: false },
       { assertion: { type: 'turns_lte', value: 2 }, ok: true },
@@ -292,6 +309,9 @@ describe('M9 eval 断言器', () => {
       { assertion: { type: 'invited_members', values: ['backend'] }, ok: false },
       { assertion: { type: 'no_invite' }, ok: false },
       { assertion: { type: 'no_loop' }, ok: true },
+      { assertion: { type: 'no_stall' }, ok: true },
+      { assertion: { type: 'scheduling', routesMin: 1 }, ok: true },
+      { assertion: { type: 'scheduling', handoffAcceptedMin: 1 }, ok: false },
       { assertion: { type: 'token_budget_ok' }, ok: true },
     ]
     const results = await runAssertions(
@@ -301,6 +321,47 @@ describe('M9 eval 断言器', () => {
     results.forEach((result, i) => {
       expect(result.ok, `${cases[i].assertion.type} 期望 ${cases[i].ok}`).toBe(cases[i].ok)
     })
+  })
+
+  it('交付规格断言：min_chars / min_sections / min_sources 判定与解析', async () => {
+    const ctx = makeCtx()
+    fs.writeFileSync(
+      path.join(ctx.rootDir, 'docs', '报告.md'),
+      [
+        '# 报告',
+        '',
+        '## 结论',
+        '',
+        '- 增长率 12%（来源：年报 2026）',
+        '',
+        '## 证据',
+        '',
+        '- 对照 [S1] 与 [S2]，详见 https://example.com/a',
+        '- 另据 S-03 与 S-04 复盘（真实模型探针实测的连字符格式）',
+        '',
+      ].join('\n'),
+    )
+    const cases: Array<{ assertion: Assertion; ok: boolean }> = [
+      { assertion: { type: 'min_chars', path: 'docs/报告.md', value: 30 }, ok: true },
+      { assertion: { type: 'min_chars', path: 'docs/报告.md', value: 9999 }, ok: false },
+      { assertion: { type: 'min_sections', path: 'docs/报告.md', value: 2 }, ok: true },
+      { assertion: { type: 'min_sections', path: 'docs/报告.md', value: 3 }, ok: false },
+      // 来源标记口径：URL 1 + 「来源：」1 + 方括号 [S1]/[S2] 2 + 裸编号 S-03/S-04 2 = 6
+      { assertion: { type: 'min_sources', path: 'docs/报告.md', value: 6 }, ok: true },
+      { assertion: { type: 'min_sources', path: 'docs/报告.md', value: 7 }, ok: false },
+      { assertion: { type: 'min_chars', path: 'docs/无.md', value: 1 }, ok: false },
+    ]
+    const results = await runAssertions(
+      cases.map((c) => c.assertion),
+      ctx,
+    )
+    results.forEach((result, i) => {
+      expect(result.ok, `${cases[i].assertion.type} 期望 ${cases[i].ok}`).toBe(cases[i].ok)
+    })
+
+    // 解析：path / value 透传（未知字段丢弃）
+    const parsed = parseAssertions([{ type: 'min_sections', path: 'docs/报告.md', value: 4, bogus: 1 }])
+    expect(parsed[0]).toEqual({ type: 'min_sections', path: 'docs/报告.md', value: 4 })
   })
 
   it('no_loop 命中循环抑制时失败；judge 无执行器跳过、低分失败', async () => {
@@ -313,7 +374,11 @@ describe('M9 eval 断言器', () => {
     // M50：no_invite 仅对「members 非空」的召集条目失败——派发 / 降级形状不误报
     const [noInviteOk] = await runAssertions(
       [{ type: 'no_invite' }],
-      makeCtx({ events: [traceEntry({ type: 'routing:dispatched', payload: { fallback: true, error: '平台路由解析失败' } })] }),
+      makeCtx({
+        events: [
+          traceEntry({ type: 'routing:dispatched', payload: { fallback: true, error: '平台路由解析失败' } }),
+        ],
+      }),
     )
     expect(noInviteOk.ok).toBe(true)
 
@@ -321,9 +386,12 @@ describe('M9 eval 断言器', () => {
     expect(skipped[0].skipped).toBe(true)
     expect(skipped[0].ok).toBe(true)
 
-    const judged = await runAssertions([{ type: 'judge', rubric: '质量', minScore: 7 }], makeCtx({
-      judge: async () => ({ score: 5, reasons: '内容偏薄' }),
-    }))
+    const judged = await runAssertions(
+      [{ type: 'judge', rubric: '质量', minScore: 7 }],
+      makeCtx({
+        judge: async () => ({ score: 5, reasons: '内容偏薄' }),
+      }),
+    )
     expect(judged[0].ok).toBe(false)
     expect(judged[0].detail).toContain('得分 5')
   })
@@ -334,5 +402,65 @@ describe('M9 eval 断言器', () => {
     const parsed = parseAssertions([{ type: 'turns_lte', value: 3 }])
     expect(parsed[0]).toEqual({ type: 'turns_lte', value: 3 })
     expect(parseAssertions([{ type: 'no_invite' }])[0]).toEqual({ type: 'no_invite' })
+  })
+
+  it('M61：schedulingCounts 聚合与 no_stall / scheduling 判定', async () => {
+    const events = [
+      traceEntry({ type: 'routing:dispatched', payload: { members: ['pm'], reason: '平台组队' } }),
+      traceEntry({ type: 'routing:dispatched', payload: { fallback: true, error: '路由解析失败' } }),
+      traceEntry({ type: 'wave:start', payload: { members: ['a'], parallel: false } }),
+      traceEntry({ type: 'wave:start', payload: { members: ['a', 'b'], parallel: true } }),
+      traceEntry({ type: 'schedule', payload: { loopSuppressed: false, stallSuppressed: true } }),
+      traceEntry({ type: 'wave:write-conflict', payload: { paths: ['docs/x.md'] } }),
+      traceEntry({ type: 'handoff:accepted', payload: { agentId: 'a' } }),
+      traceEntry({ type: 'handoff:accepted', payload: { agentId: 'b' } }),
+    ]
+    expect(schedulingCounts(events)).toEqual({
+      routes: 1,
+      routeFallbacks: 1,
+      waves: 2,
+      parallelWaves: 1,
+      loopSuppressed: 0,
+      stallSuppressed: 1,
+      writeConflicts: 1,
+      handoffAccepted: 2,
+    })
+
+    const ctx = makeCtx({ events })
+    const [stall] = await runAssertions([{ type: 'no_stall' }], ctx)
+    expect(stall.ok).toBe(false)
+
+    const [pass] = await runAssertions(
+      [
+        {
+          type: 'scheduling',
+          routesMin: 1,
+          handoffAcceptedMin: 2,
+          wavesMin: 2,
+          parallelWavesMin: 1,
+          stallSuppressedMax: 1,
+          writeConflictsMax: 1,
+        },
+      ],
+      ctx,
+    )
+    expect(pass.ok).toBe(true)
+
+    const [fail] = await runAssertions([{ type: 'scheduling', routesMin: 2, writeConflictsMax: 0 }], ctx)
+    expect(fail.ok).toBe(false)
+    expect(fail.detail).toContain('writeConflicts(1)≤0')
+
+    // 解析：scheduling / no_stall 白名单入列（未知字段丢弃）
+    const parsed = parseAssertions([{ type: 'scheduling', routesMin: 1, bogus: 9 }, { type: 'no_stall' }])
+    expect(parsed[0]).toEqual({
+      type: 'scheduling',
+      routesMin: 1,
+      handoffAcceptedMin: undefined,
+      wavesMin: undefined,
+      parallelWavesMin: undefined,
+      stallSuppressedMax: undefined,
+      writeConflictsMax: undefined,
+    })
+    expect(parsed[1]).toEqual({ type: 'no_stall' })
   })
 })

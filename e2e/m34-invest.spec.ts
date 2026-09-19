@@ -4,12 +4,13 @@
  *    → 投研主管独立成波收口 → 交还用户 → 3 份交付件；
  * 2) 「策略研究」：@ 三路并行（基本面 / 技术面 / 量化）→ 主管收口 → 4 份交付件；
  * 3) 「多空对弈」：@ 三路交锋并行（多空立论 + 证据弹药）→ 量化走子 → 终局裁决（verdict 卡）→ 5 份交付件；
- *    M52-E：局势面板局面头（胜负 + 置信度）随裁决上移；M52-F：信号按语义分侧（核心依据归多方 / 翻盘条件归空方）。
+ *    M52-E：局势面板局面头（胜负 + 置信度）随裁决上移；M52-F：信号按语义分侧（ 核心依据归多方 / 翻盘条件归空方）；
+ *    M63（批一）：四路走查 → 四路观点卡（视角 / 倾向 / 分歧提示）+ 博弈走子板（模型 / 种子 / 推演声明）。
  * 与 eval invest-quick-review / invest-strategy-research / bull-bear-duel 任务同构（确定性链路断言）。
  * M46-2：串行执行默认开启 → 本 spec 三例均验证并行波 → 建会后先显式关闭串行。
  */
 import { expect, test } from '@playwright/test'
-import { composer, createSessionByPreset, disableSerial, expectYourTurn, openApp, openWorkspace } from './helpers'
+import { backToChat, composer, createSessionByPreset, disableSerial, expectYourTurn, openApp, openWorkspace, sendMessage } from './helpers'
 
 test('M34 · 投研快评：preset 建会 → 两路并行独立产出 → 主管收口与交付件', async ({ page }) => {
   await openApp(page)
@@ -80,6 +81,7 @@ test('M34 · 策略研究：三路并行 → 主管收口 → 4 份交付件', a
 })
 
 test('M34 · 多空对弈：三路交锋并行 → 量化走子 → 终局裁决与 5 份交付件', async ({ page }) => {
+  test.setTimeout(150_000) // M66：新增四路走查段（共享环境负载下链路更长）
   await openApp(page)
   const title = `E2E-M34-对弈-${Date.now()}`
   await createSessionByPreset(page, '多空对弈', { title })
@@ -126,4 +128,19 @@ test('M34 · 多空对弈：三路交锋并行 → 量化走子 → 终局裁决
   ]) {
     await expect(page.locator(`button[title="${path}"]`)).toBeVisible()
   }
+
+  // M63（N1/G4）：四路走查 → 四路观点卡（视角 / 倾向 / 分歧提示）+ 博弈走子板（种子与推演声明）
+  await backToChat(page) // 交付件视图无 Composer——先返回对话
+  await sendMessage(page, '@秦砚 @雷动 @方程 四路走查：把四路观点与走子结论沉淀到面板。')
+  await expect(composer(page)).toHaveValue('') // 发送落地确认（防共享环境点击丢失）
+  await expectYourTurn(page)
+  await expect(page.locator('.scene-view-card[data-perspective="基本面"]')).toBeVisible()
+  await expect(page.locator('.scene-view-card[data-perspective="技术面"]')).toBeVisible()
+  await expect(page.locator('.scene-view-card[data-perspective="量化"]')).toBeVisible()
+  await expect(page.locator('.scene-views-split')).toBeVisible()
+  const move = page.locator('[data-move-board] .scene-move').first()
+  await expect(move).toBeVisible()
+  await expect(move.locator('.scene-move-model')).toHaveText('静态矩阵博弈')
+  await expect(move.locator('.scene-move-seed')).toContainText('20260918')
+  await expect(page.locator('.scene-moves-note')).toContainText('模型推演，非预测')
 })

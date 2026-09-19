@@ -106,10 +106,26 @@ export function autoPosition(doc: CanvasDoc): { x: number; y: number } {
 }
 
 export interface CanvasStoreOptions {
-  /** 应用数据目录（文档落 <dataDir>/canvas/<sessionId>.json） */
+  /** 应用数据目录（缺省文档落 <dataDir>/canvas/<sessionId>.json） */
   dataDir: string
+  /** M57：会话画布文件路径解析（多用户嵌套 data/canvas/u_<uid>/<sid>.json；缺省 = 平面路径） */
+  fileFor?: (sessionId: string) => string
   /** 变更广播（index 注入：notify:canvas-changed；测试可缺省） */
-  publish?: (sessionId: string, version: number, by: 'agent' | 'user') => void
+  publish?: (sessionId: string, version: number, by: 'agent' | 'user', meta: CanvasChangeMeta) => void
+}
+
+/** 受影响元素 id（M31 修订：前端据此做写入高亮与未读角标；节点 / 边同集，前端按画布文档过滤） */
+export interface CanvasTouched {
+  added: string[]
+  updated: string[]
+  removed: string[]
+}
+
+/** 变更广播元信息（M31 修订）：actor = 写入者 agent id（用户 / 系统写入缺省）；reason 标注写入来源 */
+export interface CanvasChangeMeta {
+  actor?: string
+  touched: CanvasTouched
+  reason: 'save' | 'ops' | 'media'
 }
 
 /**
@@ -126,6 +142,7 @@ export class CanvasStore {
   }
 
   private fileFor(sessionId: string): string {
+    if (this.opts.fileFor) return this.opts.fileFor(sessionId)
     // sessionId 为服务端生成（sess_xxx），仍做一层防御
     const safe = sessionId.replace(/[^a-zA-Z0-9_-]/g, '')
     return path.join(this.dir, `${safe}.json`)
@@ -150,9 +167,10 @@ export class CanvasStore {
     return doc
   }
 
-  /** 原子落盘（tmp + rename；失败不污染现有文件） */
+  /** 原子落盘（tmp + rename；失败不污染现有文件；M57：嵌套目录惰性创建） */
   private flush(doc: CanvasDoc): void {
     const file = this.fileFor(doc.sessionId)
+    ensureDir(path.dirname(file))
     const tmp = `${file}.tmp`
     fs.writeFileSync(tmp, `${JSON.stringify(doc)}\n`, 'utf8')
     fs.renameSync(tmp, file)
@@ -176,19 +194,26 @@ export class CanvasStore {
     }
     this.cache.set(sessionId, next)
     this.flush(next)
-    this.opts.publish?.(sessionId, next.version, 'user')
+    this.opts.publish?.(sessionId, next.version, 'user', { touched: { added: [], updated: [], removed: [] }, reason: 'save' })
     return next
   }
 
   /**
-   * agent 写入（canvas_write 工具）：读-改-写内部完成（不走版本锁），
+   * agent 写入（canvas_write 工具 / 媒体落位）：读-改-写内部完成（不走版本锁），
    * 返回生效结果（add_node / connect 的新 id，供工具回灌模型）。
+   * M31 修订：opts.by 为写入者 agent id（add_node 注入节点 by；update 保留原作者）；
+   * 广播 meta 携带 touched（前端高亮）与 reason（来源区分）。
    */
-  applyOps(sessionId: string, ops: CanvasOp[]): { doc: CanvasDoc; applied: Array<{ op: CanvasOp['op']; id?: string }> } {
+  applyOps(
+    sessionId: string,
+    ops: CanvasOp[],
+    opts?: { by?: string; reason?: CanvasChangeMeta['reason'] },
+  ): { doc: CanvasDoc; applied: Array<{ op: CanvasOp['op']; id?: string }> } {
     const current = this.get(sessionId)
     const nodes = [...current.nodes]
     const edges = [...current.edges]
     const applied: Array<{ op: CanvasOp['op']; id?: string }> = []
+    const touched: CanvasTouched = { added: [], updated: [], removed: [] }
     const indexOf = (id: string): number => nodes.findIndex((n) => n.id === id)
 
     for (const op of ops) {
@@ -202,9 +227,11 @@ export class CanvasStore {
             position,
             width: op.node.width,
             height: op.node.height,
+            ...(opts?.by ? { by: opts.by } : {}),
             data: op.node.data,
           })
           applied.push({ op: op.op, id })
+          touched.added.push(id)
           break
         }
         case 'update_node': {
@@ -222,6 +249,7 @@ export class CanvasStore {
             data: op.data ? ({ ...prev.data, ...op.data } as CanvasNode['data']) : prev.data,
           }
           applied.push({ op: op.op, id: op.id })
+          touched.updated.push(op.id)
           break
         }
         case 'remove_node': {
@@ -229,9 +257,13 @@ export class CanvasStore {
           if (idx >= 0) nodes.splice(idx, 1)
           for (let i = edges.length - 1; i >= 0; i -= 1) {
             const edge = edges[i]!
-            if (edge.source === op.id || edge.target === op.id) edges.splice(i, 1)
+            if (edge.source === op.id || edge.target === op.id) {
+              touched.removed.push(edge.id)
+              edges.splice(i, 1)
+            }
           }
           applied.push({ op: op.op, id: op.id })
+          touched.removed.push(op.id)
           break
         }
         case 'connect': {
@@ -243,12 +275,14 @@ export class CanvasStore {
           const id = newEdgeId()
           edges.push({ id, source: op.source, target: op.target, kind: op.kind ?? 'flow' })
           applied.push({ op: op.op, id })
+          touched.added.push(id)
           break
         }
         case 'remove_edge': {
           const idx = edges.findIndex((e) => e.id === op.id)
           if (idx >= 0) edges.splice(idx, 1)
           applied.push({ op: op.op, id: op.id })
+          touched.removed.push(op.id)
           break
         }
       }
@@ -263,7 +297,11 @@ export class CanvasStore {
     }
     this.cache.set(sessionId, next)
     this.flush(next)
-    this.opts.publish?.(sessionId, next.version, 'agent')
+    this.opts.publish?.(sessionId, next.version, 'agent', {
+      actor: opts?.by,
+      touched,
+      reason: opts?.reason ?? 'ops',
+    })
     return { doc: next, applied }
   }
 

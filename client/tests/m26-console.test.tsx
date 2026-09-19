@@ -13,6 +13,7 @@ import { SkillEditor } from '../src/components/console/SkillEditor'
 import { ValidateBanner } from '../src/components/console/ValidateBanner'
 import { TooltipProvider } from '../src/components/ui/tooltip'
 import { useAgentStore } from '../src/stores/agent-store'
+import { useAuthStore } from '../src/stores/auth-store'
 import { useConsoleStore } from '../src/stores/console-store'
 import { useUiStore } from '../src/stores/ui-store'
 
@@ -105,6 +106,8 @@ afterEach(() => {
 
 describe('M26：ActivityRail', () => {
   it('点击图标切换 appView（含 localStorage 持久化与 aria-current）', async () => {
+    // M57：管理面入口（Agent / Skill / 连接）仅 admin 可见——本用例验证 admin 视角
+    useAuthStore.setState({ isAdmin: true })
     render(
       <TooltipProvider>
         <ActivityRail />

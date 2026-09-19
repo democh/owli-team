@@ -7,17 +7,24 @@
  * - 删除连接后使数据库句柄失效（防陈旧池连接）。
  */
 import { Router } from 'express'
+import type { Request, RequestHandler } from 'express'
 import { z } from 'zod'
 import type { ConnectionDefinition } from '@multi-agent/shared'
+import type { AuthUser } from '../auth/service.js'
 import type { ApiDeps } from './index.js'
 import { analyzeSql, isReadOnlyStatement } from '../connections/db/guard.js'
+import { detectSshLocalPreset } from '../connections/ssh/local-preset.js'
+import { apiKeyOf, normalizeLlmConfig } from '../llm/provider-router.js'
+import { probeLlmProvider } from '../llm/probe.js'
 
 const ConnectionInputSchema = z.object({
   name: z.string().min(1).max(60),
-  kind: z.enum(['postgres', 'mysql', 'sqlite', 'ssh', 'chrome', 'embedding', 'media']),
+  kind: z.enum(['postgres', 'mysql', 'sqlite', 'ssh', 'chrome', 'embedding', 'media', 'llm']),
   config: z.record(z.unknown()).default({}),
   secret: z.record(z.unknown()).nullable().optional(),
   enabled: z.boolean().optional(),
+  /** M57 P3：成员可用开关（仅 admin / system 连接生效） */
+  memberUse: z.boolean().optional(),
 })
 
 const ConnectionUpdateSchema = z.object({
@@ -25,6 +32,8 @@ const ConnectionUpdateSchema = z.object({
   config: z.record(z.unknown()).optional(),
   secret: z.record(z.unknown()).nullable().optional(),
   enabled: z.boolean().optional(),
+  /** M57 P3：成员可用开关（admin，仅 system 连接） */
+  memberUse: z.boolean().optional(),
 })
 
 const BindSchema = z.object({ connectionId: z.string().min(1) })
@@ -72,9 +81,41 @@ function wrap(
 export function createConnectionsRouter(deps: ApiDeps): Router {
   const router = Router()
 
+  // ---------- M57：多用户（管理面 admin-only；成员仅可用 member_use=1 的 system 连接） ----------
+
+  const userOf = (req: Request): AuthUser | undefined => (req as Request & { user?: AuthUser }).user
+  const actorOf = (req: Request): { userId?: string; ip?: string } => ({
+    userId: userOf(req)?.id,
+    ip: req.ip,
+  })
+  const isAdminReq = (req: Request): boolean => {
+    if (!deps.access.multiUser) return true
+    return userOf(req)?.role === 'admin'
+  }
+  /** 管理面守卫（创建 / 编辑 / 删除 / 测试 / 工作台 / SSH 终端签发 / 驱动探测）；单用户兼容模式放行 */
+  const adminOnly: RequestHandler = (req, res, next) => {
+    if (isAdminReq(req)) return next()
+    const user = userOf(req)
+    if (!user) return res.status(401).json({ error: '未登录或登录已失效：请登录后重试' })
+    res.status(403).json({ error: '需要管理员权限（连接中心由管理员统一管理）' })
+  }
+
+  /**
+   * M57 P3：资源级守卫 —— admin 全量；成员仅限「自己的 personal 连接」（system 连接对成员一律不可见 → 404 不泄漏存在性）。
+   * 用于单连接资源：详情 / 编辑 / 删除 / 测试 / 终端签发 / 工作台（schema / sql / 表数据）。
+   */
+  const ownerOrAdmin: RequestHandler = (req, res, next) => {
+    if (isAdminReq(req)) return next()
+    const user = userOf(req)
+    if (!user) return res.status(401).json({ error: '未登录或登录已失效：请登录后重试' })
+    if (deps.connections.ownsPersonal(user.id, req.params.id)) return next()
+    res.status(404).json({ error: '连接不存在' })
+  }
+
   // ---------- 驱动可用性探测（表单预检） ----------
   router.get(
     '/connections/probe',
+    adminOnly,
     wrap(async (req, res) => {
       const kind = String(req.query.kind ?? '')
       if (kind !== 'postgres' && kind !== 'mysql' && kind !== 'sqlite') {
@@ -86,12 +127,36 @@ export function createConnectionsRouter(deps: ApiDeps): Router {
     }),
   )
 
+  // ---------- SSH「本地」预置（本机探测：用户名 / Agent / 默认私钥 / 22 端口；新建表单一键填入） ----------
+  router.get(
+    '/connections/ssh-preset',
+    adminOnly,
+    wrap(async (_req, res) => {
+      res.json({ preset: await detectSshLocalPreset() })
+    }),
+  )
+
   // ---------- CRUD ----------
-  router.get('/connections', (_req, res) => {
-    res.json({ connections: deps.connections.list() })
+  router.get('/connections', (req, res) => {
+    // M57：admin = 全量；成员 = 可用清单（可用的 system + 本人 personal，含禁用便于管理）
+    // M57 P3：system 条目对成员 config 脱敏（config 置空）；本人 personal 保留完整 config（自行管理）
+    if (isAdminReq(req)) {
+      res.json({ connections: deps.connections.list() })
+      return
+    }
+    const user = userOf(req)
+    if (!user) {
+      res.status(401).json({ error: '未登录或登录已失效：请登录后重试' })
+      return
+    }
+    res.json({
+      connections: deps.connections
+        .listForUser(user.id)
+        .map((c) => (c.ownerId === user.id ? c : { ...c, config: {} })),
+    })
   })
 
-  router.get('/connections/:id', (req, res) => {
+  router.get('/connections/:id', ownerOrAdmin, (req, res) => {
     const connection = deps.connections.get(req.params.id)
     if (!connection) {
       res.status(404).json({ error: '连接不存在' })
@@ -106,14 +171,43 @@ export function createConnectionsRouter(deps: ApiDeps): Router {
       res.status(400).json({ error: `参数校验失败：${parsed.error.issues[0]?.message ?? '非法请求'}` })
       return
     }
+    // M57 P3：成员可创建个人连接（personal）；媒体 / 嵌入连接为全局单例，仍由管理员配置
+    const user = userOf(req)
+    const isAdmin = isAdminReq(req)
+    if (!isAdmin) {
+      if (!user) {
+        res.status(401).json({ error: '未登录或登录已失效：请登录后重试' })
+        return
+      }
+      if (parsed.data.kind === 'embedding' || parsed.data.kind === 'media' || parsed.data.kind === 'llm') {
+        res.status(403).json({ error: `「${parsed.data.kind}」连接为全局配置：请联系管理员在管理控制台设置` })
+        return
+      }
+    }
+    // 多 Provider：模型服务名不得含「/」（名称即模型名前缀，如 deepseek/deepseek-flash）；接入地址必须为合法 URL
+    if (parsed.data.kind === 'llm') {
+      if (parsed.data.name.includes('/')) {
+        res.status(400).json({ error: '模型服务名称不能包含斜杠「/」（名称将作为模型名前缀，如 deepseek/deepseek-flash）' })
+        return
+      }
+      const baseUrl = typeof parsed.data.config.baseUrl === 'string' ? parsed.data.config.baseUrl.trim() : ''
+      if (!/^https?:\/\//i.test(baseUrl)) {
+        res.status(400).json({ error: '模型服务需要合法的接入地址（http:// 或 https:// 开头）' })
+        return
+      }
+    }
     try {
-      const connection = deps.connections.create(parsed.data)
+      // M57 P3：成员创建一律落 personal（scope / owner 服务端定，不信请求体）
+      const connection = deps.connections.create(
+        isAdmin ? parsed.data : { ...parsed.data, scope: 'personal' as const, ownerId: user!.id },
+      )
       deps.audit.record({
         actor: 'user',
+        ...actorOf(req),
         action: 'connection.create',
         resourceType: 'connection',
         resourceId: connection.id,
-        detail: { name: connection.name, kind: connection.kind },
+        detail: { name: connection.name, kind: connection.kind, scope: connection.scope, ownerId: connection.ownerId },
       })
       res.json({ connection })
     } catch (err) {
@@ -123,14 +217,32 @@ export function createConnectionsRouter(deps: ApiDeps): Router {
 
   router.put(
     '/connections/:id',
+    ownerOrAdmin,
     wrap(async (req, res) => {
       const parsed = ConnectionUpdateSchema.safeParse(req.body)
       if (!parsed.success) {
         res.status(400).json({ error: `参数校验失败：${parsed.error.issues[0]?.message ?? '非法请求'}` })
         return
       }
+      // 多 Provider：llm 连接名不得含「/」（名称即模型名前缀）；带 config 覆盖时接入地址必须为合法 URL
+      const existing = deps.connections.get(req.params.id)
+      if (existing?.kind === 'llm') {
+        if (parsed.data.name?.includes('/')) {
+          res.status(400).json({ error: '模型服务名称不能包含斜杠「/」（名称将作为模型名前缀）' })
+          return
+        }
+        if (parsed.data.config) {
+          const baseUrl = typeof parsed.data.config.baseUrl === 'string' ? parsed.data.config.baseUrl.trim() : ''
+          if (!/^https?:\/\//i.test(baseUrl)) {
+            res.status(400).json({ error: '模型服务需要合法的接入地址（http:// 或 https:// 开头）' })
+            return
+          }
+        }
+      }
+      // M57 P3：成员不可改 system 连接（已被 ownerOrAdmin 拦截）；对自有 personal 忽略 memberUse 字段
+      const patch = isAdminReq(req) ? parsed.data : { ...parsed.data, memberUse: undefined }
       try {
-        const connection = deps.connections.update(req.params.id, parsed.data)
+        const connection = deps.connections.update(req.params.id, patch)
         if (!connection) {
           res.status(404).json({ error: '连接不存在' })
           return
@@ -140,6 +252,7 @@ export function createConnectionsRouter(deps: ApiDeps): Router {
         deps.embeddings.invalidate(connection.id)
         deps.audit.record({
           actor: 'user',
+          ...actorOf(req),
           action: 'connection.update',
           resourceType: 'connection',
           resourceId: connection.id,
@@ -154,6 +267,7 @@ export function createConnectionsRouter(deps: ApiDeps): Router {
 
   router.delete(
     '/connections/:id',
+    ownerOrAdmin,
     wrap(async (req, res) => {
       const existing = deps.connections.get(req.params.id)
       if (!existing) {
@@ -166,6 +280,7 @@ export function createConnectionsRouter(deps: ApiDeps): Router {
       deps.connections.remove(existing.id)
       deps.audit.record({
         actor: 'user',
+        ...actorOf(req),
         action: 'connection.delete',
         resourceType: 'connection',
         resourceId: existing.id,
@@ -178,6 +293,7 @@ export function createConnectionsRouter(deps: ApiDeps): Router {
   // ---------- 测试 ----------
   router.post(
     '/connections/:id/test',
+    ownerOrAdmin,
     wrap(async (req, res) => {
       const connection = deps.connections.get(req.params.id)
       if (!connection) {
@@ -231,6 +347,7 @@ export function createConnectionsRouter(deps: ApiDeps): Router {
         deps.connections.setStatus(connection.id, result.ok ? 'ok' : 'error', result.ok ? undefined : result.error)
         deps.audit.record({
           actor: 'user',
+          ...actorOf(req),
           action: 'connection.test',
           resourceType: 'connection',
           resourceId: connection.id,
@@ -256,6 +373,7 @@ export function createConnectionsRouter(deps: ApiDeps): Router {
         deps.connections.setStatus(connection.id, result.ok ? 'ok' : 'error', result.ok ? undefined : result.error)
         deps.audit.record({
           actor: 'user',
+          ...actorOf(req),
           action: 'connection.test',
           resourceType: 'connection',
           resourceId: connection.id,
@@ -264,6 +382,34 @@ export function createConnectionsRouter(deps: ApiDeps): Router {
           detail: result.ok
             ? { provider: String(connection.config.provider ?? ''), latencyMs: result.latencyMs }
             : undefined,
+        })
+        res.json({
+          result: result.ok ? { ok: true, latencyMs: result.latencyMs, detail: result.detail } : { ok: false, error: result.error },
+          connection: deps.connections.get(connection.id),
+        })
+        return
+      }
+      // 多 Provider：模型服务探活（GET /models；模型清单直接回给表单）
+      if (connection.kind === 'llm') {
+        const config = normalizeLlmConfig(connection.config)
+        if (!config) {
+          res.json({ result: { ok: false, error: '模型服务配置不完整（接入地址必填）' } })
+          return
+        }
+        const result = await probeLlmProvider({
+          baseUrl: config.baseUrl,
+          apiKey: apiKeyOf(deps.connections.getSecret(connection.id)),
+        })
+        deps.connections.setStatus(connection.id, result.ok ? 'ok' : 'error', result.ok ? undefined : result.error)
+        deps.audit.record({
+          actor: 'user',
+          ...actorOf(req),
+          action: 'connection.test',
+          resourceType: 'connection',
+          resourceId: connection.id,
+          ok: result.ok,
+          error: result.ok ? undefined : result.error,
+          detail: result.ok ? { baseUrl: config.baseUrl, latencyMs: result.latencyMs } : undefined,
         })
         res.json({
           result: result.ok ? { ok: true, latencyMs: result.latencyMs, detail: result.detail } : { ok: false, error: result.error },
@@ -286,6 +432,7 @@ export function createConnectionsRouter(deps: ApiDeps): Router {
 
   router.get(
     '/connections/:id/schema',
+    ownerOrAdmin,
     wrap(async (req, res) => {
       const connection = requireDbConnection(deps, req.params.id, res)
       if (!connection) return
@@ -306,6 +453,7 @@ export function createConnectionsRouter(deps: ApiDeps): Router {
   /** 面板 SQL 执行：mode 由服务端护栏判定（只读→query，其余→execute，读写在连接开关约束下） */
   router.post(
     '/connections/:id/sql',
+    ownerOrAdmin,
     wrap(async (req, res) => {
       const connection = requireDbConnection(deps, req.params.id, res)
       if (!connection) return
@@ -377,6 +525,7 @@ export function createConnectionsRouter(deps: ApiDeps): Router {
   /** 表数据分页浏览（表名 / 列名白名单校验在 manager 内；偏移与行数服务端钳制） */
   router.get(
     '/connections/:id/tables/:table/rows',
+    ownerOrAdmin,
     wrap(async (req, res) => {
       const connection = requireDbConnection(deps, req.params.id, res)
       if (!connection) return
@@ -405,7 +554,7 @@ export function createConnectionsRouter(deps: ApiDeps): Router {
   )
 
   // ---------- SSH 终端（M23：一次性 token 签发；数据流走 /ws/ssh 通道） ----------
-  router.get('/connections/:id/ssh/terminal-token', (req, res) => {
+  router.get('/connections/:id/ssh/terminal-token', ownerOrAdmin, (req, res) => {
     const connection = deps.connections.get(req.params.id)
     if (!connection) {
       res.status(404).json({ error: '连接不存在' })
@@ -419,7 +568,8 @@ export function createConnectionsRouter(deps: ApiDeps): Router {
       res.status(400).json({ error: `连接「${connection.name}」已禁用` })
       return
     }
-    res.json(deps.streamTokens.issue(`ssh:${connection.id}`, 'takeover'))
+    // M57：终端 token 绑定登录用户（握手时一致性校验）
+    res.json(deps.streamTokens.issue(`ssh:${connection.id}`, 'takeover', userOf(req)?.id))
   })
 
   // ---------- 会话绑定 ----------
@@ -456,9 +606,23 @@ export function createConnectionsRouter(deps: ApiDeps): Router {
       res.status(400).json({ error: '媒体连接不参与会话绑定（在「设置 → 媒体生成」中配置启用）' })
       return
     }
+    // 多 Provider：模型服务全局共享（不参与会话绑定；在「设置 → 模型与生成」中配置）
+    if (connection.kind === 'llm') {
+      res.status(400).json({ error: '模型服务连接不参与会话绑定（在「设置 → 模型与生成」中配置）' })
+      return
+    }
+    // M57：成员仅可绑定 member_use=1 的 system 连接（admin 不限）；M57 P3：本人 personal 连接亦可
+    if (!isAdminReq(req) && !deps.connections.memberUsable(connection.id)) {
+      const user = userOf(req)
+      if (!user || !deps.connections.ownsPersonal(user.id, connection.id)) {
+        res.status(403).json({ error: '该连接不允许成员使用（请联系管理员开放，或改用自己创建的连接）' })
+        return
+      }
+    }
     deps.connections.bind(req.params.id, connection.id)
     deps.audit.record({
       actor: 'user',
+      ...actorOf(req),
       action: 'connection.bind',
       resourceType: 'connection',
       resourceId: connection.id,
@@ -473,6 +637,7 @@ export function createConnectionsRouter(deps: ApiDeps): Router {
     if (removed) {
       deps.audit.record({
         actor: 'user',
+        ...actorOf(req),
         action: 'connection.unbind',
         resourceType: 'connection',
         resourceId: req.params.connectionId,

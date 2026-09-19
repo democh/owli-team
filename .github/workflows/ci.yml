@@ -77,7 +77,7 @@ jobs:
           node-version: '24'
           cache: npm
       - run: npm ci
-      - name: Agent 包 / Skill 资产校验
+      - name: Agent 包 / Skill 资产校验（含专家级质量 strict 门禁）
         run: |
-          npm run check:agents
-          npm run check:skills
+          QUALITY_STRICT=1 npm run check:agents
+          SKILL_STRICT=1 npm run check:skills

@@ -9,7 +9,9 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { Router } from 'express'
+import type { Request, RequestHandler } from 'express'
 import { z } from 'zod'
+import type { AuthUser } from '../auth/service.js'
 import type { ApiDeps } from './index.js'
 
 const StreamTokenQuery = z.object({
@@ -42,9 +44,36 @@ function requireSession(deps: ApiDeps, id: string): ReturnType<ApiDeps['browser'
 export function createBrowserRouter(deps: ApiDeps): Router {
   const router = Router()
 
-  // ---------- 自动发现（连接表单「自动检测」） ----------
+  // ---------- M57：多用户守卫（bsid → 业务会话 → 归属；已关闭会话回放仅 admin / 单用户兼容模式） ----------
+
+  const userOf = (req: Request): AuthUser | undefined => (req as Request & { user?: AuthUser }).user
+  const actorOf = (req: Request): { userId?: string; ip?: string } => ({
+    userId: userOf(req)?.id,
+    ip: req.ip,
+  })
+  const adminOnly: RequestHandler = (req, res, next) => {
+    if (!deps.access.multiUser) return next()
+    const user = userOf(req)
+    if (!user) return res.status(401).json({ error: '未登录或登录已失效：请登录后重试' })
+    if (user.role !== 'admin') return res.status(403).json({ error: '需要管理员权限' })
+    next()
+  }
+  /** bsid 归属校验（未通过 → 由调用方回 404）；M62：已关闭会话按库内归属放行本人回放 */
+  const canAccessBsid = (req: Request): boolean => {
+    const session = deps.browser.get(req.params.bsid)
+    if (session) return deps.access.canAccessSession(userOf(req), session.sessionId)
+    if (!deps.access.multiUser) return true
+    const user = userOf(req)
+    const owner = deps.browser.ownerOf(req.params.bsid)
+    if (owner) return user?.role === 'admin' || user?.id === owner
+    // 无归属行（兼容模式遗留）：回放仅限 admin
+    return user?.role === 'admin'
+  }
+
+  // ---------- 自动发现（连接表单「自动检测」；M57：管理面） ----------
   router.get(
     '/browser/discover',
+    adminOnly,
     wrap(async (_req, res) => {
       const { discoverExecutables, discoverEndpoints } = await import('../browser/discover.js')
       const [executables, endpoints] = await Promise.all([
@@ -54,6 +83,15 @@ export function createBrowserRouter(deps: ApiDeps): Router {
       res.json({ executables, endpoints })
     }),
   )
+
+  // ---------- M62：活跃实例总览（admin 观测 / 关闭入口；兼容模式放行） ----------
+  router.get('/browser/sessions', adminOnly, (_req, res) => {
+    const sessions = deps.browser.listDetailed().map((s) => ({
+      ...s,
+      ownerName: s.ownerId ? deps.users.get(s.ownerId)?.displayName : undefined,
+    }))
+    res.json({ sessions })
+  })
 
   // ---------- 业务会话的浏览器视图（面板数据源） ----------
   router.get('/sessions/:id/browser', (req, res) => {
@@ -70,6 +108,10 @@ export function createBrowserRouter(deps: ApiDeps): Router {
   })
 
   router.get('/browser/sessions/:bsid/steps', (req, res) => {
+    if (!canAccessBsid(req)) {
+      res.status(404).json({ error: '浏览器会话不存在' })
+      return
+    }
     const session = requireSession(deps, req.params.bsid)
     if (!session) {
       // 已关闭会话仍可回放（步骤在库）
@@ -104,6 +146,7 @@ export function createBrowserRouter(deps: ApiDeps): Router {
         })
         deps.audit.record({
           actor: 'user',
+          ...actorOf(req),
           action: 'browser.action',
           resourceType: 'browser_session',
           resourceId: session.id,
@@ -129,6 +172,10 @@ export function createBrowserRouter(deps: ApiDeps): Router {
       res.status(400).json({ error: '非法截图路径' })
       return
     }
+    if (!canAccessBsid(req)) {
+      res.status(404).json({ error: '截图不存在' })
+      return
+    }
     const root = path.resolve(deps.cfg.browserScreenshotDir)
     const file = path.resolve(root, bsid, name)
     if (!file.startsWith(root + path.sep) || !fs.existsSync(file)) {
@@ -146,20 +193,22 @@ export function createBrowserRouter(deps: ApiDeps): Router {
       return
     }
     const session = requireSession(deps, req.params.bsid)
-    if (!session || session.isClosed()) {
+    if (!session || session.isClosed() || !canAccessBsid(req)) {
       res.status(404).json({ error: '浏览器会话不存在或已关闭' })
       return
     }
     if (parsed.data.mode === 'takeover') {
       deps.audit.record({
         actor: 'user',
+        ...actorOf(req),
         action: 'browser.takeover',
         resourceType: 'browser_session',
         resourceId: session.id,
         sessionId: session.sessionId,
       })
     }
-    res.json(deps.streamTokens.issue(`browser:${session.id}`, parsed.data.mode))
+    // M57：流 token 绑定用户（帧流 / 输入通道握手校验一致性）
+    res.json(deps.streamTokens.issue(`browser:${session.id}`, parsed.data.mode, userOf(req)?.id))
   })
 
   // ---------- 接管 / 归还（面板按钮；输入走 WS input 频道） ----------
@@ -167,13 +216,14 @@ export function createBrowserRouter(deps: ApiDeps): Router {
     '/browser/sessions/:bsid/takeover',
     wrap(async (req, res) => {
       const session = requireSession(deps, req.params.bsid)
-      if (!session || session.isClosed()) {
+      if (!session || session.isClosed() || !canAccessBsid(req)) {
         res.status(404).json({ error: '浏览器会话不存在或已关闭' })
         return
       }
       await session.takeover('user')
       deps.audit.record({
         actor: 'user',
+        ...actorOf(req),
         action: 'browser.takeover',
         resourceType: 'browser_session',
         resourceId: session.id,
@@ -187,13 +237,14 @@ export function createBrowserRouter(deps: ApiDeps): Router {
     '/browser/sessions/:bsid/release',
     wrap(async (req, res) => {
       const session = requireSession(deps, req.params.bsid)
-      if (!session || session.isClosed()) {
+      if (!session || session.isClosed() || !canAccessBsid(req)) {
         res.status(404).json({ error: '浏览器会话不存在或已关闭' })
         return
       }
       await session.release('user')
       deps.audit.record({
         actor: 'user',
+        ...actorOf(req),
         action: 'browser.release',
         resourceType: 'browser_session',
         resourceId: session.id,
@@ -203,9 +254,10 @@ export function createBrowserRouter(deps: ApiDeps): Router {
     }),
   )
 
-  // ---------- 系统浏览器打开（面板 / 工具的「自动打开」语义） ----------
+  // ---------- 系统浏览器打开（面板 / 工具的「自动打开」语义；M57：管理面） ----------
   router.post(
     '/browser/open-external',
+    adminOnly,
     wrap(async (req, res) => {
       const parsed = OpenExternalSchema.safeParse(req.body)
       if (!parsed.success) {
@@ -216,6 +268,7 @@ export function createBrowserRouter(deps: ApiDeps): Router {
         await deps.browser.openExternal(parsed.data.url)
         deps.audit.record({
           actor: 'user',
+          ...actorOf(req),
           action: 'browser.action',
           resourceType: 'external',
           detail: { action: 'open-external', url: parsed.data.url.slice(0, 500) },
@@ -231,6 +284,10 @@ export function createBrowserRouter(deps: ApiDeps): Router {
   router.post(
     '/browser/sessions/:bsid/close',
     wrap(async (req, res) => {
+      if (!canAccessBsid(req)) {
+        res.status(404).json({ error: '浏览器会话不存在' })
+        return
+      }
       const closed = await deps.browser.close(req.params.bsid, 'user')
       if (!closed) {
         res.status(404).json({ error: '浏览器会话不存在' })

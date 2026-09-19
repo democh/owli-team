@@ -2,9 +2,12 @@
  * 序贯博弈视图（M34 §6.4）：博弈树（自绘 SVG）——
  * 根 = 先动方 → 分支 = 先动方行动（跟随方最优反应节点）→ 叶 = 跟随方行动与收益对；
  * 均衡路径高亮加粗、反事实分支虚线灰；下方列出反事实对比（选了别的分支会怎样）。
+ * 交互（轻量内联口径）：悬停分支 → 其余分支淡化；点击 / 回车分支节点（或点击反事实条目）→
+ * 锁定对照（分支激活 + 对应反事实条目高亮）。
  */
 import * as React from 'react'
-import { ACTION_LABELS, fmtNum, PLAYER_LABELS, type SequenceResult, type SequenceTreeNode } from './types'
+import { cn } from '../../lib/utils'
+import { ACTION_LABELS, fmtNum, PLAYER_LABELS, type GameAction, type SequenceResult, type SequenceTreeNode } from './types'
 
 const ROW_H = 26
 const TOP_PAD = 26
@@ -19,6 +22,13 @@ function leafText(node: SequenceTreeNode): string {
 }
 
 export function SequenceView({ result }: { result: SequenceResult }): React.JSX.Element {
+  // 悬停分支（其余分支淡化）与锁定对照（分支 / 反事实条目联动高亮）
+  const [hot, setHot] = React.useState<string | undefined>(undefined)
+  const [pin, setPin] = React.useState<GameAction | undefined>(undefined)
+  const togglePin = (action?: GameAction): void => {
+    if (!action) return
+    setPin((prev) => (prev === action ? undefined : action))
+  }
   const branches = result.tree.children ?? []
   const leavesPerBranch = Math.max(1, ...branches.map((b) => b.children?.length ?? 0))
   const height = TOP_PAD + branches.length * leavesPerBranch * ROW_H + 8
@@ -43,7 +53,12 @@ export function SequenceView({ result }: { result: SequenceResult }): React.JSX.
           const by = branchY(b)
           const leaves = branch.children ?? []
           return (
-            <g key={branch.id}>
+            <g
+              key={branch.id}
+              className={cn('md-game-branch', hot !== undefined && hot !== branch.id && 'is-dim')}
+              onMouseEnter={() => setHot(branch.id)}
+              onMouseLeave={() => setHot(undefined)}
+            >
               {/* 根 → 分支 */}
               <line
                 x1={ROOT_X + 104}
@@ -60,9 +75,20 @@ export function SequenceView({ result }: { result: SequenceResult }): React.JSX.
                 width={86}
                 height={22}
                 rx={5}
+                className={cn('md-game-nodebox', pin !== undefined && pin === branch.action && 'is-active')}
                 fill={branch.onPath ? 'rgba(37, 99, 235, 0.08)' : '#ffffff'}
                 stroke={branch.onPath ? '#0f172a' : '#cbd5e1'}
                 strokeWidth={branch.onPath ? 1.4 : 1}
+                role="button"
+                tabIndex={0}
+                aria-label={`分支 ${branch.actionLabel ?? ''}${branch.onPath ? '（均衡路径）' : ''}；点击对照反事实`}
+                onClick={() => togglePin(branch.action)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault()
+                    togglePin(branch.action)
+                  }
+                }}
               />
               <text x={BRANCH_X + 43} y={by + 4} textAnchor="middle" className="md-game-svg-label">
                 {branch.actionLabel ?? ''}
@@ -102,7 +128,20 @@ export function SequenceView({ result }: { result: SequenceResult }): React.JSX.
       {result.counterfactuals.length > 0 && (
         <div className="md-game-counterfactual">
           {result.counterfactuals.map((cf) => (
-            <div key={cf.action} className="md-game-counterfactual-item">
+            <div
+              key={cf.action}
+              className={cn('md-game-counterfactual-item', pin === cf.action && 'is-active')}
+              role="button"
+              tabIndex={0}
+              title="点击与上方分支联动对照"
+              onClick={() => togglePin(cf.action)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault()
+                  togglePin(cf.action)
+                }
+              }}
+            >
               反事实：若{PLAYER_LABELS[result.leader]}选「{ACTION_LABELS[cf.action]}」，跟随方将选「{ACTION_LABELS[cf.followerBest]}」，
               {PLAYER_LABELS[result.leader]}收益 {fmtNum(cf.payoffs[result.leader], 3, true)}（Δ {fmtNum(cf.leaderDelta, 3, true)}）
             </div>

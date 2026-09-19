@@ -196,6 +196,7 @@ describe('```kline 块（Markdown 路由 + 内核装配）', () => {
     const user = userEvent.setup()
     const { container } = render(<Markdown content={'```kline\n' + KLINE_JSON + '\n```'} />)
     await waitFor(() => expect(container.querySelector('.md-kline-canvas[data-state="ready"]')).not.toBeNull())
+    expect(screen.getByRole('button', { name: '日K' }).className).toContain('is-active')
 
     fetchMock.mockImplementation(async () => jsonResponse({ kline: { ...KLINE_DATA, period: 'week' } }))
     await user.click(screen.getByRole('button', { name: '周K' }))
@@ -206,6 +207,9 @@ describe('```kline 块（Markdown 路由 + 内核装配）', () => {
     const second = vi.mocked(createKline).mock.calls[1][1]
     expect(second.dataset.period).toBe('week')
     expect(container.textContent).toContain('实拉视图')
+    // 实拉视图下芯片高亮跟随展示周期（而非快照周期）
+    expect(screen.getByRole('button', { name: '周K' }).className).toContain('is-active')
+    expect(screen.getByRole('button', { name: '日K' }).className).not.toContain('is-active')
 
     // 切换失败：错误提示 + 保持原视图
     fetchMock.mockImplementation(async () => ({

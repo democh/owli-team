@@ -7,6 +7,9 @@ import path from 'node:path'
 import type { NotifyType } from '@multi-agent/shared'
 import { ApprovalService } from '../src/approval.js'
 import { PlanReviewService } from '../src/plan-review.js'
+// M57：多用户（测试装配：无账号 → 单用户兼容模式，全部放行）
+import { AccessService } from '../src/auth/access.js'
+import { AuthService } from '../src/auth/service.js'
 import { loadConfig, type AppConfig } from '../src/config.js'
 import { Compressor } from '../src/context/compressor.js'
 import { ContextService } from '../src/context/service.js'
@@ -15,6 +18,7 @@ import type { ChatRequest, LlmChunk } from '../src/llm/provider.js'
 import { Engine } from '../src/orchestration/engine.js'
 import { ArtifactStore } from '../src/store/artifacts.js'
 import { ArtifactVersionStore } from '../src/store/artifact-versions.js'
+import { ApiKeyStore, AuthSessionStore } from '../src/store/auth-sessions.js'
 import { openDatabase } from '../src/store/db.js'
 import { FeedbackStore } from '../src/store/feedback.js'
 import { MemoryStore } from '../src/store/memory.js'
@@ -25,11 +29,16 @@ import { PromptLibrary } from '../src/store/prompts.js'
 import { ReviewStore } from '../src/store/reviews.js'
 import { RunEventStore } from '../src/store/run-events.js'
 import { RunStore } from '../src/store/runs.js'
+import { SessionMemberStore } from '../src/store/session-members.js'
 import { SessionStore } from '../src/store/sessions.js'
+import { createUserLabelResolver } from '../src/context/user-label.js'
+import { QuotaService } from '../src/quota/service.js'
+import { QuotaStore } from '../src/store/quotas.js'
 import { SkillLibrary } from '../src/store/skills.js'
 import { SummaryStore } from '../src/store/summaries.js'
 import { TaskStore } from '../src/store/tasks.js'
 import { UsageStore } from '../src/store/usage.js'
+import { UserStore } from '../src/store/users.js'
 import { createToolRegistry } from '../src/tools/builtin.js'
 import { WorkspaceService } from '../src/workspace.js'
 
@@ -64,7 +73,7 @@ export function makeEnv(overrides: Partial<AppConfig> = {}) {
   const sessions = new SessionStore(db)
   const projects = new ProjectStore(db, cfg.allowedRoots)
   const workspace = new WorkspaceService({ cfg, sessions, projects })
-  const artifacts = new ArtifactStore(cfg.workspaceDir, (sid) => workspace.dirFor(sid))
+  const artifacts = new ArtifactStore(cfg.workspaceDir, (sid) => workspace.resolveDir(sid))
   const versions = new ArtifactVersionStore(db)
   const memory = new MemoryStore(db)
   const summaries = new SummaryStore(db)
@@ -88,8 +97,20 @@ export function makeEnv(overrides: Partial<AppConfig> = {}) {
       return input
     },
   }
-  const compressor = new Compressor({ cfg, provider, sessions, summaries, memory, usage })
-  const context = new ContextService({ cfg, prompts, skills, sessions, artifacts, memory, summaries, compressor, plans })
+  // M57：多用户服务（真实实例；测试库无账号 → 单用户兼容模式）
+  const users = new UserStore(db)
+  const authSessions = new AuthSessionStore(db)
+  const apiKeys = new ApiKeyStore(db)
+  const auth = new AuthService({ cfg, users, authSessions, apiKeys, sessions })
+  // M57 P2：会话共享成员（角色矩阵 / 列表可见性）；P2/P3：共享会话人类署名解析
+  const sessionMembers = new SessionMemberStore(db)
+  const userLabelResolver = createUserLabelResolver({ members: sessionMembers, users })
+  const access = new AccessService({ isMultiUser: () => auth.multiUser, sessions, projects, members: sessionMembers })
+  const compressor = new Compressor({ cfg, provider, sessions, summaries, memory, usage, userLabelFor: (sid) => userLabelResolver(sid) })
+  // M57 P3：配额（缺省不限；存储体积按工作区目录计量）
+  const quotaStore = new QuotaStore(db)
+  const quotaService = new QuotaService({ cfg, quotas: quotaStore, sessions, usage, dirOf: (sid) => workspace.resolveDir(sid) })
+  const context = new ContextService({ cfg, prompts, skills, sessions, artifacts, memory, summaries, compressor, plans, members: sessionMembers, users })
   // M7：审批服务（测试默认短超时场景由用例覆写 cfg.approvalTimeoutMs）；审核 M-4：留痕落库
   const approvals = new ApprovalService({ timeoutMs: cfg.approvalTimeoutMs, db })
   const engine = new Engine({
@@ -104,6 +125,10 @@ export function makeEnv(overrides: Partial<AppConfig> = {}) {
     tools,
     notify,
     tasks,
+    // M57 P3：配额（并发上限 / 波次边界用量闸门）
+    quotas: quotaService,
+    // M57：共享会话人类署名（沉淀输入文本）
+    userLabelFor: (sid) => userLabelResolver(sid),
     runs,
     usage,
     metrics,
@@ -146,6 +171,15 @@ export function makeEnv(overrides: Partial<AppConfig> = {}) {
     notify,
     published,
     db,
+    // M57：多用户（路由测试直接 env as ApiDeps 强转；提供真实实例）
+    users,
+    auth,
+    access,
+    members: sessionMembers,
+    // M57 P3：配额（路由测试直接 env as ApiDeps 强转）
+    quotas: quotaService,
+    quotaStore,
+    quotaService,
   }
 }
 

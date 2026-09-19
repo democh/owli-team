@@ -30,14 +30,14 @@ export interface SoulMeta {
 /** M52：场景工作区形态（scene-expansion §7.2/§7.8）——按场景定制的四形态；未声明 / 未命中一律回退 stream */
 export type StageLayout = 'stream' | 'dock' | 'roundtable' | 'arena'
 
-/** M52：工作区面板类型（dock 右区 / roundtable 汇聚板；§7.4 六类注册表） */
-export type StagePanel = 'pool' | 'versus' | 'board' | 'console' | 'coach' | 'chartboard'
+/** M52：工作区面板类型（dock 右区 / roundtable 汇聚板；§7.4 六类注册表）；M65-B：+ studio（设计工作室 3D 工作台） */
+export type StagePanel = 'pool' | 'versus' | 'board' | 'console' | 'coach' | 'chartboard' | 'studio'
 
 /** M52：四形态合法值（前端形态注册表联动；服务端 schema 与之一致） */
 export const STAGE_LAYOUTS: readonly StageLayout[] = ['stream', 'dock', 'roundtable', 'arena']
 
-/** M52：六类面板合法值（前端面板注册表联动） */
-export const STAGE_PANELS: readonly StagePanel[] = ['pool', 'versus', 'board', 'console', 'coach', 'chartboard']
+/** M52：六类面板合法值（前端面板注册表联动）；M65-B：+ studio（设计工作室 3D 工作台） */
+export const STAGE_PANELS: readonly StagePanel[] = ['pool', 'versus', 'board', 'console', 'coach', 'chartboard', 'studio']
 
 /** M52：arena 席位分组（仅 arena 生效；成员 id 须存在，check:agents 校验） */
 export interface StageSeats {
@@ -138,8 +138,15 @@ export type MessageStatus = 'streaming' | 'complete' | 'error' | 'stopped'
 export interface Session {
   id: string
   title: string
+  /**
+   * 在场成员（有序 = 编制顺序）。M77 起条目为「成员键」：
+   * 经典实例 = `agentId`（灵魂走 memberSouls 覆盖）；分身实例 = `agentId~soulId`（灵魂内嵌）。
+   * 存量数据（纯 agentId）天然合法，零迁移。
+   */
   participantIds: string[]
-  /** 会话级灵魂覆盖（agentId → soulId；空 = 用角色默认；M16 起支持随时换装） */
+  /** M57（多用户）：会话属主（users.id）；缺省 = 单用户兼容模式（无账号体系时创建的历史数据） */
+  ownerId?: string
+  /** 会话级灵魂覆盖（经典成员键 = agentId → soulId；空 = 用角色默认；M16 起支持随时换装） */
   memberSouls?: Record<string, string>
   /** M24：规划先行（会话级开关；用户未显式指定范式时首波默认进入 plan 范式；默认关闭） */
   planFirst?: boolean
@@ -155,13 +162,79 @@ export interface Session {
 
 export interface SessionSummary extends Session {
   messageCount: number
+  /** M57 P2：当前请求者相对会话的角色（owner / editor / viewer；单用户兼容模式缺省不标注） */
+  role?: SessionAccessRole
   lastMessage?: {
     /** system（成员变更事件条等）也会出现在摘要预览中 */
     role: 'user' | 'agent' | 'system'
     agentId?: string
+    /** M77：说话成员键（分身 = `agentId~soulId`；列表预览署名可分辨实例） */
+    memberKey?: string
     content: string
     createdAt: string
+    /** M57：人类消息作者（共享会话列表预览署名；兼容模式 / 历史数据缺省） */
+    userId?: string
+    userName?: string
   }
+}
+
+// ---------- M57 P2：会话共享协作 ----------
+
+/** 共享角色（owner 由 sessions.owner_id 承载，不进成员表） */
+export type SessionShareRole = 'editor' | 'viewer'
+
+/** 当前请求者的会话权限角色（列表 role 标注 / 前端写操作 gating） */
+export type SessionAccessRole = 'owner' | SessionShareRole
+
+// ---------- M57 P3：配额与用量 ----------
+
+/** 用户配额上限（undefined = 不限；maxConcurrentRuns 缺省回退系统 RUN_MAX_PER_USER） */
+export interface QuotaLimits {
+  maxConcurrentRuns?: number
+  /** 日 token 配额（prompt + completion 合计） */
+  dailyTokens?: number
+  /** 月成本配额（美元） */
+  monthlyCostUsd?: number
+  maxSessions?: number
+  /** 存储上限（MB；工作区目录总体积） */
+  maxStorageMb?: number
+}
+
+/** 用量与配额汇总（GET /api/usage/me；admin 逐用户见 GET /api/users/:id/usage） */
+export interface UsageSummary {
+  userId: string
+  /** 今日 token（prompt + completion；服务器本地时区日界） */
+  todayTokens: number
+  /** 本月成本（美元；本地时区月界） */
+  monthCostUsd: number
+  /** 会话数（不含已删除） */
+  sessions: number
+  /** 工作区存储（MB，保留一位小数） */
+  storageMb: number
+  /** 生效中的配额上限（未配置项缺省） */
+  limits: QuotaLimits
+}
+
+/** M57 P3：用户 LLM 凭据（BYOK）状态投影（绝不含密钥） */
+export interface LlmCredentialStatus {
+  /** 是否已配置（false = 使用系统默认模型与 Key） */
+  configured: boolean
+  /** 自定义接入地址（缺省 = 系统默认） */
+  baseUrl?: string
+  /** 自定义模型（缺省 = 系统默认） */
+  model?: string
+  updatedAt?: string
+}
+
+/** 会话共享成员（GET /sessions/:id/shares 投影；用户名 / 昵称随行返回便于前端直接渲染） */
+export interface SessionShare {
+  userId: string
+  username: string
+  displayName: string
+  role: SessionShareRole
+  /** 邀请人（users.id；可空：历史 / 系统） */
+  invitedBy?: string
+  createdAt: string
 }
 
 export interface ToolCallRecord {
@@ -171,6 +244,8 @@ export interface ToolCallRecord {
   /** M47：'stopped' = 运行中断（用户停止 / 回合超时），非工具失败 —— 前端琥珀色呈现，不计入失败指标 */
   status: 'running' | 'ok' | 'error' | 'stopped'
   summary?: string
+  /** M31 修订：工具结构化元信息（如 canvas_write / media_* 的 canvasNodes 节点 id 清单——消息侧「在画布查看」精确定位依据） */
+  meta?: Record<string, unknown>
   startedAt: string
   endedAt?: string
 }
@@ -188,6 +263,10 @@ export interface ChatMessage {
   /** system = 成员变更等系统事件条（持久化可回放，但不进 LLM 窗口） */
   role: 'user' | 'agent' | 'system'
   agentId?: string
+  /** M77：说话成员键（分身 = `agentId~soulId`；经典实例 = 与 agentId 相同；存量消息缺省） */
+  memberKey?: string
+  /** M57（多用户）：人类消息作者（users.id；agent / system 消息为空） */
+  userId?: string
   content: string
   /** 持久化：交还用户时恒为 ['user']；否则为调度器实际接手的成员 */
   mentions: string[]
@@ -234,14 +313,14 @@ export interface MessageAttachment {
 
 // ---------- SSE 运行事件（RunEvent：一次运行的内容流） ----------
 
-export type RunEndReason = 'completed' | 'stopped' | 'error' | 'turn-limit' | 'interrupted'
+export type RunEndReason = 'completed' | 'stopped' | 'error' | 'turn-limit' | 'interrupted' | 'quota'
 
 export type RunEvent =
   | { type: 'user:message'; message: ChatMessage }
   | { type: 'run:start'; runId: string; sessionId: string; queue: string[] }
   /** M16：波次启动（串行波也发，members 长度 1；前端统一处理；M24 起携带本波默认范式） */
   | { type: 'wave:start'; runId: string; sessionId: string; waveIndex: number; members: string[]; mode?: TurnMode }
-  | { type: 'turn:start'; runId: string; agentId: string; messageId: string; turnIndex: number; mode?: TurnMode }
+  | { type: 'turn:start'; runId: string; agentId: string; messageId: string; turnIndex: number; mode?: TurnMode; memberKey?: string }
   | { type: 'message:delta'; messageId: string; delta: string }
   | { type: 'reasoning:delta'; messageId: string; delta: string }
   | { type: 'tool:call'; messageId: string; call: ToolCallRecord }
@@ -254,6 +333,8 @@ export type RunEvent =
       mentions: string[]
       queue: string[]
       status: MessageStatus
+      /** M77：说话成员键（分身实例；经典实例缺省 = 与 agentId 相同） */
+      memberKey?: string
     }
   | { type: 'run:end'; runId: string; sessionId: string; reason: RunEndReason; error?: string }
   | { type: 'error'; message: string }
@@ -302,6 +383,8 @@ export type NotifyType =
   | 'notify:context-compressed'
   /** M16：会话成员变更（添加 / 移出 / 换灵魂；payload: { session, message }） */
   | 'notify:members-changed'
+  /** M57 P2：会话共享变更（邀请 / 改角色 / 移出 / 自助退出；payload: { sessionId, userId, role?, action }） */
+  | 'notify:share-changed'
   /** M26：资产变更（Agent / Skill / 场景；保留会话主题 __assets__；payload: { kind, id, action }） */
   | 'notify:assets-changed'
   /** M27：MCP 服务器 / 工具变更（保留会话主题 __mcp__；payload: { serverId?, action }） */
@@ -577,6 +660,8 @@ export interface MemoryItem {
   sessionId?: string
   scope: MemoryScope
   ownerId: string
+  /** M57（多用户）：归属用户（users.id；单用户兼容模式缺省） */
+  userId?: string
   kind: MemoryKind
   content: string
   source?: string
@@ -689,6 +774,8 @@ export interface ProjectDefinition {
   rootPath: string
   workspaceMode: WorkspaceMode
   baseBranch?: string
+  /** M57（多用户）：项目属主（users.id）；缺省 = 单用户兼容模式 */
+  ownerId?: string
   createdAt: string
   updatedAt: string
 }
@@ -815,6 +902,27 @@ export interface MetricsSummary {
   avgTurnMs: number
 }
 
+/** M61-D6：调度健康聚合（路由 / 波次 / 抑制 / 冲突 / 接单）——指标接口来源 */
+export interface SchedulingStats {
+  runs: number
+  /** 成功路由（非降级）次数 */
+  routes: number
+  /** 降级接手次数（fallback） */
+  routeFallbacks: number
+  /** 波次总数 */
+  waves: number
+  /** 并行波次数 */
+  parallelWaves: number
+  /** 循环抑制次数（签名 / 内容级） */
+  loopSuppressed: number
+  /** 停滞抑制次数（零写动作 + 文本高度相似） */
+  stallSuppressed: number
+  /** 并行写冲突次数 */
+  writeConflicts: number
+  /** 交接接单次数（接单回执） */
+  handoffAccepted: number
+}
+
 /** 消息反馈（👍/👎 + 原因；导出为评测候选集） */
 export interface FeedbackItem {
   id: string
@@ -848,8 +956,8 @@ export interface HealthResponse {
 
 // ---------- M22：连接中心（数据库 / SSH / 浏览器接入） ----------
 
-/** 连接类型：三种数据库 + SSH + 浏览器（CDP）+ 嵌入模型（M25）+ 媒体生成（M31） */
-export type ConnectionKind = 'postgres' | 'mysql' | 'sqlite' | 'ssh' | 'chrome' | 'embedding' | 'media'
+/** 连接类型：三种数据库 + SSH + 浏览器（CDP）+ 嵌入模型（M25）+ 媒体生成（M31）+ 模型服务（多 Provider，openai 协议） */
+export type ConnectionKind = 'postgres' | 'mysql' | 'sqlite' | 'ssh' | 'chrome' | 'embedding' | 'media' | 'llm'
 
 export type ConnectionStatus = 'idle' | 'ok' | 'error'
 
@@ -866,6 +974,12 @@ export interface ConnectionDefinition {
   enabled: boolean
   /** 是否已保存凭据（明文仅服务端可解密） */
   secretSet: boolean
+  /** M57 P3：作用域（system = 团队共享；personal = 属主私有；旧行为缺省 system） */
+  scope?: 'system' | 'personal'
+  /** M57 P3：personal 连接属主（users.id；system 为空） */
+  ownerId?: string
+  /** M57 P3：是否允许成员使用（仅对 system 连接有意义；默认 true） */
+  memberUse?: boolean
   createdAt: string
   updatedAt: string
 }
@@ -878,6 +992,8 @@ export interface ConnectionInput {
   /** 创建时可空；更新时缺省 = 不改动，null = 清空 */
   secret?: Record<string, unknown> | null
   enabled?: boolean
+  /** M57 P3：成员可用开关（admin 对 system 连接） */
+  memberUse?: boolean
 }
 
 export interface ConnectionTestResult {
@@ -949,9 +1065,23 @@ export interface BrowserSessionInfo {
   currentUrl?: string
   createdAt: string
   closedAt?: string
+  /** M62：归属用户 id（多用户模式；单用户兼容模式缺省） */
+  ownerId?: string
+  /** M62：关闭原因（空闲回收 / 会话删除 / 用户删除 / 服务重启等；缺省 = 常规关闭） */
+  closeReason?: string
   lastFrameAt?: string
   /** 面板展示用：帧流 topic（`browser:<id>`） */
   topic: string
+}
+
+/** M62：活跃实例总览条目（admin 观测面；GET /api/browser/sessions） */
+export interface BrowserInstanceInfo extends BrowserSessionInfo {
+  /** 归属用户显示名（admin 视图 enrich；兼容模式缺省） */
+  ownerName?: string
+  /** 距最近活动的毫秒数（空闲回收判定同源） */
+  idleMs: number
+  /** 帧流订阅者数量（0 = 无观察者） */
+  subscribers: number
 }
 
 /** 浏览器步骤（时间轴 + 截图证据） */
@@ -1046,6 +1176,22 @@ export interface DbTableRowsResponse {
 
 export type SshAuthMethod = 'password' | 'key' | 'agent'
 
+/** SSH「本地」预置（服务端本机探测；连接管理 → 新建 SSH 一键填入） */
+export interface SshLocalPreset {
+  name: string
+  host: string
+  port: number
+  /** 本机登录用户（os.userInfo） */
+  username: string
+  authMethod: SshAuthMethod
+  /** authMethod = key 且检测到默认私钥时给出（~ 形式，服务端读取时展开） */
+  privateKeyPath?: string
+  /** 服务端进程可见 SSH Agent（SSH_AUTH_SOCK 非空） */
+  agentAvailable: boolean
+  /** 本机 22 端口 TCP 可达（未监听时提示先开启系统「远程登录 / sshd」） */
+  sshdReachable: boolean
+}
+
 /** 一次性 SSH 命令执行结果（ssh_exec 工具与面板命令共用的 DTO） */
 export interface SshExecResultDto {
   stdout: string
@@ -1134,6 +1280,10 @@ export interface McpServerDefinition {
   tools: McpToolInfo[]
   /** 配置来源：env（MCP_SERVERS 种子导入）/ ui（管理台维护）/ json（mcp.json 文件权威同步） */
   source: 'env' | 'ui' | 'json'
+  /** M57 P3：作用域（system = 团队共享；personal = 属主私有；旧行为缺省 system） */
+  scope?: 'system' | 'personal'
+  /** M57 P3：personal 服务器属主（users.id；system 为空） */
+  ownerId?: string
   createdAt: string
   updatedAt: string
 }
@@ -1259,6 +1409,8 @@ export interface CanvasImageData {
   /** 生成提示词（谱系展示与「再生成」回填） */
   prompt?: string
   params?: CanvasGenerationParams
+  /** 生成中占位（M31 修订：任务创建即落位，完成 / 失败后清除；渲染为呼吸占位 + 进度） */
+  pending?: boolean
   /** 生成失败占位（节点保留在画布上，可重试） */
   error?: string
 }
@@ -1274,6 +1426,8 @@ export interface CanvasVideoData {
   /** 首尾帧输入的 artifact 路径（谱系展示） */
   firstFrame?: string
   lastFrame?: string
+  /** 生成中占位（同 CanvasImageData.pending） */
+  pending?: boolean
   error?: string
 }
 
@@ -1341,6 +1495,8 @@ export interface CanvasNode {
   height?: number
   /** 画框归属（group 收纳）：子节点位置相对父画框（React Flow 子流约定；删除画框时自动转绝对坐标脱离） */
   parentId?: string
+  /** 写入者（M31 修订：agent 写入记录其 id；用户写入不设）——画布上的作者徽标依据 */
+  by?: string
   data: CanvasNodeData
 }
 
@@ -1496,8 +1652,12 @@ export interface MediaJob {
   /** 产物（工作区相对路径；succeeded 时非空） */
   outputs: string[]
   error?: string
-  /** 画布落位目标（用户面板生成时携带；完成后前端自动放置节点） */
+  /** 画布落位目标（用户面板生成时携带；服务端创建任务时按其落占位节点） */
   canvasTarget?: { x: number; y: number }
+  /** 画布占位节点 id（M31 修订：服务端创建任务时落位；完成原地替换 / 失败保留 / 取消移除） */
+  canvasNodeId?: string
+  /** 画布落位结果（M31 修订：true = 产物已落到画布；缺省 false/undefined = 仅交付件） */
+  placedCanvas?: boolean
   createdAt: string
   startedAt?: string
   finishedAt?: string
@@ -1524,6 +1684,8 @@ export interface MediaJobInput {
   inputs?: { images?: string[]; firstFrame?: string; lastFrame?: string }
   params?: MediaJob['params']
   canvasTarget?: { x: number; y: number }
+  /** M31 修订：是否落到画布（缺省 true）；false = 仅交付件（media_* 工具的 place_on_canvas=false） */
+  placeOnCanvas?: boolean
 }
 
 // ---------- M35：定时任务（会话内调度；run = 触发协作运行 / remind = 纯提醒） ----------
@@ -1576,6 +1738,55 @@ export interface ScheduledTask {
   updatedAt: string
 }
 
+// ---------- M57：多用户（账号 / 认证 / 归属） ----------
+
+/** 账号角色：admin = 系统管理（设置 / 连接 / MCP / 用户 / 审计）；member = 仅本人资源 */
+export type UserRole = 'admin' | 'member'
+
+/** 账号状态：disabled = 禁止登录且即时吊销全部会话 */
+export type UserStatus = 'active' | 'disabled'
+
+/** 账号对外投影（绝不含 password_hash） */
+export interface UserInfo {
+  id: string
+  username: string
+  displayName: string
+  role: UserRole
+  status: UserStatus
+  /** 管理员创建 / 重置密码后为 true：首登强制改密 */
+  mustChangePassword?: boolean
+  createdAt: string
+  updatedAt: string
+  lastLoginAt?: string
+  lastLoginIp?: string
+}
+
+/** GET /api/auth/status（公开）：客户端启动路由决策依据 */
+export interface AuthStatus {
+  /** true = 尚无任何账号（渲染首启向导；创建首个管理员） */
+  needsSetup: boolean
+  /** true = 已启用账号体系（需登录）或配置了 AUTH_TOKEN（需令牌） */
+  authRequired: boolean
+  /** true = 已存在账号（多用户模式） */
+  multiUser: boolean
+}
+
+/** API Key 对外投影（明文仅在创建时返回一次） */
+export interface ApiKeyInfo {
+  id: string
+  name: string
+  createdAt: string
+  expiresAt?: string
+  lastUsedAt?: string
+  revokedAt?: string
+}
+
+/** 个人偏好（user_prefs.prefs JSON；白名单字段由服务端 zod 校验） */
+export interface UserPreferences {
+  /** 通知兜底轮询间隔覆盖（ms；缺省 = 服务端下发） */
+  notifyPollMs?: number
+}
+
 /** 定时任务变更通知的 action 枚举（notify:schedule-changed） */
 export type ScheduleNotifyAction =
   | 'created'
@@ -1587,3 +1798,147 @@ export type ScheduleNotifyAction =
   | 'skipped-missed'
   | 'paused'
   | 'error'
+
+// ---------- M68：用户素材库（per-user 私人素材；独立菜单管理页面） ----------
+
+/** 素材种类（图片 / 视频 / 音频——与附件通道白名单口径一致） */
+export type LibraryItemKind = 'image' | 'video' | 'audio'
+/** 来源：upload 用户上传 / generate 生成收藏 / artifact 交付件收藏（后两者 P2 接入） */
+export type LibraryItemSource = 'upload' | 'generate' | 'artifact'
+
+/** 素材条目（GET /api/library/items；内容经 /api/library/items/:id/content 流式取） */
+export interface LibraryItem {
+  id: string
+  /** 展示名（原文件名安全化后） */
+  name: string
+  kind: LibraryItemKind
+  /** 扩展名（含点，小写） */
+  ext: string
+  mime?: string
+  sizeBytes: number
+  source: LibraryItemSource
+  createdAt: string
+}
+
+/** 素材容量（GET /api/library/usage；管理页容量条） */
+export interface LibraryUsage {
+  count: number
+  bytes: number
+  /** 存储上限（MB；多用户配额命中时下发；缺省 = 不限） */
+  limitMb?: number
+}
+
+// ---------- M65-B：家装 3D 场景（DesignScene v1；工作区 design/*.scene.json） ----------
+
+/** DesignScene schema 版本（前向兼容：未知版本只读 + 提示升级） */
+export const DESIGN_SCENE_VERSION = 1
+
+/** 家具程序化几何族（v1 封闭枚举：13 类；工作台渲染与家具库共用） */
+export const FURNITURE_KINDS = [
+  'bed',
+  'sofa',
+  'table-dining',
+  'table-coffee',
+  'chair',
+  'cabinet',
+  'desk',
+  'tv-stand',
+  'wardrobe',
+  'plant',
+  'lamp',
+  'rug',
+  'custom-box',
+] as const
+export type FurnitureKind = (typeof FURNITURE_KINDS)[number]
+
+/** 材质条目（程序化材质：基色 + 粗糙度 + 纹理提示） */
+export interface DesignMaterial {
+  /** 基色（#rrggbb） */
+  color: string
+  /** 粗糙度 0-1 */
+  roughness: number
+  metalness?: number
+  /** 纹理提示（程序化微调；缺省纯色） */
+  texture?: 'wood' | 'tile' | 'fabric' | 'wall'
+}
+
+/** 材质板（全局命名材质，room / furniture 按名引用） */
+export type DesignMaterialPalette = Record<string, DesignMaterial>
+
+/** 房间（多边形 + 高度 + 材质引用；单位 mm） */
+export interface DesignRoom {
+  id: string
+  name: string
+  /** 多边形顶点 [[x, y], ...]（mm；坐标面 = 俯视投影，x 向右 / y 向上） */
+  polygon: [number, number][]
+  /** 层高（mm） */
+  height: number
+  /** 地板 / 墙面材质名（引用 materials） */
+  floor: string
+  wall: string
+}
+
+/** 门窗洞口（挂墙；offset 为沿墙起点距离） */
+export interface DesignOpening {
+  id: string
+  roomId: string
+  /** 墙序号（room.polygon 相邻顶点 i → i+1 为墙 i） */
+  wallIndex: number
+  type: 'door' | 'window'
+  /** 沿墙偏移（mm，从墙起点） */
+  offset: number
+  /** 洞口宽 / 高（mm；窗有 sill 窗台高） */
+  width: number
+  height: number
+  sill?: number
+}
+
+/** 家具实例（程序化几何族；x / y 为俯视坐标，rotation 度） */
+export interface DesignFurniture {
+  id: string
+  kind: FurnitureKind
+  label?: string
+  x: number
+  y: number
+  /** 绕竖轴旋转（度，0-360） */
+  rotation: number
+  /** 等比缩放（缺省 1） */
+  scale?: number
+  /** 材质名覆盖（缺省按 kind 默认色） */
+  material?: string
+}
+
+/** 光照（日光方位 + 环境光） */
+export interface DesignLights {
+  /** 日光方位角（度；0 = 北，顺时针） */
+  sunAzimuth: number
+  /** 日光高度角（度；10-90） */
+  sunElevation: number
+  /** 日照强度 0-3 */
+  intensity: number
+  /** 环境光强度 0-1 */
+  ambient: number
+}
+
+/** 命名视角（相机预设） */
+export interface DesignCameraPreset {
+  id: string
+  name: string
+  mode: 'orbit' | 'top'
+  position: [number, number, number]
+  target: [number, number, number]
+}
+
+/** 家装 3D 场景（DesignScene v1）——工作区 design/<名>.scene.json；agent 经 write_file 产出、工作台读写 */
+export interface DesignScene {
+  version: 1
+  name: string
+  /** 内部单位（固定 mm；预留字段） */
+  unit: 'mm'
+  rooms: DesignRoom[]
+  openings: DesignOpening[]
+  furniture: DesignFurniture[]
+  materials: DesignMaterialPalette
+  lights: DesignLights
+  camera?: DesignCameraPreset[]
+}

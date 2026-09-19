@@ -122,6 +122,15 @@ describe('estimateMindSize（M31）', () => {
     expect(latin.width).toBe(128) // 24 + 12 + 68(10×6.8) + 24
     expect(cjk.height).toBe(34)
   })
+
+  it('长文本折行：高度按行数展开（文本区 208px / 行高 20）；拉丁按词不拆', () => {
+    // 20 CJK = 240px → 2 行（每行 17 字 = 204px）
+    expect(estimateMindSize('超长'.repeat(10)).height).toBe(34 + 20)
+    // 80 CJK = 960px → 5 行
+    expect(estimateMindSize('超长'.repeat(40)).height).toBe(34 + 4 * 20)
+    // 20 个拉丁词（"word" 各 27.2px）→ 每行 7 词（190.4px）→ 3 行
+    expect(estimateMindSize('word '.repeat(20).trim()).height).toBe(34 + 2 * 20)
+  })
 })
 
 describe('planAddChild / planAddSibling（M31）', () => {

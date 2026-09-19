@@ -10,7 +10,13 @@
  * - 会话已不存在（服务端重启/销毁后的过期订阅）→ 静默回源对齐，不弹红条、不自动重开。
  */
 import { create } from 'zustand'
-import type { BrowserSessionInfo, BrowserStepInfo, BrowserState as BState, StreamTokenResponse } from '@multi-agent/shared'
+import type {
+  BrowserInstanceInfo,
+  BrowserSessionInfo,
+  BrowserStepInfo,
+  BrowserState as BState,
+  StreamTokenResponse,
+} from '@multi-agent/shared'
 import { apiGet, apiPost, ApiError } from '../lib/api'
 import { StreamSocket, type StreamFrame, type StreamStatus, type StreamStep } from '../lib/stream'
 
@@ -27,6 +33,13 @@ interface BrowserPanelState {
   loading: boolean
   busy: boolean
   error?: string
+  /** M62：活跃实例总览（连接控制台 admin 页签） */
+  instances: BrowserInstanceInfo[]
+  instancesLoading: boolean
+  /** M62：拉取活跃实例总览（admin） */
+  loadInstances: () => Promise<void>
+  /** M62：关闭指定实例（admin 总览操作） */
+  closeInstance: (bsid: string) => Promise<void>
   load: (sessionId: string) => Promise<void>
   /** 面板「打开浏览器」（backend / headless 缺省 = 服务端配置） */
   start: (opts?: { backend?: 'managed' | 'local' | 'remote'; url?: string; headless?: boolean }) => Promise<void>
@@ -131,6 +144,11 @@ export const useBrowserStore = create<BrowserPanelState>((set, get) => {
       },
       onError: (topic, message, code) => {
         if (code === 'frames_dropped') return // 拥塞提示不打断体验
+        if (code === 'takeover_moved') {
+          // M62：同用户接管流转（另一视图接管）：本视图降级观察，不弹红条
+          set({ mode: 'watch' })
+          return
+        }
         if (code === 'session_gone') {
           // 服务端已销毁该会话（dev 重启 / 关闭后的回溯重订）：当前频道静默对齐，
           // 过期频道（会话切换残留）直接忽略——两者都不弹红条
@@ -168,6 +186,23 @@ export const useBrowserStore = create<BrowserPanelState>((set, get) => {
     maxFps: 12,
     loading: false,
     busy: false,
+    instances: [],
+    instancesLoading: false,
+
+    loadInstances: async () => {
+      set({ instancesLoading: true })
+      try {
+        const res = await apiGet<{ sessions: BrowserInstanceInfo[] }>('/api/browser/sessions')
+        set({ instances: res.sessions })
+      } finally {
+        set({ instancesLoading: false })
+      }
+    },
+
+    closeInstance: async (bsid) => {
+      await apiPost(`/api/browser/sessions/${bsid}/close`)
+      set({ instances: get().instances.filter((item) => item.id !== bsid) })
+    },
 
     load: async (sessionId) => {
       set({ sessionId, loading: true, error: undefined })

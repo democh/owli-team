@@ -1,11 +1,10 @@
 /**
  * M31 媒体任务前端测试（P3）：media-store —— 加载与切换会话 / upsert 幂等与旧快照防御 /
- * 终态提示一次（canceled 静默）/ 完成落画布（同会话 + canvasTarget + 谱系 + placedJobs 幂等）/
+ * 终态提示一次（canceled 静默）/ 完成提示按 placedCanvas 分流（落位由服务端完成，前端不双写）/
  * 面板 genRef 合并 / createJob 失败 lastError / cancel·retry 回流（重试为新任务）。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { CanvasDoc, CanvasVideoData, MediaJob, MediaProviderInfo } from '@multi-agent/shared'
-import { NODE_SIZE } from '../src/lib/canvas'
+import type { CanvasDoc, MediaJob, MediaProviderInfo } from '@multi-agent/shared'
 import { useCanvasStore } from '../src/stores/canvas-store'
 import { useMediaStore } from '../src/stores/media-store'
 
@@ -92,6 +91,7 @@ beforeEach(() => {
     sessionId: undefined,
     jobs: [],
     providers: [],
+    jobsLoaded: false,
     loading: false,
     lastError: undefined,
     panelOpen: false,
@@ -125,6 +125,7 @@ describe('media-store 加载与任务快照（M31）', () => {
     await useMediaStore.getState().load(SID)
     expect(useMediaStore.getState().jobs.map((j) => j.id)).toEqual(['j-a'])
     expect(useMediaStore.getState().providers.map((p) => p.connectionId)).toEqual(['conn-1'])
+    expect(useMediaStore.getState().jobsLoaded).toBe(true) // M31 修订：僵尸占位自愈的判定门槛
     expect(useMediaStore.getState().loading).toBe(false)
 
     jobList = [mkJob({ id: 'j-b', sessionId: 's-2' })]
@@ -168,8 +169,8 @@ describe('media-store 加载与任务快照（M31）', () => {
   })
 })
 
-describe('media-store 完成落画布（M31）', () => {
-  it('succeeded + canvasTarget：产物落画布（视频节点 / 谱系参数 / 首尾帧），重复 ingest 幂等', async () => {
+describe('media-store 完成提示（M31 修订：落位由服务端完成，前端不双写）', () => {
+  it('succeeded + placedCanvas：提示「已落到画布」；不新增节点（服务端已落位）；重放不重复提示', async () => {
     await useCanvasStore.getState().load(SID)
     useMediaStore.setState({ sessionId: SID })
     const job = mkJob({
@@ -177,43 +178,27 @@ describe('media-store 完成落画布（M31）', () => {
       capability: 'firstlast2video',
       prompt: '镜头推进',
       inputs: { firstFrame: 'canvas/media/f.png', lastFrame: 'canvas/media/l.png' },
-      params: { duration: 5, seed: 7, width: 1280, height: 720 },
+      params: { duration: 5 },
       status: 'succeeded',
-      outputs: ['canvas/media/gen-1.mp4', 'canvas/media/gen-2.mp4'],
+      outputs: ['canvas/media/gen-1.mp4'],
       canvasTarget: { x: 100, y: 200 },
+      placedCanvas: true,
     })
     useMediaStore.getState().ingest(job)
-    const nodes = useCanvasStore.getState().doc!.nodes
-    expect(nodes).toHaveLength(2)
-    expect(nodes.every((n) => n.type === 'video')).toBe(true)
-    expect(nodes[0]!.position).toEqual({ x: 100, y: 200 })
-    expect(nodes[1]!.position).toEqual({ x: 100 + NODE_SIZE.video.width + 24, y: 200 })
-    const d = nodes[0]!.data as CanvasVideoData
-    expect(d.artifact).toBe('canvas/media/gen-1.mp4')
-    expect(d.source).toBe('generate')
-    expect(d.jobId).toBe('j-place')
-    expect(d.prompt).toBe('镜头推进')
-    expect(d.params?.capability).toBe('firstlast2video')
-    expect(d.params?.seed).toBe(7)
-    expect(d.firstFrame).toBe('canvas/media/f.png')
-    expect(d.lastFrame).toBe('canvas/media/l.png')
+    expect(useCanvasStore.getState().doc!.nodes).toHaveLength(0) // 前端不再落位（防双写）
     expect(String(vi.mocked(toast).mock.calls[0]![0])).toContain('已落到画布')
 
-    useMediaStore.getState().ingest(job) // WS 重放 / 双通道：不得重复放置
-    expect(useCanvasStore.getState().doc!.nodes).toHaveLength(2)
+    useMediaStore.getState().ingest(job) // WS 重放 / 双通道：终态只提示一次
+    expect(vi.mocked(toast)).toHaveBeenCalledTimes(1)
+    expect(useCanvasStore.getState().doc!.nodes).toHaveLength(0)
   })
 
-  it('无 canvasTarget 或画布会话不匹配：不落画布，提示产物在交付件', async () => {
+  it('未标记 placedCanvas（未装配画布 / place_on_canvas=false）：提示产物已保存到交付件', async () => {
     await useCanvasStore.getState().load(SID)
     useMediaStore.setState({ sessionId: SID })
-    const job = mkJob({ id: 'j-no-target', status: 'succeeded', outputs: ['canvas/media/gen-x.png'] })
+    const job = mkJob({ id: 'j-no-place', status: 'succeeded', outputs: ['canvas/media/gen-x.png'] })
     useMediaStore.getState().ingest(job)
-    expect(useCanvasStore.getState().doc!.nodes).toHaveLength(0)
-    expect(String(vi.mocked(toast).mock.calls[0]![0])).toContain('交付件')
-
-    await useCanvasStore.getState().load('s-other') // 画布切到别的会话
-    const cross = mkJob({ id: 'j-cross', status: 'succeeded', outputs: ['canvas/media/gen-y.png'], canvasTarget: { x: 0, y: 0 } })
-    useMediaStore.getState().ingest(cross)
+    expect(String(vi.mocked(toast).mock.calls[0]![0])).toContain('产物已保存到交付件')
     expect(useCanvasStore.getState().doc!.nodes).toHaveLength(0)
   })
 })

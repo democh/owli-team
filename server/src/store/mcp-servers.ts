@@ -20,6 +20,9 @@ export interface McpServerCreateInput {
   secret?: Record<string, unknown> | null
   enabled?: boolean
   source?: 'env' | 'ui' | 'json'
+  /** M57 P3：作用域（缺省 system；personal 需同时给 ownerId） */
+  scope?: 'system' | 'personal'
+  ownerId?: string
 }
 
 export interface McpServerUpdatePatch {
@@ -46,6 +49,9 @@ interface McpServerRow {
   last_error: string | null
   enabled: number
   source: string
+  /** M57 P3：作用域 / 属主（v14 列；旧库可能为 NULL） */
+  scope: string | null
+  owner_id: string | null
   created_at: string
   updated_at: string
 }
@@ -94,6 +100,9 @@ function toDefinition(row: McpServerRow): McpServerDefinition {
     lastError: row.last_error ?? undefined,
     tools: parseTools(row.tools_json),
     source: row.source === 'env' ? 'env' : row.source === 'json' ? 'json' : 'ui',
+    // M57 P3：旧库 NULL → system（与迁移默认一致）
+    scope: (row.scope as 'system' | 'personal') ?? 'system',
+    ownerId: row.owner_id ?? undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }
@@ -110,6 +119,43 @@ export class McpServerStore {
   list(): McpServerDefinition[] {
     const rows = this.db.all<McpServerRow>('SELECT * FROM mcp_servers ORDER BY created_at ASC')
     return rows.map(toDefinition)
+  }
+
+  /**
+   * M57 P3：用户可见清单 = 全部 system 服务器（团队共享，成员可绑定使用）∪ 本人 personal。
+   * 路由层对非本人 personal 条目做拒绝/过滤（成员不看 system 管理细节，但绑定候选需要 name/status）。
+   */
+  listForUser(userId: string): McpServerDefinition[] {
+    const rows = this.db.all<McpServerRow>(
+      `SELECT * FROM mcp_servers WHERE scope = 'system' OR (scope = 'personal' AND owner_id = ?) ORDER BY created_at ASC`,
+      userId,
+    )
+    return rows.map(toDefinition)
+  }
+
+  /** M57 P3：personal 属主判定（会话绑定 / 工具执行 / 资源级守卫共用） */
+  ownsPersonal(userId: string, id: string): boolean {
+    const row = this.db.get<{ n: number }>(
+      `SELECT COUNT(*) AS n FROM mcp_servers WHERE id = ? AND scope = 'personal' AND owner_id = ?`,
+      id,
+      userId,
+    )
+    return Number(row?.n ?? 0) > 0
+  }
+
+  /** M57 P3：服务器属主（system 返回 undefined；引擎/运行时最小权限复核用） */
+  ownerOf(id: string): string | undefined {
+    const row = this.db.get<{ owner_id: string | null }>(
+      `SELECT owner_id FROM mcp_servers WHERE id = ? AND scope = 'personal'`,
+      id,
+    )
+    return row?.owner_id ?? undefined
+  }
+
+  /** M57 P3：删除某用户全部 personal 服务器（账号删除级联；绑定行随 FK 自动清理），返回删除数 */
+  removePersonalOf(userId: string): number {
+    const result = this.db.run(`DELETE FROM mcp_servers WHERE scope = 'personal' AND owner_id = ?`, userId)
+    return result.changes
   }
 
   get(id: string): McpServerDefinition | undefined {
@@ -137,9 +183,10 @@ export class McpServerStore {
     if (this.findByName(input.name)) throw new Error(`MCP 服务器名「${input.name}」已存在`)
     const id = `mcp_${randomUUID().slice(0, 8)}`
     const ts = nowIso()
+    const scope = input.scope === 'personal' ? 'personal' : 'system'
     this.db.run(
-      `INSERT INTO mcp_servers (id, name, display_name, transport, config, secret_enc, tools_json, status, enabled, source, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, '[]', 'idle', ?, ?, ?, ?)`,
+      `INSERT INTO mcp_servers (id, name, display_name, transport, config, secret_enc, tools_json, status, enabled, source, scope, owner_id, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, '[]', 'idle', ?, ?, ?, ?, ?, ?)`,
       id,
       input.name,
       input.displayName ?? null,
@@ -148,6 +195,8 @@ export class McpServerStore {
       input.secret && Object.keys(input.secret).length > 0 ? this.vault.encrypt(input.secret) : null,
       input.enabled === false ? 0 : 1,
       input.source === 'env' ? 'env' : input.source === 'json' ? 'json' : 'ui',
+      scope,
+      scope === 'personal' ? (input.ownerId ?? null) : null,
       ts,
       ts,
     )

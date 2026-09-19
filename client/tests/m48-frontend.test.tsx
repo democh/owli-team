@@ -8,7 +8,7 @@
  * - CommandPalette 新建会话 → 空编制 []（首条消息由平台路由组队）。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { AgentDefinition, AgentGroup, RosterPreset, SessionSummary } from '@multi-agent/shared'
 import { CommandPalette } from '../src/components/layout/CommandPalette'
@@ -224,13 +224,14 @@ describe('建会话组队台 · 空编制（M48）', () => {
     const user = userEvent.setup()
     render(<SessionList onSelect={() => undefined} />)
 
-    // 自由组合：选中卢娜 + 费利 → 给卢娜设「禅意」覆盖 → 取消卢娜（souls 残留）
+    // 自由组合：选中卢娜 + 费利 → 给卢娜追加「禅意」人格（参与性格多选）→ 取消卢娜（souls 残留）
     await user.click(screen.getByTitle('新建会话'))
     await user.click(screen.getByText('自由组合'))
     await user.click(screen.getByRole('button', { name: /卢娜/ }))
     await user.click(screen.getByRole('button', { name: /费利/ }))
     await user.click(screen.getByRole('button', { name: '狂野' }))
-    await user.click(screen.getByRole('button', { name: /^禅意/ }))
+    const soulMenu = screen.getByText('参与性格（可多选）').parentElement as HTMLElement
+    await user.click(within(soulMenu).getByRole('button', { name: /^禅意/ }))
     await user.click(screen.getByRole('button', { name: /卢娜/ }))
     expect(screen.getByText('已选 1 位')).toBeInTheDocument()
 

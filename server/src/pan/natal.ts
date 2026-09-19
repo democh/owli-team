@@ -102,13 +102,13 @@ export interface NatalInput {
   houseSystem?: 'placidus' | 'equal'
 }
 
-interface BodySpec {
+export interface BodySpec {
   name: string
   body?: Astronomy.Body
   kind: 'sun' | 'moon' | 'planet'
 }
 
-const BODIES: BodySpec[] = [
+export const BODIES: BodySpec[] = [
   { name: '太阳', kind: 'sun' },
   { name: '月亮', kind: 'moon' },
   { name: '水星', kind: 'planet', body: Astronomy.Body.Mercury },
@@ -121,7 +121,7 @@ const BODIES: BodySpec[] = [
   { name: '冥王星', kind: 'planet', body: Astronomy.Body.Pluto },
 ]
 
-function bodyLon(spec: BodySpec, time: Astronomy.AstroTime): number {
+export function bodyLon(spec: BodySpec, time: Astronomy.AstroTime): number {
   if (spec.kind === 'sun') return norm360(Astronomy.SunPosition(time).elon)
   if (spec.kind === 'moon') return norm360(Astronomy.EclipticGeoMoon(time).lon)
   const vec = Astronomy.GeoVector(spec.body!, time, true)
@@ -191,7 +191,7 @@ function equalCusps(asc: number): number[] {
   return Array.from({ length: 12 }, (_, i) => norm360(asc + i * 30))
 }
 
-const ASPECT_DEFS: Array<{ type: string; angle: number; orb: number }> = [
+export const ASPECT_DEFS: Array<{ type: string; angle: number; orb: number }> = [
   { type: '合相', angle: 0, orb: 8 },
   { type: '六合', angle: 60, orb: 4 },
   { type: '刑相', angle: 90, orb: 6 },
@@ -200,7 +200,7 @@ const ASPECT_DEFS: Array<{ type: string; angle: number; orb: number }> = [
 ]
 
 /** 行星落宫（1-12；按宫头区间，支持跨 0°） */
-function houseOf(lon: number, cusps: number[]): number {
+export function houseOf(lon: number, cusps: number[]): number {
   for (let i = 0; i < 12; i++) {
     const a = cusps[i]!
     const b = cusps[(i + 1) % 12]!

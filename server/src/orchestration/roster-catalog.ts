@@ -8,7 +8,7 @@
  * - 资产热更新：按（目录签名 + 在场集合）缓存渲染结果（LRU 上限 32），资产变更 → 签名变化 → 重建；
  * - 无未在场角色（全员在场 / 空库）→ 返回空串（不注入）。
  */
-import { BLANK_SCENE_ID } from '@multi-agent/shared'
+import { BLANK_SCENE_ID, baseAgentId } from '@multi-agent/shared'
 import type { AgentDefinition, AgentGroup } from '@multi-agent/shared'
 import type { PromptLibrary } from '../store/prompts.js'
 
@@ -47,9 +47,14 @@ function pushGroup(lines: string[], group: AgentGroup | undefined, gid: string, 
 
 /**
  * 构建 <roster_catalog> 区块（未在场角色目录；含场景 objective 与编制链）。
- * @param presentIds 会话在场成员 id（空数组 = 零编制开场，全员可召集）
+ * @param presentIds 会话在场成员键（空数组 = 零编制开场，全员可召集）
+ * @param labels 成员键 → 展示标签（M77 分身可读性；缺省用角色名）
  */
-export function buildRosterCatalogBlock(prompts: PromptLibrary, presentIds: string[]): string {
+export function buildRosterCatalogBlock(
+  prompts: PromptLibrary,
+  presentIds: string[],
+  labels?: Record<string, string>,
+): string {
   // M50：空场景角色不进可召集目录（通用助手不可被平台自动召集；已在场展示不受影响）
   const agents = prompts.list().filter((a) => a.group !== BLANK_SCENE_ID)
   const groups = prompts.groups().filter((g) => g.id !== BLANK_SCENE_ID)
@@ -64,10 +69,13 @@ export function buildRosterCatalogBlock(prompts: PromptLibrary, presentIds: stri
   }
 
   const presentSet = new Set(present)
-  const missing = agents.filter((a) => !presentSet.has(a.id))
+  void presentSet
+  // M77：在场判定与可召集过滤按基础角色（分身在场 = 该角色已在场，不重复列入目录）
+  const presentBases = new Set(present.map((id) => baseAgentId(id)))
+  const missing = agents.filter((a) => !presentBases.has(a.id))
   let block = ''
   if (missing.length > 0) {
-    const nameOf = (id: string): string => prompts.get(id)?.name ?? id
+    const nameOf = (id: string): string => labels?.[id] ?? prompts.get(id)?.name ?? id
     const shown = present.slice(0, PRESENT_MAX).map((id) => `${nameOf(id)}(${id})`)
     const presentLine =
       present.length > PRESENT_MAX ? `${shown.join('、')}…（共 ${present.length} 位）` : shown.join('、')

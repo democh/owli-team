@@ -2,8 +2,18 @@
  * API 路由聚合（§9）：全部挂载于 /api，错误统一 { error }（中文文案）。
  */
 import { Router } from 'express'
-import type { RequestHandler } from 'express'
+import type { Request, RequestHandler } from 'express'
 import type { AppConfig } from '../config.js'
+import type { AuthUser } from '../auth/service.js'
+import type { AuthService } from '../auth/service.js'
+import type { AccessService } from '../auth/access.js'
+import { assertRunAccess, createSessionAccessGuard } from '../auth/guards.js'
+import type { UserStore } from '../store/users.js'
+import { createAuthRouter } from './auth.js'
+import { createLlmCredsRouter } from './llm-credentials.js'
+import { createSharesRouter } from './shares.js'
+import { createUsageRouter } from './usage.js'
+import { createUsersRouter } from './users.js'
 import type { ApprovalService } from '../approval.js'
 import type { PlanReviewService } from '../plan-review.js'
 import type { ContextService } from '../context/service.js'
@@ -19,7 +29,10 @@ import type { PromptLibrary } from '../store/prompts.js'
 import type { ReviewStore } from '../store/reviews.js'
 import type { RunEventStore } from '../store/run-events.js'
 import type { RunStore } from '../store/runs.js'
+import type { SessionMemberStore } from '../store/session-members.js'
 import type { SessionStore } from '../store/sessions.js'
+import type { QuotaService } from '../quota/service.js'
+import type { LlmCredentialStore } from '../store/llm-credentials.js'
 import type { SkillLibrary } from '../store/skills.js'
 import type { TaskStore } from '../store/tasks.js'
 import type { UsageStore } from '../store/usage.js'
@@ -65,6 +78,8 @@ import { createMemoriesRouter } from './memories.js'
 import { createConsoleRouter } from './console.js'
 import { createMcpRouter } from './mcp.js'
 import { createCanvasRouter } from './canvas.js'
+import { createDesignScenesRouter } from './design-scenes.js'
+import { createLibraryRouter } from './library.js'
 import { createMediaRouter } from './media.js'
 import { createSchedulesRouter } from './schedules.js'
 import { createFinanceRouter } from './finance.js'
@@ -93,6 +108,16 @@ export interface ApiDeps {
   projects: ProjectStore
   /** 工作区服务（M6：sandbox/repo/worktree 解析与 worktree 生命周期） */
   workspace: WorkspaceService
+  /** M57 P2：会话共享成员存储（角色矩阵 / 列表可见性 / 共享面板） */
+  members: SessionMemberStore
+  /** M57 P3：配额服务（用量看板 / 强制点断言；缺省 = 不限，行为与现状零差异） */
+  quotas?: QuotaService
+  /** M68：用户素材库（per-user 私人素材；缺省 = 素材库路由 503，测试零影响） */
+  library?: import('../library/service.js').LibraryService
+  /** M57 P3：用户 LLM 凭据（BYOK）存储（缺省 = 路由不挂载，测试零影响） */
+  llmCredentials?: LlmCredentialStore
+  /** M57 P3：BYOK 缓存失效回调（凭据变更 → 失效 provider 缓存） */
+  llmCredsInvalidate?: (userId: string) => void
   /** 审批服务（M7：挂起 / 决定 / 查询） */
   approvals: ApprovalService
   /** M24：计划存储（/sessions/:id/plans；缺省 = 空列表，行为与现状零差异） */
@@ -149,6 +174,16 @@ export interface ApiDeps {
   financeProbe?: (opts: { python?: string; force?: boolean }) => Promise<PyEnvStatus>
   engine: Engine
   notify: NotifyHub
+  /** M57：认证服务（登录态解析 / 账号管理） */
+  auth: AuthService
+  /** M57：访问控制（归属判定唯一事实源） */
+  access: AccessService
+  /** M57：账号存储（个人偏好读写） */
+  users: UserStore
+  /** M57：登录接口 IP 限流 */
+  loginLimiter: RequestHandler
+  /** M57：管理面守卫（admin / 单用户兼容模式放行） */
+  requireAdmin: RequestHandler
 }
 
 export function createApiRouter(deps: ApiDeps): Router {
@@ -164,6 +199,93 @@ export function createApiRouter(deps: ApiDeps): Router {
       notifyPollMs: deps.cfg.notifyPollMs,
     })
   })
+
+  // ---------- M57：多用户（认证 / 账号 / 归属守卫 / 管理面 gating） ----------
+
+  const userOf = (req: Request): AuthUser | undefined => (req as Request & { user?: AuthUser }).user
+
+  // 认证与账号（/auth/status|setup|login 在中间件白名单内公开；其余需登录态）
+  router.use(createAuthRouter({ cfg: deps.cfg, auth: deps.auth, users: deps.users, loginLimiter: deps.loginLimiter }))
+  // M57 P3：个人用量（GET /usage/me）
+  router.use(createUsageRouter(deps))
+  // M68：用户素材库（per-user；独立菜单管理页面的服务端面）
+  router.use(createLibraryRouter(deps))
+  // M57 P3：BYOK（用户 LLM 凭据；未装配时跳过——测试夹具无需改动）
+  if (deps.llmCredentials) {
+    router.use(
+      createLlmCredsRouter({
+        multiUser: () => deps.access.multiUser,
+        credentials: deps.llmCredentials,
+        audit: deps.audit,
+        onChange: deps.llmCredsInvalidate,
+      }),
+    )
+  }
+  router.use(
+    createUsersRouter({
+      auth: deps.auth,
+      requireAdmin: deps.requireAdmin,
+      browser: deps.browser,
+      // M57：删除账号的磁盘清理依赖
+      sessions: deps.sessions,
+      workspace: deps.workspace,
+      // M57 P3：配额编辑 / 逐用户用量 / 设置审计
+      quotas: deps.quotas,
+      audit: deps.audit,
+      // M57 P3：删除账号时清理 personal 连接
+      connections: deps.connections,
+      // M57 P3：删除账号时清理 personal MCP（先断连再删行）
+      mcpServers: deps.mcp,
+      mcpRuntime: deps.mcpRuntime,
+      // M68：删除账号时清理素材库（materials 行 + _library/u_<uid>/）
+      library: deps.library,
+    }),
+  )
+
+  /**
+   * 会话子资源全量守卫（M57 P1 + P2）：`/sessions/:id` 及其全部子路径（消息 / 成员 / 交付件 / 画布 / 日程 / 绑定……）。
+   * 读取 = owner ∪ 共享成员；写入（POST/PATCH/PUT/DELETE）= owner / editor，viewer → 403
+   *（例外 `POST /sessions/:id/leave` 允许 viewer 自助退出）；不存在 / 跨用户一律 404。
+   */
+  router.use('/sessions/:id', createSessionAccessGuard(deps.access))
+
+  /** M57 P2：会话共享（/shares 属主管理；/leave 成员自助退出） */
+  router.use(
+    createSharesRouter({
+      access: deps.access,
+      auth: deps.auth,
+      members: deps.members,
+      audit: deps.audit,
+      publish: (sessionId, userId, action, role) =>
+        deps.notify.publish({ type: 'notify:share-changed', sessionId, payload: { sessionId, userId, action, role } }),
+    }),
+  )
+
+  /**
+   * 运行守卫：`/runs/:runId` 全部子路径（流 / 停止 / 审批 / 轨迹）按 run→session 归属校验；
+   * M57 P2：写操作（停止 / 排队 / 审批）对 viewer 一律 403（读取仍为 owner ∪ 成员）。
+   */
+  router.use('/runs/:runId', (req, _res, next) => {
+    try {
+      const runId = req.params.runId
+      const sessionId =
+        deps.runs.get(runId)?.sessionId ??
+        deps.engine.listActiveRuns().find((r) => r.runId === runId)?.sessionId
+      assertRunAccess(deps.access, userOf(req), sessionId, req.method)
+      next()
+    } catch (err) {
+      next(err)
+    }
+  })
+
+  /**
+   * 管理面（P1）：资产控制台 / 指标 / 审计 → admin；
+   * M57 P3：`/mcp` 改为路由级门控（routes/mcp.ts：管理面 admin / personal 资源级 ownerOrAdmin），
+   * 不再整体 admin 挂载（成员需可访问自己的 personal 服务器 CRUD 与绑定候选）。
+   */
+  router.use('/console', deps.requireAdmin)
+  router.use('/metrics', deps.requireAdmin)
+  router.use('/audit', deps.requireAdmin)
 
   router.use(createAgentsRouter(deps))
   router.use(createSkillsRouter(deps))
@@ -188,6 +310,8 @@ export function createApiRouter(deps: ApiDeps): Router {
   router.use(createMcpRouter(deps))
   // M31：无限画布（文档 / 素材上传 / 脑图生成）与媒体生成（任务管线 / 提供方清单）
   router.use(createCanvasRouter(deps))
+  // M65-B：设计场景工作区文件（DesignScene 读写；工作室 3D 工作台）
+  router.use(createDesignScenesRouter(deps))
   router.use(createMediaRouter(deps))
   // M35：定时任务（会话清单 / CRUD / 启停 / 立即触发）
   router.use(createSchedulesRouter(deps))

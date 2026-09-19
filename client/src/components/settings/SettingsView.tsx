@@ -42,13 +42,16 @@ import { useWsStore } from '../../stores/ws-store'
 import { Button } from '../ui/button'
 import { Input } from '../ui/input'
 import { MediaConnectionsSection } from './MediaConnectionsSection'
+import { ModelProvidersSection } from './ModelProvidersSection'
 
-/** 运行期设置表单（与 server RuntimeSettingsSchema 26 字段一一对应） */
+/** 运行期设置表单（与 server RuntimeSettingsSchema 27 字段一一对应） */
 interface SettingsForm {
   llmModel: string
   summaryModel: string
   judgeModel: string
   temperature: number
+  /** 统一温度：开启后忽略角色 AGENT.md 的 temperature，全部角色使用上述温度 */
+  temperatureOverride: boolean
   maxTurnsPerRun: number
   contextBudgetTokens: number
   keepRecentTurns: number
@@ -81,6 +84,7 @@ const FALLBACK: SettingsForm = {
   summaryModel: '',
   judgeModel: '',
   temperature: 0.7,
+  temperatureOverride: false,
   maxTurnsPerRun: 20,
   contextBudgetTokens: 60_000,
   keepRecentTurns: 8,
@@ -293,6 +297,7 @@ const KIND_LABEL: Record<ConnectionKind, string> = {
   ssh: 'SSH',
   embedding: '嵌入模型',
   media: '媒体生成',
+  llm: '模型服务',
 }
 
 const WS_LABEL: Record<string, string> = {
@@ -353,6 +358,14 @@ export function SettingsView(): React.JSX.Element {
   }
 
   const dirty = form !== null && JSON.stringify(form) !== baseline
+
+  /** 统一温度开关说明：展示角色温度覆盖统计（AGENT.md 中单独配置了 temperature 的角色数） */
+  const tempOverrideHint = React.useMemo(() => {
+    if (form?.temperatureOverride) return '已开启：全部角色使用上方温度，忽略 AGENT.md 中的单独配置'
+    if (agents.length === 0) return '开启后全部角色使用上方温度，忽略 AGENT.md 中的单独配置'
+    const covered = agents.filter((a) => a.temperature !== undefined).length
+    return `当前 ${covered}/${agents.length} 个角色单独配置了温度，全局值仅对其余角色生效；开启后全部使用上方温度`
+  }, [form?.temperatureOverride, agents])
 
   const save = async (): Promise<void> => {
     if (!form) return
@@ -417,9 +430,6 @@ export function SettingsView(): React.JSX.Element {
       <div className="flex h-12 shrink-0 items-center gap-2 border-b px-4">
         <Settings2 className="size-4 text-muted-foreground" />
         <span className="text-[13px] font-semibold">设置</span>
-        <span className="hidden text-[11px] text-muted-foreground sm:inline">
-          运行期设置 · data/settings.json 覆盖 env · 保存后即时生效（无需重启）
-        </span>
         <div className="ml-auto flex items-center gap-2">
           {dirty && (
             <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[11px] text-amber-700">
@@ -479,12 +489,7 @@ export function SettingsView(): React.JSX.Element {
           {/* 右侧表单：全量分组滚动区 */}
           <div ref={scrollRef} onScroll={onScroll} className="min-h-0 flex-1 overflow-y-auto px-3 py-4 sm:px-5">
             <div className="mx-auto max-w-2xl space-y-6">
-              <Section
-                id="model"
-                title="模型与生成"
-                hint="编排与角色默认模型、采样温度（留空回退主模型）"
-                register={register}
-              >
+              <Section id="model" title="模型与生成" register={register}>
                 <Field label="主模型" hint="LLM_MODEL；编排与角色默认模型">
                   <Input
                     value={form.llmModel}
@@ -508,7 +513,7 @@ export function SettingsView(): React.JSX.Element {
                     onChange={(e) => set('judgeModel', e.target.value)}
                   />
                 </Field>
-                <Field label="温度" hint="0–2，越高越发散">
+                <Field label="温度" hint="0–2，越高越发散；默认仅对未单独配置的角色生效">
                   <NumberInput
                     value={form.temperature}
                     min={0}
@@ -518,19 +523,24 @@ export function SettingsView(): React.JSX.Element {
                     onChange={(v) => set('temperature', v)}
                   />
                 </Field>
+                <CheckField
+                  label="统一温度"
+                  hint={tempOverrideHint}
+                  checked={form.temperatureOverride}
+                  onChange={(v) => set('temperatureOverride', v)}
+                />
+                {/* 多 Provider：模型服务（全局连接；Agent 控制台「高级」页绑定引用） */}
+                <div className="border-t pt-2.5">
+                  <ModelProvidersSection />
+                </div>
               </Section>
 
               {/* M56：媒体生成（媒体连接全局配置，自「连接管理」迁入；启用即全场景可用） */}
-              <Section
-                id="media"
-                title="媒体生成"
-                hint="生成能力供应商（ComfyUI / SD WebUI / OpenAI 兼容 / 任务模板）；启用即全场景可用，无需会话绑定"
-                register={register}
-              >
+              <Section id="media" title="媒体生成" register={register}>
                 <MediaConnectionsSection />
               </Section>
 
-              <Section id="context" title="上下文" hint="上下文预算与历史压缩水位（L0–L5 分层）" register={register}>
+              <Section id="context" title="上下文" register={register}>
                 <Field label="上下文预算（tokens）">
                   <NumberInput
                     value={form.contextBudgetTokens}
@@ -555,12 +565,7 @@ export function SettingsView(): React.JSX.Element {
                 </Field>
               </Section>
 
-              <Section
-                id="memory"
-                title="向量记忆"
-                hint="L1.5 语义召回（嵌入连接 / TopK / 门槛）与 Run 结束自动沉淀"
-                register={register}
-              >
+              <Section id="memory" title="向量记忆" register={register}>
                 <CheckField
                   label="语义召回"
                   hint="每回合按相关性注入 L1.5 记忆块；未配置时自动休眠（零网络、零影响）"
@@ -621,7 +626,7 @@ export function SettingsView(): React.JSX.Element {
                 </Field>
               </Section>
 
-              <Section id="runtime" title="运行控制" hint="单 Run 回合上限、成员交接方式与通知降级轮询" register={register}>
+              <Section id="runtime" title="运行控制" register={register}>
                 <Field label="单 Run 回合上限">
                   <NumberInput value={form.maxTurnsPerRun} min={1} max={100} onChange={(v) => set('maxTurnsPerRun', v)} />
                 </Field>
@@ -647,7 +652,7 @@ export function SettingsView(): React.JSX.Element {
                 </Field>
               </Section>
 
-              <Section id="safety" title="工具与安全" hint="工具超时与审批护栏（高风险工具强制审批）" register={register}>
+              <Section id="safety" title="工具与安全" register={register}>
                 <Field label="工具超时（ms）">
                   <NumberInput
                     value={form.toolTimeoutMs}
@@ -689,12 +694,7 @@ export function SettingsView(): React.JSX.Element {
                 />
               </Section>
 
-              <Section
-                id="finance"
-                title="金融投研"
-                hint="行情网关与金融工具（默认关闭；启用开关切换后需重启）"
-                register={register}
-              >
+              <Section id="finance" title="金融投研" register={register}>
                 <CheckField
                   label="启用金融工具"
                   hint="启用开关与工具注册在服务启动时判定，切换后需重启；行情三参数保存即生效"
@@ -730,7 +730,7 @@ export function SettingsView(): React.JSX.Element {
                 </Field>
               </Section>
 
-              <Section id="resources" title="资源与集成" hint="已接入资源概览，点击直达对应管理视图" register={register}>
+              <Section id="resources" title="资源与集成" register={register}>
                 <div className="grid grid-cols-1 gap-2 xl:grid-cols-2">
                   <ResourceCard
                     icon={<Cable className="size-4" />}
@@ -767,7 +767,7 @@ export function SettingsView(): React.JSX.Element {
                 </div>
               </Section>
 
-              <Section id="system" title="系统信息" hint="服务端下发的运行参数与前端通道状态（只读）" register={register}>
+              <Section id="system" title="系统信息" register={register}>
                 <InfoRow label="服务健康">
                   <span className={cn('inline-flex items-center gap-1.5', health?.ok ? 'text-emerald-700' : 'text-muted-foreground')}>
                     <span className={cn('size-1.5 rounded-full', health?.ok ? 'bg-emerald-500' : 'bg-slate-300')} />
@@ -796,7 +796,7 @@ export function SettingsView(): React.JSX.Element {
                   </span>
                 </InfoRow>
                 <InfoRow label="设置文件">
-                  <span className="text-muted-foreground">data/settings.json（白名单 26 项覆盖 env；非法字段启动时丢弃并告警）</span>
+                  <span className="text-muted-foreground">data/settings.json（非法字段启动时丢弃并告警）</span>
                 </InfoRow>
               </Section>
             </div>

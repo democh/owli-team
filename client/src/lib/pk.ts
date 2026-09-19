@@ -12,6 +12,9 @@
  *
  * 对决分侧（PK-1）：显式结构化口径——场景 arena 席位（左/右）优先，其次姿态注册表
  * （DUEL_STANCE；头脑风暴红队对 ideator/challenger 等）；两侧均非空才成对决，无启发式。
+ *
+ * M63（批一）：交锋计量扩展（claims）、交锋看板（crossFireOf）、报价序列（offerSeriesOf）、
+ * claim 扩展字段（视角 / 倾向 / 置信度）与回填模板库（TEMPLATES）——全部纯函数，容器优先。
  */
 
 /** 裁决状态（与 scene/derive.SceneVerdictStatus 同构的本地定义：避免 lib → components 反向依赖） */
@@ -189,11 +192,13 @@ export function duelPhaseOf(waveIndex: number): DuelPhase {
   return waveIndex === 1 ? '反驳' : '修补'
 }
 
-// ---------- 计分（PK-5） ----------
+// ---------- 计分（PK-5 / M63 A1：交锋计量板数据源） ----------
 
 export interface DuelSideTally {
   /** 本侧发言条数 */
   speaks: number
+  /** 本侧提出的主张数（M63：claim 容器计数） */
+  claims: number
   /** 本侧提出的缺陷总数 */
   findings: number
   /** 本侧缺陷中被后续消息提及的条数（被响应） */
@@ -206,9 +211,13 @@ export interface DuelTally {
 }
 
 export interface DuelMessage {
+  /** 消息 id（M63：交锋看板 / 报价序列的定位锚点；缺省时对应条目跳过） */
+  id?: string
   role?: string
   agentId?: string
   content: string
+  /** 波次序号（M63：报价序列轮次标注；缺省不产出） */
+  turnIndex?: number
 }
 
 /**
@@ -224,14 +233,15 @@ export function duelTally(
   const posted = { left: new Set<number>(), right: new Set<number>() }
   const mentioned = new Set<number>()
   const tally: DuelTally = {
-    left: { speaks: 0, findings: 0, responded: 0 },
-    right: { speaks: 0, findings: 0, responded: 0 },
+    left: { speaks: 0, claims: 0, findings: 0, responded: 0 },
+    right: { speaks: 0, claims: 0, findings: 0, responded: 0 },
   }
   for (const m of messages) {
     if (m.role !== undefined && m.role !== 'agent') continue
     if (!m.agentId) continue
     const side: DuelSide | undefined = left.has(m.agentId) ? 'left' : right.has(m.agentId) ? 'right' : undefined
     if (side) tally[side].speaks++
+    if (side) tally[side].claims += claimNodesOfContent(m.content).length
     if (side) {
       for (const block of containerBlocks(m.content, 'findings')) {
         for (const f of findingsOfLines(block.lines)) posted[side].add(f.id)
@@ -248,6 +258,52 @@ export function duelTally(
     tally[side].responded = n
   }
   return tally
+}
+
+// ---------- 交锋看板（M63 A2）：findings 缺陷-修补配对的双泳道聚合 ----------
+
+export interface CrossFireItem {
+  id: number
+  text: string
+  messageId: string
+  responded: boolean
+}
+
+export interface CrossFireModel {
+  left: CrossFireItem[]
+  right: CrossFireItem[]
+}
+
+/**
+ * 交锋看板派生（M63）：各侧 findings 容器条目 + 「已响应」状态（全量消息提及扫描，
+ * 口径同 duelTally / 配对卡——定义行不计提及）；未响应优先排序，同状态按编号升序。
+ * 无 messageId 的消息跳过（定位锚点缺失）。
+ */
+export function crossFireOf(
+  messages: readonly DuelMessage[],
+  sides: { left: readonly string[]; right: readonly string[] },
+): CrossFireModel {
+  const left = new Set(sides.left)
+  const right = new Set(sides.right)
+  const per: Record<DuelSide, Map<number, CrossFireItem>> = { left: new Map(), right: new Map() }
+  const mentioned = new Set<number>()
+  for (const m of messages) {
+    if (m.role !== undefined && m.role !== 'agent') continue
+    for (const id of findingMentions(m.content)) mentioned.add(id)
+    if (!m.agentId || !m.id) continue
+    const side: DuelSide | undefined = left.has(m.agentId) ? 'left' : right.has(m.agentId) ? 'right' : undefined
+    if (!side) continue
+    for (const block of containerBlocks(m.content, 'findings')) {
+      for (const f of findingsOfLines(block.lines)) {
+        if (!per[side].has(f.id)) per[side].set(f.id, { id: f.id, text: f.text, messageId: m.id, responded: false })
+      }
+    }
+  }
+  const finish = (m: Map<number, CrossFireItem>): CrossFireItem[] =>
+    [...m.values()]
+      .map((it) => ({ ...it, responded: mentioned.has(it.id) }))
+      .sort((a, b) => Number(a.responded) - Number(b.responded) || a.id - b.id)
+  return { left: finish(per.left), right: finish(per.right) }
 }
 
 // ---------- 裁决回填模板（PK-4；统一回填语义：只写草稿不直发，ADR 0118） ----------
@@ -315,6 +371,10 @@ export interface ClaimNodeData {
   claim: string
   detail?: string
   reasons: ClaimReasonData[]
+  /** M63：扩展字段（视角 / 倾向 / 置信度；缺省不影响渲染） */
+  perspective?: string
+  stance?: string
+  confidence?: string
 }
 
 /** 细节字段行：`细节：…` / `说明：…`（取首行；其余内容照常） */
@@ -326,6 +386,39 @@ export function claimDetailOf(lines: readonly string[]): string | undefined {
     if (m && m[1]!.trim() !== '') return m[1]!.trim()
   }
   return undefined
+}
+
+// ---------- claim 扩展字段（M63 N1：四路观点卡数据源） ----------
+
+export interface ClaimMeta {
+  perspective?: string
+  stance?: string
+  confidence?: string
+}
+
+/** 倾向词 → 色键（多 / 空 / 中性；A 股口径红涨绿跌；ClaimTree 与四路观点卡共用） */
+export function stanceToneOf(stance: string): 'long' | 'short' | 'none' {
+  if (/多|正|买|看涨/.test(stance)) return 'long'
+  if (/空|反|卖|看跌/.test(stance)) return 'short'
+  return 'none'
+}
+
+/** 扩展字段行：`视角：基本面` / `倾向：多方` / `置信度：高`（各取首条；与 细节 行并列共存） */
+export const CLAIM_META_RE = /^(视角|倾向|置信度)\s*[：:]\s*(.+)$/
+
+/** claim 容器行 → 扩展字段（remark 收尾与场景面板共用单一实现；缺省字段不产出键） */
+export function claimMetaOf(lines: readonly string[]): ClaimMeta {
+  const out: ClaimMeta = {}
+  for (const raw of lines) {
+    const m = CLAIM_META_RE.exec(raw.trim())
+    if (!m) continue
+    const value = (m[2] ?? '').trim()
+    if (value === '') continue
+    if (m[1] === '视角' && out.perspective === undefined) out.perspective = value
+    else if (m[1] === '倾向' && out.stance === undefined) out.stance = value
+    else if (m[1] === '置信度' && out.confidence === undefined) out.confidence = value
+  }
+  return out
 }
 
 /** 论据条目：`- 论据 | 证据`（证据缺省 → undefined；首个 | 前为论据） */
@@ -375,6 +468,10 @@ export function claimNodesOfContent(content: string): ClaimNodeData[] {
     const node: ClaimNodeData = { claim: block.arg, reasons: claimReasonsOfLines(block.lines) }
     const detail = claimDetailOf(block.lines)
     if (detail !== undefined) node.detail = detail
+    const meta = claimMetaOf(block.lines)
+    if (meta.perspective !== undefined) node.perspective = meta.perspective
+    if (meta.stance !== undefined) node.stance = meta.stance
+    if (meta.confidence !== undefined) node.confidence = meta.confidence
     out.push(node)
   }
   return out
@@ -494,6 +591,136 @@ export function offersOfContent(content: string, messageId: string): OfferInstan
   }
   return out
 }
+
+// ---------- 报价序列（M63 G1/G2：报价折线 + 基准线 + 让步刻度数据源） ----------
+
+export interface OfferPoint {
+  messageId: string
+  title: string
+  headline: string
+  /** 归一化金额（offerAmount 解析；解析失败的点不进序列） */
+  amount: number
+  side: DuelSide
+  /** 让步理由（offer 容器「让步」字段值；缺省 = 未注明） */
+  concession?: string
+  turnIndex?: number
+}
+
+export interface OfferBaselines {
+  target?: number
+  bottom?: number
+  batna?: number
+}
+
+export interface OfferSeries {
+  points: OfferPoint[]
+  baselines: OfferBaselines
+  /** offset：每侧首个点在全局序列中的下标（折线分段用） */
+}
+
+const BASELINE_FILES: ReadonlyArray<readonly [keyof OfferBaselines, RegExp]> = [
+  ['target', /目标/],
+  ['bottom', /底线|walk-?away/i],
+  ['batna', /BATNA|最佳替代/i],
+]
+
+const CONCESSION_FIELD_RE = /让步/
+
+/**
+ * 报价序列派生（M63）：成员消息中的 offer 容器按出现序聚合——
+ * side 由消息作者 ∈ sides 判定；金额走 offerAmount 单一解析（不可解析点跳过，列表原样保留）；
+ * 基准线（目标 / 底线 / BATNA）取首个显式字段行（缺省不产出）。
+ */
+export function offerSeriesOf(
+  messages: readonly DuelMessage[],
+  sides: { left: readonly string[]; right: readonly string[] },
+): OfferSeries {
+  const left = new Set(sides.left)
+  const right = new Set(sides.right)
+  const points: OfferPoint[] = []
+  const baselines: OfferBaselines = {}
+  for (const m of messages) {
+    if (m.role !== undefined && m.role !== 'agent') continue
+    if (!m.agentId || !m.id) continue
+    const side: DuelSide | undefined = left.has(m.agentId) ? 'left' : right.has(m.agentId) ? 'right' : undefined
+    if (!side) continue
+    for (const block of containerBlocks(m.content, 'offer')) {
+      const rows = offerRowsOf(block.lines)
+      for (const f of rows.fields) {
+        for (const [key, re] of BASELINE_FILES) {
+          if (baselines[key] !== undefined || !re.test(f.label)) continue
+          const v = offerAmount(f.value)
+          if (v !== undefined) baselines[key] = v
+        }
+      }
+      const headline = offerHeadline(rows.fields, rows.items, block.arg)
+      const amount = offerAmount(headline)
+      if (amount === undefined) continue
+      const concessionRow = rows.fields.find((f) => CONCESSION_FIELD_RE.test(f.label))
+      const turn = typeof m.turnIndex === 'number' ? { turnIndex: m.turnIndex } : {}
+      points.push({
+        messageId: m.id,
+        title: block.arg,
+        headline,
+        amount,
+        side,
+        ...(concessionRow && concessionRow.value.trim() !== '' ? { concession: concessionRow.value.trim() } : {}),
+        ...turn,
+      })
+    }
+  }
+  return { points, baselines }
+}
+
+// ---------- 回填模板库（M63 U3；统一回填语义：只写草稿不直发） ----------
+
+/**
+ * 对抗 / 博弈 / 分析域回填模板集中注册表（组件只引用常量；单测直测常量文本）。
+ * `center` 为中轴席成员名（裁判 / 主管 / 教练），由宿主注入。
+ */
+export const TEMPLATES = {
+  /** 交锋看板「催回应」 */
+  chaseFinding: (id: number): string => `请回应「缺陷 ${id}」：给出修补或反驳，不要跳过。`,
+  /** 证据无等级 → 补标注来源与等级 */
+  askEvidence: (text: string): string =>
+    `请为「${text}」标注证据来源与日期（等级：官方 / 学术 / 权威媒体 / 待核实）。`,
+  /** 无证据论据 → 假设明示 */
+  markHypothesis: (text: string): string => `「${text}」目前是假设，请补一条证据，或明示其假设地位。`,
+  /** 对抗参与条：加一轮（point = 最新未决点，可缺省） */
+  extraRound: (center: string, point?: string): string =>
+    point !== undefined && point !== ''
+      ? `@${center} 请再加一轮：重点交锋「${point}」，双方各挂一条新证据再回应。`
+      : `@${center} 请再加一轮：针对尚未回应的分歧点逐一回应，缺证据的一方补足证据。`,
+  /** 对抗参与条：叫停并裁决 */
+  stopAndVerdict: (center: string): string =>
+    `@${center} 请收束当前交锋，直接给出终局裁决（胜负 + 置信度 + 核心依据 + 翻盘条件）。`,
+  /** 对抗参与条：倾向表态 */
+  leanSide: (center: string, side: string): string =>
+    `@${center} 我的观感倾向：${side}——理由：…。请在终局裁决中回应这一倾向是否成立，并给出理由。`,
+  /** 四路观点卡：补依据追问 */
+  viewAsk: (perspective: string, claim: string): string =>
+    `请围绕${perspective}观点「${claim}」补充依据与置信度说明。`,
+  /** 四路分歧：裁决提示（invest 协议第 8 条口径） */
+  splitAdjudicate: (): string =>
+    `四路观点存在分歧，请主管按「来源可靠性 > 时效 > 一致性」裁决并记录在案。`,
+  /** 让步幅度扩大（纪律警示）→ 说明回填 */
+  concessionExplain: (delta: string, prev: string): string =>
+    `这次让步幅度（${delta}）相比上一轮（${prev}）扩大了，请说明理由并给出换取条件。`,
+  /** M66（N4）：立场推演（立场卡 / 汇聚板泳道） */
+  stanceAsk: (role: string, care: string): string =>
+    `请围绕「${role}」的核心关切「${care}」再推演一层：他们的真实约束与合理边界是什么？`,
+  /** M66（N4）：分歧中间路径 */
+  splitPath: (text: string): string => `请围绕分歧「${text}」推演可行的中间路径与各方可接受的最小让步。`,
+  /** M66（N4）：存疑项核实路径 */
+  splitVerify: (text: string): string => `请为存疑项「${text}」补充核实路径（来源与判定标准）。`,
+} as const
+
+/**
+ * 多空对弈发起模板（M63 G4：versus 空态「发起多空对弈」按钮）。
+ * 与 agents/_presets.yaml `bull-bear-duel` 的 prompt 同文——修改时两处同步（单一事实源说明见设计 §5-G4）。
+ */
+export const DUEL_PROMPT =
+  '组织一轮多空对弈（围绕增长与估值的对抗推演，默认 3 轮）：@秦砚 持多方立论，@雷动 持空方立论，每轮挂证据与置信度并回应对方论据；@闻笛 汇拢双方证据弹药（附信源等级），随后由方程逐轮量化走子、主管终局裁决（胜负 + 置信度 + 核心依据 + 翻盘条件）。'
 
 // ---------- 裁决状态标签（对决组头终局徽章；与 scene 裁决口径一致） ----------
 

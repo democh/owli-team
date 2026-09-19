@@ -45,6 +45,8 @@ export interface DbExecInput {
   actor: string
   sessionId?: string
   runId?: string
+  /** M57 P2：触发者用户 id（审计归因；兼容模式缺省） */
+  actorUserId?: string
   /** Agent 调用时必须校验会话绑定；面板手动调用可关 */
   requireBinding?: boolean
 }
@@ -229,6 +231,7 @@ export class DbConnectionManager {
         this.audit.record({
           actor: input.actor,
           action: 'db.schema',
+          userId: input.actorUserId,
           resourceType: 'connection',
           resourceId: connection.id,
           sessionId: input.sessionId,
@@ -265,6 +268,7 @@ export class DbConnectionManager {
       this.audit.record({
         actor: input.actor,
         action: input.mode === 'query' ? 'db.query' : 'db.execute',
+        userId: input.actorUserId,
         resourceType: 'connection',
         resourceId: connection.id,
         sessionId: input.sessionId,
@@ -286,6 +290,7 @@ export class DbConnectionManager {
       this.audit.record({
         actor: input.actor,
         action: input.mode === 'schema' ? 'db.schema' : input.mode === 'query' ? 'db.query' : 'db.execute',
+        userId: input.actorUserId,
         resourceType: 'connection',
         resourceId: input.connectionId,
         sessionId: input.sessionId,

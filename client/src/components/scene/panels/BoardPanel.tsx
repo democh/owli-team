@@ -47,21 +47,23 @@ function buildModel(messages: ReturnType<typeof useSceneMessages>): BoardModel {
 /** 逐场景空态文案（M52-C 细化兑现：§67.2 记录 board 三场景语汇各异，未收录场景用中性默认） */
 interface BoardCopy {
   emptyText: string
-  emptyHint: string
 }
 
 const BOARD_COPY: Record<string, BoardCopy> = {
   // 游戏工坊：GDD 目录树 + 数值表
-  gamedesign: { emptyText: '设计文档与数值表将在这里显示', emptyHint: '成员推进后，GDD 目录树与数值表会自动跟进' },
+  gamedesign: { emptyText: '设计文档与数值表将在这里显示' },
   // 创作工作室：文稿版本线（原文案即写作语境，保留）
-  writing: { emptyText: '文稿结构与版本将在这里显示', emptyHint: '成员落笔后，目录树与版本线会自动跟进' },
+  writing: { emptyText: '文稿结构与版本将在这里显示' },
   // 置业安家：对比矩阵 + 预算测算
-  housing: { emptyText: '方案对比与预算测算将在这里显示', emptyHint: '成员测算后，对比矩阵与预算表会自动跟进' },
+  housing: { emptyText: '方案对比与预算测算将在这里显示' },
+  // M69 自媒体工作室：内容日历 + 选题池 + 脚本版本
+  creator: { emptyText: '内容日历与选题池将在这里显示' },
+  // M69 学术论文：结构树 + 文献库 + 修改线
+  academic: { emptyText: '论文结构、文献库与修改线将在这里显示' },
 }
 
 const BOARD_COPY_DEFAULT: BoardCopy = {
   emptyText: '文档结构与版本将在这里显示',
-  emptyHint: '成员落笔后，目录树与版本线会自动跟进',
 }
 
 export function BoardPanel(): React.JSX.Element {
@@ -74,7 +76,7 @@ export function BoardPanel(): React.JSX.Element {
   if (empty) {
     return (
       <PanelShell title="工序面板" icon={ListTree}>
-        <PanelEmpty icon={ListTree} text={copy.emptyText} hint={copy.emptyHint} />
+        <PanelEmpty icon={ListTree} text={copy.emptyText} />
       </PanelShell>
     )
   }

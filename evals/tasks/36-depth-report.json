@@ -1,0 +1,21 @@
+{
+  "id": "depth-report-spec",
+  "name": "深度报告规格（真实模型探针）：research 团队按深度档产出专业长报告",
+  "participants": ["lead", "scout", "analyst", "verifier"],
+  "prompt": "研究课题：调研「AI Agent 记忆系统」在个人知识管理场景的最佳实践。要求：来源可追溯、结论标注置信度（高/中/低）、给出反面证据与未决问题。研究报告要达到深度档规格：≥4000 字、六个章节完整（方法与限制 / 研究问题树 / 结论与置信度 / 证据链 / 反面证据 / 未决问题与下一步）、每个结论挂来源编号、至少 2 个表格。最终报告统一落盘为 docs/研究报告-记忆系统.md（请以此路径为准）。",
+  "maxTurns": 16,
+  "real": true,
+  "assertions": [
+    { "type": "artifact_exists", "path": "docs/研究报告-记忆系统.md" },
+    { "type": "min_sections", "path": "docs/研究报告-记忆系统.md", "value": 6 },
+    { "type": "min_chars", "path": "docs/研究报告-记忆系统.md", "value": 3000 },
+    { "type": "min_sources", "path": "docs/研究报告-记忆系统.md", "value": 6 },
+    { "type": "artifact_contains", "path": "docs/研究报告-记忆系统.md", "text": "置信度" },
+    { "type": "artifact_contains", "path": "docs/研究报告-记忆系统.md", "text": "反面证据" },
+    {
+      "type": "judge",
+      "rubric": "研究报告须达到专业深度档：六个章节完整且每章有实质内容（非提纲式短句）；结论逐条标注置信度（高/中/低）并附来源依据；证据链可追溯（至少 6 个来源标记）；包含反面证据与未决问题清单；正文充实（非空白字符接近或达到 4000）；无「研究表明」类悬空引用。",
+      "minScore": 7
+    }
+  ]
+}

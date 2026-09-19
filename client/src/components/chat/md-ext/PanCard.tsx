@@ -33,6 +33,19 @@ export interface PanRowData {
 }
 
 /** data-fields / data-items JSON → 行数组（非法 JSON / 形状不符 → 空数组，走 raw / children 回退） */
+/** M63-F：盘面印记（卡头右端印章块；设计 §5.8 传统点缀四件套之一——朱砂细边 + 2 字口径缩写，quiet-mode 隐藏，aria-hidden） */
+export const PAN_SEAL: Record<string, string> = {
+  bazi: '四柱',
+  ziwei: '斗数',
+  natal: '本命',
+  gua: '六爻',
+  transit: '行运',
+  synastry: '合盘',
+  daliuren: '时家',
+  qimen: '时家',
+  qizheng: '中气',
+}
+
 export function parsePanRows(json: string | undefined): PanRowData[] {
   if (!json) return []
   try {
@@ -184,6 +197,11 @@ export function PanCard({
         <span className="md-pan-badge">{k ? PAN_KIND_LABEL[k] : '盘面'}</span>
         {title ? <span className="md-pan-title">{title}</span> : null}
         <div className="md-pan-headright">
+          {k && PAN_SEAL[k] ? (
+            <span className="pn-seal" aria-hidden="true">
+              {PAN_SEAL[k]}
+            </span>
+          ) : null}
           {canArchive ? (
             <button
               type="button"

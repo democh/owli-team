@@ -166,12 +166,25 @@ export class ArtifactStore {
     return { fullPath, size, binary, content: fs.readFileSync(fullPath, 'utf8'), truncated: false }
   }
 
+  /**
+   * 删除会话工作区目录（必须位于 workspace 根之下，防误删）：
+   * M57 起尊重解析器（sandbox 嵌套 `u_<uid>/<sid>` 与兼容回退路径均正确删除）；
+   * repo / worktree 等外部挂载根一律拒绝删除（由 WorkspaceService.discard 处理）。
+   * 注：双向 realpath 比较（macOS /var → /private/var 等符号链接下也能正确判定）。
+   */
   removeSession(sessionId: string): void {
-    const dir = path.join(this.root, sessionId)
-    // 仅删除 workspace 根下的会话目录
-    const rootReal = fs.realpathSync(this.root)
-    if (!path.resolve(dir).startsWith(rootReal + path.sep)) return
-    fs.rmSync(dir, { recursive: true, force: true })
+    const dir = this.sessionDir(sessionId)
+    const realpathOf = (target: string): string => {
+      try {
+        return fs.realpathSync(target)
+      } catch {
+        return path.resolve(target)
+      }
+    }
+    const dirReal = realpathOf(dir)
+    const rootReal = realpathOf(this.root)
+    if (!dirReal.startsWith(rootReal + path.sep)) return
+    fs.rmSync(dirReal, { recursive: true, force: true })
     for (const key of [...this.authors.keys()]) {
       if (key.startsWith(`${sessionId}:`)) this.authors.delete(key)
     }

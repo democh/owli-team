@@ -1,5 +1,5 @@
 /**
- * M21 测试：OPC 业务场景与角色资产（v14/v15/M32/M34/M46/M50/M51-A/M51-B/M51-C/M51-D/M51-E 扩展后 29 场景 / 114 角色）、快速组队预设（_presets.yaml）与校验。
+ * M21 测试：OPC 业务场景与角色资产（v14/v15/M32/M34/M46/M50/M51-A/M51-B/M51-C/M51-D/M51-E / M65-A 扩展后 30 场景 / 117 角色）、快速组队预设（_presets.yaml）与校验。
  * 覆盖：真实资产加载（场景 order 排序 / 编制链 / 并行与 rounds 特性 / 场景协议）、
  * 新角色元数据（tools / temperature / handoff / 技能预载）、presets 解析与排序、
  * 非法预设（成员缺失 / id 重复 / members 为空 / YAML 破损）的 validate 与加载报错。
@@ -19,7 +19,7 @@ function realLibrary(): PromptLibrary {
 }
 
 describe('M21：OPC 场景与角色资产（真实 agents/ 目录）', () => {
-  it('29 个场景按 order 排序加载，各场景特性正确', () => {
+  it('41 个场景按 order 排序加载，各场景特性正确', () => {
     const lib = realLibrary()
     const groups = lib.groups()
     expect(groups.map((g) => g.id)).toEqual([
@@ -51,7 +51,19 @@ describe('M21：OPC 场景与角色资产（真实 agents/ 目录）', () => {
       'housing',
       'care',
       'metaphysics',
+      'interior',
       'astrology',
+      'ecommerce',
+      'fengshui',
+      'creator',
+      'legal-personal',
+      'academic',
+      'relationship',
+      'trpg',
+      'tarot',
+      'moot-court',
+      'business-sim',
+      'philosophy',
     ])
     const byId = new Map(groups.map((g) => [g.id, g]))
     expect(byId.get('strategy')?.rounds).toBe(true)
@@ -94,19 +106,49 @@ describe('M21：OPC 场景与角色资产（真实 agents/ 目录）', () => {
     expect(byId.get('astrology')?.parallelMax).toBe(4)
     expect(byId.get('astrology')?.defaultSkills).toEqual(['western-astrology'])
     expect(byId.get('astrology')?.chain).toEqual(['natal', 'transit', 'synastry', 'horary'])
+    // M65-A：家装设计工作室（dock · studio 面板——第 7 类面板）
+    expect(byId.get('interior')?.parallel).toBe(true)
+    expect(byId.get('interior')?.parallelMax).toBe(2)
+    expect(byId.get('interior')?.defaultSkills).toEqual(['interior-design'])
+    expect(byId.get('interior')?.chain).toEqual(['interior-designer', 'space-planner', 'visualizer'])
+    expect(byId.get('interior')?.stage).toEqual({ layout: 'dock', panel: 'studio' })
+    // M66-A：堪舆阳宅（dock · chartboard 面板；先解析后判读串行）
+    expect(byId.get('fengshui')?.parallel).toBe(false)
+    expect(byId.get('fengshui')?.defaultSkills).toEqual(['fengshui'])
+    expect(byId.get('fengshui')?.chain).toEqual(['plan-surveyor', 'yangzhai-master'])
+    expect(byId.get('fengshui')?.stage).toEqual({ layout: 'dock', panel: 'chartboard' })
+    // M69：场景扩展二批（十场景特性抽查）
+    expect(byId.get('trpg')?.rounds).toBe(true)
+    expect(byId.get('trpg')?.parallel).toBe(false)
+    expect(byId.get('tarot')?.parallel).toBe(true)
+    expect(byId.get('tarot')?.parallelMax).toBe(2)
+    expect(byId.get('tarot')?.rounds).toBe(false)
+    expect(byId.get('moot-court')?.rounds).toBe(true)
+    expect(byId.get('moot-court')?.parallel).toBe(false)
+    expect(byId.get('business-sim')?.rounds).toBe(true)
+    expect(byId.get('business-sim')?.parallel).toBe(false)
+    expect(byId.get('philosophy')?.rounds).toBe(true)
+    expect(byId.get('philosophy')?.parallel).toBe(false)
+    expect(byId.get('ecommerce')?.chain).toEqual(['category-scout', 'listing-optimizer', 'store-operator', 'shop-support'])
+    expect(byId.get('academic')?.chain).toEqual(['lit-reviewer', 'methodologist', 'paper-editor', 'submit-advisor'])
+    expect(byId.get('relationship')?.chain).toEqual(['rel-coach', 'date-coach', 'mediator'])
+    expect(byId.get('tarot')?.defaultSkills).toEqual(['tarot-reading'])
+    expect(byId.get('trpg')?.defaultSkills).toEqual(['trpg-hosting'])
   })
 
   it('M52-A/B stage 声明：M51 十场景形态齐备（arena 2 / roundtable 1 / dock 7）', () => {
     const lib = realLibrary()
     const byId = new Map(lib.groups().map((g) => [g.id, g]))
-    // arena：席位分组完整（左 / 右 / 中）
+    // arena：席位分组完整（左 / 右 / 中）+ v68 parts 精细化声明（debate 无报价流 / negotiation 无计分板）
     expect(byId.get('debate')?.stage).toEqual({
       layout: 'arena',
       seats: { left: ['affirmative'], right: ['negative'], center: ['judge', 'evidence'] },
+      parts: ['round-track', 'scoreboard', 'verdicts', 'cross-fire', 'claim-tree'],
     })
     expect(byId.get('negotiation')?.stage).toEqual({
       layout: 'arena',
       seats: { left: ['negotiator'], right: ['counterpart'], center: ['tactician'] },
+      parts: ['round-track', 'verdicts', 'claim-tree', 'offers'],
     })
     // roundtable：汇聚板
     expect(byId.get('society')?.stage).toEqual({ layout: 'roundtable', panel: 'pool' })
@@ -137,17 +179,36 @@ describe('M21：OPC 场景与角色资产（真实 agents/ 目录）', () => {
       expect(byId.get(id)?.stage).toEqual({ layout: 'dock', panel: 'console' })
     }
     expect(byId.get('invest')?.stage).toEqual({ layout: 'dock', panel: 'versus' })
+    // M69：场景扩展二批十场景 stage 声明（dock ×6 / roundtable ×2 / arena ×2）
+    expect(byId.get('ecommerce')?.stage).toEqual({ layout: 'dock', panel: 'console' })
+    expect(byId.get('creator')?.stage).toEqual({ layout: 'dock', panel: 'board' })
+    expect(byId.get('legal-personal')?.stage).toEqual({ layout: 'dock', panel: 'console' })
+    expect(byId.get('academic')?.stage).toEqual({ layout: 'dock', panel: 'board' })
+    expect(byId.get('relationship')?.stage).toEqual({ layout: 'dock', panel: 'coach' })
+    expect(byId.get('trpg')?.stage).toEqual({ layout: 'roundtable', panel: 'pool' })
+    expect(byId.get('tarot')?.stage).toEqual({ layout: 'dock', panel: 'chartboard' })
+    expect(byId.get('moot-court')?.stage).toEqual({
+      layout: 'arena',
+      seats: { left: ['plaintiff-counsel'], right: ['defense-counsel'], center: ['presiding-judge'] },
+      parts: ['round-track', 'claim-tree', 'verdicts'],
+    })
+    expect(byId.get('business-sim')?.stage).toEqual({
+      layout: 'arena',
+      seats: { left: ['sim-host'], right: ['market-referee'], center: ['review-coach'] },
+      parts: ['round-track', 'scoreboard', 'verdicts'],
+    })
+    expect(byId.get('philosophy')?.stage).toEqual({ layout: 'roundtable', panel: 'pool' })
     // C3 生活域：coach ×5（health / learning / travel / wealth / personal）
     for (const id of ['health', 'learning', 'travel', 'wealth', 'personal']) {
       expect(byId.get(id)?.stage).toEqual({ layout: 'dock', panel: 'coach' })
     }
-    // 全量总账：29 组（28 业务场景 + blank）中 24 组已声明，仅余 stream 四场景未声明
-    expect(lib.groups().filter((g) => g.stage)).toHaveLength(24)
+    // 全量总账：30 组（29 业务场景 + blank）中 25 组已声明，仅余 stream 四场景未声明（M65-A：+ interior）
+    expect(lib.groups().filter((g) => g.stage)).toHaveLength(36)
   })
 
-  it('114 个角色全量加载：新角色 tools / temperature / handoff 与资产一致', () => {
+  it('165 个角色全量加载：新角色 tools / temperature / handoff 与资产一致', () => {
     const lib = realLibrary()
-    expect(lib.list()).toHaveLength(114)
+    expect(lib.list()).toHaveLength(165)
     // 编制链序：blank 场景（order 最小）居首（general），其次 strategy —— chief → strategist → pricing，场景内非链条目（insight）排后
     expect(
       lib
@@ -162,7 +223,7 @@ describe('M21：OPC 场景与角色资产（真实 agents/ 目录）', () => {
     expect(chief?.temperature).toBe(0.4)
     expect(chief?.handoff).toEqual(['strategist', 'growth', 'sales', 'finance'])
     expect(chief?.tools).toContain('date_calc')
-    expect(chief?.skills).toEqual(['business-review', 'deck-authoring'])
+    expect(chief?.skills).toEqual(['business-review', 'deck-authoring', 'report-authoring'])
 
     const finance = lib.get('finance')
     expect(finance?.group).toBe('finance')
@@ -184,7 +245,7 @@ describe('M21：OPC 场景与角色资产（真实 agents/ 目录）', () => {
 
     const security = lib.get('security')
     expect(security?.group).toBe('development')
-    expect(security?.skills).toEqual(['code-review', 'red-team'])
+    expect(security?.skills).toEqual(['code-review', 'red-team', 'secure-coding'])
 
     const compliance = lib.get('compliance')
     expect(compliance?.group).toBe('finance')
@@ -386,10 +447,10 @@ describe('M21：OPC 场景与角色资产（真实 agents/ 目录）', () => {
     expect(lib.get('analyst-ta')?.tools).not.toContain('fin_backtest')
     expect(lib.get('analyst-fa')?.tools).not.toContain('fin_game')
     // 技能预载
-    expect(lib.get('analyst-fa')?.skills).toEqual(['fundamental-analysis'])
-    expect(lib.get('analyst-ta')?.skills).toEqual(['technical-analysis'])
-    expect(lib.get('analyst-news')?.skills).toEqual(['market-news-analysis'])
-    expect(lib.get('quant')?.skills).toEqual(['investment-strategy', 'game-theory-trading'])
+    expect(lib.get('analyst-fa')?.skills).toEqual(['fundamental-analysis', 'report-authoring'])
+    expect(lib.get('analyst-ta')?.skills).toEqual(['technical-analysis', 'report-authoring'])
+    expect(lib.get('analyst-news')?.skills).toEqual(['market-news-analysis', 'report-authoring'])
+    expect(lib.get('quant')?.skills).toEqual(['investment-strategy', 'game-theory-trading', 'report-authoring'])
     // 协作基线：全部含 handoff（结构化转交为第一通道）
     for (const id of ['invest-lead', 'analyst-fa', 'analyst-ta', 'analyst-news', 'quant']) {
       expect(lib.get(id)?.tools, `${id} 缺少 handoff`).toContain('handoff')
@@ -412,11 +473,11 @@ describe('M21：OPC 场景与角色资产（真实 agents/ 目录）', () => {
   it('技能预载：marketing 成员显式配置（group defaultSkills 仅作兜底）', () => {
     const lib = realLibrary()
     expect(lib.get('growth')?.skills).toEqual(['content-marketing', 'spreadsheet-modeling'])
-    expect(lib.get('content')?.skills).toEqual(['content-marketing', 'doc-coauthoring'])
+    expect(lib.get('content')?.skills).toEqual(['content-marketing', 'doc-coauthoring', 'natural-writing'])
     expect(lib.get('seo')?.skills).toEqual(['content-marketing', 'seo-optimizer'])
-    expect(lib.get('brand')?.skills).toEqual(['brand-system', 'visual-design'])
+    expect(lib.get('brand')?.skills).toEqual(['brand-system', 'visual-design', 'brand-naming'])
     expect(lib.get('ads')?.skills).toEqual(['content-marketing', 'spreadsheet-modeling'])
-    expect(lib.get('localizer')?.skills).toEqual(['doc-coauthoring', 'comms-writing'])
+    expect(lib.get('localizer')?.skills).toEqual(['doc-coauthoring', 'comms-writing', 'translation-quality'])
   })
 
   it('场景协议：strategy / finance / bi / sre / invest / sales / debate / negotiation / society / writing / career / gamedesign / housing / care / metaphysics / astrology 有专属协议', () => {
@@ -482,7 +543,7 @@ function writePresets(s: { agentsDir: string }, yaml: string): void {
 }
 
 describe('M21：快速组队预设（_presets.yaml）', () => {
-  it('真实预设：26 条按 order 排序，成员引用全部存在且 prompt 可预填', () => {
+  it('真实预设：33 条按 order 排序，成员引用全部存在且 prompt 可预填', () => {
     const lib = realLibrary()
     const presets = lib.presets()
     expect(presets.map((p) => p.id)).toEqual([
@@ -512,7 +573,22 @@ describe('M21：快速组队预设（_presets.yaml）', () => {
       'chart-combo',
       'oracle-crossread',
       'full-horoscope',
+      'home-makeover',
+      'startup-launch',
+      'career-pivot',
+      'annual-review',
+      'ecommerce-growth',
+      'content-monetize',
+      'move-in-check',
     ])
+    const makeover = presets.find((p) => p.id === 'home-makeover')
+    expect(makeover?.members).toEqual(['interior-designer', 'space-planner', 'visualizer'])
+    const moveIn = presets.find((p) => p.id === 'move-in-check')
+    expect(moveIn?.members).toEqual(['plan-surveyor', 'yangzhai-master', 'reno-designer'])
+    const startup = presets.find((p) => p.id === 'startup-launch')
+    expect(startup?.members).toEqual(['chief', 'finance', 'legal', 'growth', 'pm'])
+    const monetize = presets.find((p) => p.id === 'content-monetize')
+    expect(monetize?.members).toEqual(['account-strategist', 'script-writer', 'monetizer', 'finance'])
     const weekly = presets.find((p) => p.id === 'weekly-review')
     expect(weekly?.members).toEqual(['chief', 'finance', 'growth', 'sales'])
     expect(weekly?.prompt).toContain('@')

@@ -24,3 +24,4 @@ stage:
     left: [negotiator]
     right: [counterpart]
     center: [tactician]
+  parts: [round-track, verdicts, claim-tree, offers]

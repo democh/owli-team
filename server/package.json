@@ -16,7 +16,8 @@
     "memory:reindex": "tsx src/scripts/memory-reindex.ts",
     "llm:ping": "tsx src/scripts/llm-ping.ts",
     "migrate:agents": "tsx src/scripts/migrate-agents.ts",
-    "migrate:json": "tsx src/scripts/migrate-json.ts"
+    "migrate:json": "tsx src/scripts/migrate-json.ts",
+    "migrate:workspace": "tsx src/scripts/migrate-workspace.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",

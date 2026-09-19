@@ -200,7 +200,7 @@ describe('M25.2：EmbeddingManager 解析与缓存', () => {
 async function startApp(partial: Record<string, unknown>): Promise<{ url: string; close: () => Promise<void> }> {
   const app = express()
   app.use(express.json())
-  app.use('/api', createConnectionsRouter(partial as unknown as ApiDeps))
+  app.use('/api', createConnectionsRouter({ access: { multiUser: false }, ...partial } as unknown as ApiDeps))
   app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
     res.status(500).json({ error: `内部错误：${err.message}` })
   })

@@ -10,7 +10,9 @@
  * 变更经 notify:schedule-changed 广播；提醒触发经 notify:schedule-reminder 广播。
  */
 import { Router } from 'express'
+import type { Request, Response } from 'express'
 import { z } from 'zod'
+import type { AuthUser } from '../auth/service.js'
 import type { ApiDeps } from './index.js'
 
 const SpecSchema = z.object({
@@ -49,6 +51,21 @@ export function createSchedulesRouter(deps: ApiDeps): Router {
     return true
   }
 
+  /** M57：任务守卫（任务 → 所属会话 → 归属）；跨用户一律 404 */
+  const guardTask = (req: Request, res: Response): boolean => {
+    const task = deps.schedules!.get(req.params.id)
+    if (!task) {
+      res.status(404).json({ error: '定时任务不存在' })
+      return false
+    }
+    const user = (req as Request & { user?: AuthUser }).user
+    if (!deps.access.canAccessSession(user, task.sessionId)) {
+      res.status(404).json({ error: '定时任务不存在' })
+      return false
+    }
+    return true
+  }
+
   router.get('/sessions/:id/schedules', (req, res) => {
     if (!requireService(res)) return
     if (!deps.sessions.getSession(req.params.id)) return res.status(404).json({ error: '会话不存在' })
@@ -79,6 +96,7 @@ export function createSchedulesRouter(deps: ApiDeps): Router {
 
   router.patch('/schedules/:id', (req, res) => {
     if (!requireService(res)) return
+    if (!guardTask(req, res)) return
     const parsed = UpdateSchema.safeParse(req.body ?? {})
     if (!parsed.success) {
       const issue = parsed.error.issues[0]
@@ -94,6 +112,7 @@ export function createSchedulesRouter(deps: ApiDeps): Router {
 
   router.delete('/schedules/:id', (req, res) => {
     if (!requireService(res)) return
+    if (!guardTask(req, res)) return
     const result = deps.schedules!.remove(req.params.id)
     if (!result.ok) return res.status(404).json({ error: result.error })
     res.json({ ok: true })
@@ -101,6 +120,7 @@ export function createSchedulesRouter(deps: ApiDeps): Router {
 
   router.post('/schedules/:id/run', (req, res) => {
     if (!requireService(res)) return
+    if (!guardTask(req, res)) return
     const result = deps.schedules!.runNow(req.params.id)
     if (!result.ok) {
       const status = result.error === '定时任务不存在' ? 404 : 400
@@ -111,6 +131,7 @@ export function createSchedulesRouter(deps: ApiDeps): Router {
 
   router.post('/schedules/:id/pause', (req, res) => {
     if (!requireService(res)) return
+    if (!guardTask(req, res)) return
     const result = deps.schedules!.setEnabled(req.params.id, false)
     if (!result.ok) return res.status(404).json({ error: result.error })
     res.json({ task: result.task })
@@ -118,6 +139,7 @@ export function createSchedulesRouter(deps: ApiDeps): Router {
 
   router.post('/schedules/:id/resume', (req, res) => {
     if (!requireService(res)) return
+    if (!guardTask(req, res)) return
     const result = deps.schedules!.setEnabled(req.params.id, true)
     if (!result.ok) {
       const status = result.error === '定时任务不存在' ? 404 : 400

@@ -26,6 +26,7 @@ import {
   Video,
 } from 'lucide-react'
 import type { Artifact, ArtifactKind } from '@multi-agent/shared'
+import { measureDoc } from '@multi-agent/shared'
 import { apiGet } from '../../lib/api'
 import { artifactContentUrl, extOf, isChartJson, isPreviewableOffice, isTextKind, langForFile } from '../../lib/artifacts'
 import { highlightCode } from '../../lib/shiki'
@@ -99,6 +100,24 @@ function ModeButton({
     >
       {children}
     </button>
+  )
+}
+
+/** 交付规格体检条（与 server write_file 落盘体检同口径 measureDoc）：仅 Markdown 预览展示 */
+function DocMetricsBar({ content }: { content: string }): React.JSX.Element {
+  const m = React.useMemo(() => measureDoc(content), [content])
+  const charsText = m.chars >= 10_000 ? `${(m.chars / 1000).toFixed(1)}k` : String(m.chars)
+  return (
+    <div className="mb-3 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md border bg-muted/40 px-2.5 py-1.5 text-[11px] text-muted-foreground">
+      <span className="font-medium text-foreground/70">交付体检</span>
+      <span>{charsText} 字</span>
+      <span>{m.sections} 章节</span>
+      <span>表格 {m.tables}</span>
+      <span>来源 {m.sources}</span>
+      {m.placeholders > 0 && (
+        <span className="font-medium text-amber-600">⚠ 占位残留 {m.placeholders} 处，交付前应清理</span>
+      )}
+    </div>
   )
 }
 
@@ -324,7 +343,7 @@ export function ArtifactsView(): React.JSX.Element {
               </span>
               {author && (
                 <span className="flex items-center gap-1 text-[11px] text-muted-foreground">
-                  <AgentAvatar agent={author} size={16} animated={false} className="rounded" />
+                  <AgentAvatar agent={author} size={16} animated={false} />
                   {author.name}
                 </span>
               )}
@@ -440,6 +459,7 @@ export function ArtifactsView(): React.JSX.Element {
                 {artifact.kind === 'markdown' && !previewLoading && !previewError && preview && (
                   <div className="h-full overflow-y-auto">
                     <div className="mx-auto max-w-3xl px-6 py-5">
+                      <DocMetricsBar content={preview.content} />
                       {preview.truncated && (
                         <p className="mb-3 rounded-md bg-amber-500/10 px-2 py-1 text-[11.5px] text-amber-700">
                           文件较大，仅展示前 {humanSize(preview.content.length)} 内容，完整版请下载

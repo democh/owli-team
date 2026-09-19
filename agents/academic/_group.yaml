@@ -1,0 +1,22 @@
+id: academic
+name: 学术论文
+description: 学术研究生产链：选题与缺口 → 文献综述 → 研究设计 → 论文写作 → 投稿与审稿应对；辅助研究定位，不代写核心论证，引用真实性可回溯
+icon: book-open
+theme: ["#155e75", "#67e8f9"]
+objective: 把一个问题变成一篇站得住的论文：缺口真实、方法可复现、引用可回溯
+chain: [lit-reviewer, methodologist, paper-editor, submit-advisor]
+parallel: false
+order: 128
+guide: 说说你的研究课题或论文方向
+agenda:
+  - label: 选题与缺口
+    prompt: 帮我打磨研究问题：从领域收窄到具体 RQ，标出文献缺口与支撑证据（≥3 篇）：
+  - label: 文献综述
+    prompt: 围绕这个主题做文献综述：按主题线组织 + 文献矩阵（含缺口列）+ 收束到研究问题：
+  - label: 研究设计
+    prompt: 帮我设计研究方案：方法选择与 RQ 匹配 / 效度三问自查 / 伦理检查（数据脱敏与知情同意）：
+  - label: 投稿规划
+    prompt: 帮我规划投稿：选刊三看（范围 / 适配 / 周期）/ 投稿信要点 / 审稿意见应对策略：
+stage:
+  layout: dock
+  panel: board

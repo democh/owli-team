@@ -29,7 +29,7 @@ function resolveConnection(
   if (list.length === 0) {
     return {
       ok: false,
-      message: '本会话未绑定任何 SSH 连接。请在右侧面板「连接」页签中绑定 SSH 连接后再试。',
+      message: '本会话未绑定任何 SSH 连接。请在会话头部「资源」入口绑定 SSH 连接后再试。',
     }
   }
   const hit = list.find((c) => c.id === nameOrId) ?? list.find((c) => c.name === nameOrId)
@@ -39,6 +39,9 @@ function resolveConnection(
       message: `未找到 SSH 连接「${nameOrId}」。本会话可用：${list.map((c) => c.name).join('、')}`,
     }
   }
+  // M57 P2：共享会话最小权限复核（成员禁触达未开放连接；未装配 = 不复核）
+  const denied = ctx.connectionGuard?.(hit.id, ctx.triggerUserId)
+  if (denied) return { ok: false, message: denied }
   return { ok: true, connection: hit }
 }
 
@@ -61,6 +64,18 @@ function formatExecResult(result: SshExecResultDto, command: string): string {
   if (result.stderr.trim()) parts.push(`[stderr]\n${result.stderr.trimEnd()}`)
   parts.push(`[exit ${result.code ?? result.signal ?? '未知'} · ${result.durationMs}ms${result.truncated ? ' · 输出已截断' : ''}]`)
   return parts.join('\n')
+}
+
+/** M39（§93，SR-2）：证据卡输出上限（stdout+stderr 合并文本；超长截断并标记） */
+const SSH_META_OUTPUT_MAX = 2000
+
+function sshMetaOutput(result: SshExecResultDto): { text: string; truncated: boolean } {
+  const parts: string[] = []
+  if (result.stdout.trim()) parts.push(result.stdout.trimEnd())
+  if (result.stderr.trim()) parts.push(`[stderr]\n${result.stderr.trimEnd()}`)
+  const text = parts.join('\n')
+  if (text.length <= SSH_META_OUTPUT_MAX) return { text, truncated: false }
+  return { text: `${text.slice(0, SSH_META_OUTPUT_MAX)}…`, truncated: true }
 }
 
 const sshExecTool: AgentTool<{ connection: string; command: string; timeout_ms?: number }> = {
@@ -94,6 +109,8 @@ const sshExecTool: AgentTool<{ connection: string; command: string; timeout_ms?:
         actor: ctx.agentId,
         sessionId: ctx.sessionId,
         runId: ctx.runId,
+        // M57 P2：归因（触发者；兼容模式缺省）
+        actorUserId: ctx.triggerUserId,
       })
       // 实时操作事件（直播窗/操作流）：远程命令执行
       ctx.opNotify?.({
@@ -107,10 +124,19 @@ const sshExecTool: AgentTool<{ connection: string; command: string; timeout_ms?:
         detail: `$ ${args.command.slice(0, 500)}${result.stdout.trim() ? `\n${result.stdout.trim().slice(0, 600)}` : ''}${result.stderr.trim() ? `\n[stderr]\n${result.stderr.trim().slice(0, 300)}` : ''}`,
       })
       const ok = result.code === 0
+      const out = sshMetaOutput(result)
       return {
         ok,
         summary: `${ok ? '命令完成' : '命令失败'}：exit ${result.code ?? result.signal ?? '未知'}（${result.durationMs}ms）`,
         detail: formatExecResult(result, args.command),
+        // M39（§93，SR-2）：证据卡数据源（命令 / exit / 耗时 / 输出≤2000 字与截断标记）
+        meta: {
+          command: args.command.slice(0, 500),
+          exitCode: result.code ?? null,
+          durationMs: result.durationMs,
+          output: out.text,
+          truncated: result.truncated || out.truncated,
+        },
       }
     } catch (err) {
       ctx.opNotify?.({

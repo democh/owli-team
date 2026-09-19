@@ -31,6 +31,8 @@ export type AuditAction =
   | 'browser.input'
   | 'browser.takeover'
   | 'browser.release'
+  // M62：多用户浏览器资源治理（启动对账；实例关闭原因落 browser.close detail）
+  | 'browser.reconcile'
   | 'mcp.create'
   | 'mcp.update'
   | 'mcp.delete'
@@ -42,11 +44,37 @@ export type AuditAction =
   // M28：mcp.json 直配（手动同步 / 粘贴导入）
   | 'mcp.json-sync'
   | 'mcp.json-import'
+  // M57：多用户（账号 / 登录 / 归属）
+  | 'auth.setup'
+  | 'auth.login'
+  | 'auth.logout'
+  | 'auth.password-change'
+  | 'auth.user-create'
+  | 'auth.user-update'
+  | 'auth.user-disable'
+  | 'auth.user-delete'
+  | 'auth.user-password-reset'
+  | 'auth.apikey-create'
+  | 'auth.apikey-revoke'
+  // M57 P2：会话共享（邀请 / 改角色 / 移出 / 自助退出）
+  | 'session.share-add'
+  | 'session.share-update'
+  | 'session.share-remove'
+  | 'session.share-leave'
+  // M57 P3：用户配额（管理侧设置）
+  | 'auth.quota-set'
+  // M57 P3：用户 LLM 凭据（BYOK）
+  | 'auth.llm-credential-set'
+  | 'auth.llm-credential-clear'
 
 export interface AuditInput {
   /** 'user' | agentId */
   actor: string
   action: AuditAction
+  /** M57：操作人（users.id；系统 / Agent 动作为空） */
+  userId?: string
+  /** M57：请求来源 IP（登录 / 用户管理审计用） */
+  ip?: string
   resourceType?: string
   resourceId?: string
   sessionId?: string
@@ -60,6 +88,10 @@ export interface AuditEntry {
   id: number
   ts: string
   actor: string
+  /** M57：操作人（users.id） */
+  userId?: string
+  /** M57：请求来源 IP */
+  ip?: string
   action: string
   resourceType?: string
   resourceId?: string
@@ -81,6 +113,8 @@ interface AuditRow {
   id: number
   ts: string
   actor: string
+  user_id: string | null
+  ip: string | null
   action: string
   resource_type: string | null
   resource_id: string | null
@@ -100,10 +134,12 @@ export class AuditStore {
   record(input: AuditInput): void {
     try {
       this.db.run(
-        `INSERT INTO audit_log (ts, actor, action, resource_type, resource_id, session_id, run_id, ok, detail, error)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO audit_log (ts, actor, user_id, ip, action, resource_type, resource_id, session_id, run_id, ok, detail, error)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         nowIso(),
         input.actor,
+        input.userId ?? null,
+        input.ip ?? null,
         input.action,
         input.resourceType ?? null,
         input.resourceId ?? null,
@@ -163,6 +199,8 @@ function toEntry(row: AuditRow): AuditEntry {
     id: Number(row.id),
     ts: row.ts,
     actor: row.actor,
+    userId: row.user_id ?? undefined,
+    ip: row.ip ?? undefined,
     action: row.action,
     resourceType: row.resource_type ?? undefined,
     resourceId: row.resource_id ?? undefined,

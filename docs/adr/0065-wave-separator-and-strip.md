@@ -18,7 +18,7 @@
 1. **分隔行 = 普通虚拟行**：`deriveRows`（`client/src/lib/chat-rows.ts`）三遍算法——骨架分段（同 `runId~turnIndex` 连续 ≥2 条成波）→ 波次起点标记（`segKey` 变化）→ 插入 `wave-sep` 行（key `sep-<segKey>`、锚点 `data-wave-sep=<turnIndex>`）；**仅当波次起点数 ≥2 才显示**；行只依赖结构键——流式 delta 中结构键不变，派生缓存命中；
 2. **分隔行形态：极轻量细线 + 「第 N 波」**（无头像、无交互；成员头像组由波次组头 / 悬浮条承载——避免同一信息三处堆叠与行高抖动）；
 3. **当前波次 = 滚动窗口派生**：`onScroll` 维护 `vp{first,last}` 视口窗口（变化才落 state）；`currentWave` = 首个可见行向后扫描的首个波次；
-4. **悬浮阶段条**（`WaveStrip`）：仅「上滑离开底部且有当前波次」时挂载于消息区顶部（锚点 `data-wave-strip=<turnIndex>`）；显示波次号 + 成员头像流 + 名字；点击 → `focusMessage(memberIds[0])` 跳波起点（复用既有定位 + 闪光反馈）；
+4. **悬浮阶段条**（`WaveStrip`）：仅「上滑离开底部且有当前波次」时挂载于消息区顶部（锚点 `data-wave-strip=<turnIndex>`）；显示波次号 + 成员头像流 + 名字；点击 → `focusMessage(memberIds[0])` 跳波起点（复用既有定位 + 闪光反馈）；续修订（视觉）：顶部偏移 `top-2` → `top-3.5`（8 → 14px）——缓和与上方固定条带的贴近观感（用户实测「太靠着了」）；**续修订（顶部方位条，2026-09-19 · 用户实测红框反馈「重新优化」）**：药丸与消息头部同排交错（药丸「第 1 波 · 谭成」与消息头「13:25 你」并列，视觉上像消息的一部分）→ 顶部渐隐遮罩（`data-wave-scrim`，`h-12`，`from-background via-background/80 to-transparent`）+ 药丸轻量化（`shadow-lg` → `shadow-sm`、`border-border/70`、`text-[11px]`、`py-0.5`）——滚过顶端的内容在边缘自然淡出，药丸呈「边缘读数」而非「漂浮物」；同批补「共 N 波」方位读数（总数 ≥2 才显示，与波次分隔行同门限；`ChatArea.waveTotal` 按 `runId~turnIndex` 去重——同 key 中续段不重复计数）；药丸偏移 `top-3.5` → `top-1`（14 → 4px，贴顶边）——用户二次实测红框「需要上移」：贴边后不再下探到首条消息；形态已由「空中漂浮物」变为「渐隐区内的边缘读数」，v70 的 14px 间距判定被本批覆盖；锚点 / 点击语义 / 订阅口径零改动；
 5. **不用 CSS sticky、不用独立波次面板**。
 
 ## 理由

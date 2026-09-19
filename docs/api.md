@@ -60,9 +60,9 @@
 | POST | `/api/sessions/:id/resume` | 断点继续（以 `interrupted` 快照启动新 Run） | `201 { runId, queue, queued }` |
 | GET | `/api/sessions/:id/tasks` | 任务清单（`write_todos` 落库，跨 Run 继承） | `{ tasks: TaskItem[] }` |
 | GET | `/api/search?q=&limit=&sessionId=` | 跨会话全文检索（FTS5 trigram + LIKE 回退；limit 默认 50、上限 100） | `{ results: [{ sessionId, sessionTitle, messageId, snippet, ... }] }` |
-| POST | `/api/sessions/:id/members` | 添加成员（运行中允许；去重 + 校验角色存在；body `{ agentIds, souls? }`；M46：与调度官 `invite_members` 共享内核，事件条措辞按发起者区分——用户「邀请了」/ 调度官「召集了」） | `201 { session, message }`（message = system 成员事件条） |
-| DELETE | `/api/sessions/:id/members/:agentId` | 移除成员（运行中拒绝：串行 = 当前发言人 / 并行波 = 波内进行中成员；队列中的就地移出并广播 `queue:updated`；至少保留 1 名） | `{ session, message }` |
-| PATCH | `/api/sessions/:id/members/:agentId` | 切换成员灵魂（body `{ soul: string \| null }`；`null` = 恢复默认；校验灵魂归属，重复设置 `400`） | `{ session, message }` |
+| POST | `/api/sessions/:id/members` | 添加成员（运行中允许；去重 + 校验角色存在；body `{ agentIds, souls? }`；M77：`agentIds` 可为成员键（分身 = `agentId~soulId`）；M46：与调度官 `invite_members` 共享内核，事件条措辞按发起者区分——用户「邀请了」/ 调度官「召集了」） | `201 { session, message }` （message = system 成员事件条） |
+| DELETE | `/api/sessions/:id/members/:memberKey` | 移除成员实例（M77：按成员键；运行中拒绝：串行 = 当前发言人 / 并行波 = 波内进行中成员；队列中的就地移出并广播 `queue:updated`；至少保留 1 名） | `{ session, message }` |
+| PATCH | `/api/sessions/:id/members/:memberKey` | 切换成员灵魂（body `{ soul: string \| null }`；经典实例：`null` = 恢复默认；分身实例：**键替换**（`luna~zen` → `luna~scholar`，运行中同步队列/便条），`null` → `400`；重复设置 / 同角其他实例已占用该灵魂 → `400`） | `{ session, message }` |
 
 **POST /api/sessions 请求体**：
 
@@ -70,8 +70,8 @@
 { "participantIds": ["pm", "architect"], "souls": { "architect": "wild" }, "title": "可选标题", "projectId": "可选项目" }
 ```
 
-- `participantIds` 去重；未知角色 `400`（M46：可省略或空数组 `[]` → 服务端填充全局唯一 `dispatch: true` 调度官，资产缺失 `400`）；指定 `projectId` 时先准备项目工作区（worktree 创建失败会回滚会话）；
-- `souls` 可选：创建时即指定成员灵魂（键必须 ∈ participantIds、值必须为该角色可用 soul，否则 `400`）；落库为 `Session.memberSouls`（`Record<agentId, soulId>`），未指定成员走角色默认灵魂。
+- `participantIds` 去重（M77：条目为**成员键** —— 经典 = `agentId`（存量兼容）、分身 = `agentId~soulId`；同角有效灵魂去重、无 souls 不可分身、同角 ≤ 4 实例，违者 `400`）；未知角色 `400`（M46：可省略或空数组 `[]` → 服务端填充全局唯一 `dispatch: true` 调度官，资产缺失 `400`）；指定 `projectId` 时先准备项目工作区（worktree 创建失败会回滚会话）；
+- `souls` 可选：创建时即指定经典成员的灵魂覆盖（键必须 ∈ 经典成员键、值必须为该角色可用 soul，否则 `400`；**分身键不得出现在 souls**——分身灵魂内嵌在成员键中）；落库为 `Session.memberSouls`（`Record<memberKey, soulId>`），未指定成员走角色默认灵魂。
 - **M16 成员事件语义（ADR 30）**：添加 / 移出 / 换灵魂三写操作均落一条 `role:'system'` 成员事件消息（`turnIndex: -1`，不进 LLM 窗口）并广播 `notify:members-changed`（payload = `{ session, message }`）；运行中加入的成员从下一回合 roster 即时生效。
 
 ### 3.1 计划与评审（M24）
@@ -187,7 +187,7 @@
 | GET | `/api/settings` | 当前生效的运行期设置 | `{ settings, fields }`（fields = 可写字段名列表） |
 | PUT | `/api/settings` | 部分更新 → 写入 `data/settings.json` → 就地更新 AppConfig（无需重启） | `{ settings, applied: true }` |
 
-**可写字段**（`RuntimeSettingsSchema`）：`llmModel`、`summaryModel`、`judgeModel`、`temperature`、`maxTurnsPerRun`、`contextBudgetTokens`、`keepRecentTurns`、`toolResultMaxTokens`、`toolDetailKeep`、`toolTimeoutMs`、`handoffMode`、`approvalMode`、`approvalTimeoutMs`、`allowRunCommand`、`allowSensitive`、`notifyPollMs`、`embeddingConnectionId`、`memoryRecallEnabled`、`memoryRecallTopK`、`memoryRecallMinScore`、`memoryRecallBudgetTokens`、`memoryDigestMode`（末六项为 M25 向量记忆，见 §5.1）。未知字段（strict）`400`。
+**可写字段**（`RuntimeSettingsSchema`）：`llmModel`、`summaryModel`、`judgeModel`、`temperature`、`temperatureOverride`、`maxTurnsPerRun`、`contextBudgetTokens`、`keepRecentTurns`、`toolResultMaxTokens`、`toolDetailKeep`、`toolTimeoutMs`、`handoffMode`、`approvalMode`、`approvalTimeoutMs`、`allowRunCommand`、`allowSensitive`、`notifyPollMs`、`embeddingConnectionId`、`memoryRecallEnabled`、`memoryRecallTopK`、`memoryRecallMinScore`、`memoryRecallBudgetTokens`、`memoryDigestMode`（末六项为 M25 向量记忆，见 §5.1）。未知字段（strict）`400`。`temperatureOverride = true` 时忽略角色 front-matter 的 `temperature`，全部角色使用 `temperature`。
 
 ## 9. 指标与反馈（M9）
 
@@ -195,6 +195,7 @@
 | --- | --- | --- | --- |
 | GET | `/api/metrics/tools?sinceMs=` | 工具维度指标（次数 / 失败率 / 平均耗时） | `{ tools: [...] }` |
 | GET | `/api/metrics/summary?sinceMs=` | 总览指标（回合数 / token / 费用 / 压缩次数 / 平均回合耗时） | `{ summary, byKind, tools, feedback }` |
+| GET | `/api/metrics/scheduling?sinceMs=` | M61-D6 调度健康聚合（路由 / 降级 / 波次 / 并行 / 循环抑制 / 停滞抑制 / 写冲突 / 接单） | `{ scheduling: SchedulingStats }` |
 | POST | `/api/feedback` | 消息反馈（👍/👎 + 原因） | `201 { item }` |
 | GET | `/api/feedback?messageId=` 或 `?sinceMs=` | 反馈查询 | `{ items }` |
 | GET | `/api/feedback/export?sinceMs=` | 导出为评测候选集 | `{ items, exportedAt }` |
@@ -218,15 +219,16 @@
 | 方法 | 路径 | 说明 | 关键返回 |
 | --- | --- | --- | --- |
 | GET | `/api/connections/probe?kind=` | 驱动可用性探测（表单预检；kind ∈ postgres / mysql / sqlite） | `{ ok, detail? }` |
+| GET | `/api/connections/ssh-preset` | SSH「本地」预置探测（admin；本机用户名 / SSH Agent / 默认私钥 / 22 端口可达；新建 SSH 表单一键填入） | `{ preset: { name, host, port, username, authMethod, privateKeyPath?, agentAvailable, sshdReachable } }` |
 | GET | `/api/connections` | 连接列表 | `{ connections }`（含 kind / config / `secretSet` / status） |
 | GET | `/api/connections/:id` | 连接详情 | `{ connection }` |
-| POST | `/api/connections` | 新建（body `{ name, kind, config?, secret?, enabled? }`；kind ∈ postgres / mysql / sqlite / ssh / chrome / embedding / media（M31）） | `{ connection }` |
+| POST | `/api/connections` | 新建（body `{ name, kind, config?, secret?, enabled? }`；kind ∈ postgres / mysql / sqlite / ssh / chrome / embedding / media（M31）/ llm（多 Provider，仅 admin）） | `{ connection }` |
 | PUT | `/api/connections/:id` | 更新（部分字段；config / secret 变化使数据库与 SSH 缓存句柄失效重建） | `{ connection }` |
 | DELETE | `/api/connections/:id` | 删除（先失效数据库 / SSH 句柄） | `{ ok: true }` |
-| POST | `/api/connections/:id/test` | 测试连接（按 kind：db 探测 / SSH 登录验证 / CDP 端点与本机浏览器发现 / 嵌入端点（M25：回报模型与维度，供表单回填）/ 媒体连接（M31：适配器连通探测））；结果回写连接状态 | `{ result: { ok, latencyMs?, detail?, error? }, connection }` |
+| POST | `/api/connections/:id/test` | 测试连接（按 kind：db 探测 / SSH 登录验证 / CDP 端点与本机浏览器发现 / 嵌入端点（M25：回报模型与维度，供表单回填）/ 媒体连接（M31：适配器连通探测）/ 模型服务（llm：`GET {baseUrl}/models` 探活并回报模型样例））；结果回写连接状态 | `{ result: { ok, latencyMs?, detail?, error? }, connection }` |
 | GET | `/api/audit?sessionId=&action=&since=&limit=` | 审计查询（CRUD / test / bind / 工具执行全量留痕；limit 默认 200） | `{ entries }` |
 
-**连接 config 约定**：`postgres / mysql / sqlite`（host / port / database / user / file + `allowWrites`）；`ssh`（host / port / username / authMethod `password|key|agent` / privateKeyPath / `allowExec`）；`chrome`（mode managed | local | remote / endpoint / executablePath）；`embedding`（M25：baseUrl / model / dim（0 = 首次调用自动探测）/ batchSize / timeoutMs）；`media`（M31：provider `comfyui | sdwebui | openai | template` / baseUrl / models / defaultModel / capabilities / workflows?（ComfyUI 模板）/ template?（三段式异步任务）/ timeoutMs）。**secret**：db `password`；ssh `password` / `privateKey` / `passphrase`；embedding `apiKey`；media `apiKey?`（明文永不回传）。
+**连接 config 约定**：`postgres / mysql / sqlite`（host / port / database / user / file + `allowWrites`）；`ssh`（host / port / username / authMethod `password|key|agent` / privateKeyPath / `allowExec`）；`chrome`（mode managed | local | remote / endpoint / executablePath）；`embedding`（M25：baseUrl / model / dim（0 = 首次调用自动探测）/ batchSize / timeoutMs）；`media`（M31：provider `comfyui | sdwebui | openai | template` / baseUrl / models / defaultModel / capabilities / workflows?（ComfyUI 模板）/ template?（三段式异步任务）/ timeoutMs）；`llm`（多 Provider：baseUrl（必填，http(s)）/ models?（模型清单，供裸名引用与编辑器候选）；**名称不得含 `/`（名称即模型名前缀，Agent 以「名称/模型名」引用）**）。**secret**：db `password`；ssh `password` / `privateKey` / `passphrase`；embedding `apiKey`；media `apiKey?`；llm `apiKey`（本地免 Key 端点可留空；明文永不回传）。
 
 ### 11.2 会话绑定
 
@@ -236,7 +238,7 @@
 | POST | `/api/sessions/:id/connections` | 绑定（body `{ connectionId }`） | `{ bindings }` |
 | DELETE | `/api/sessions/:id/connections/:connectionId` | 解绑 | `{ bindings }` |
 
-Agent 工具（db_* / ssh_exec / browser_*）均 `requireBinding`：未绑定直接拒绝并提示可用清单。`embedding` 连接全局共享、不参与会话绑定（绑定接口对其返回 `400`），在「设置 → 向量记忆」中选择启用；`media` 连接同纪律（M56）：全局共享、不参与会话绑定（绑定接口对其返回 `400`），在「设置 → 媒体生成」中配置启用。
+Agent 工具（db_* / ssh_exec / browser_*）均 `requireBinding`：未绑定直接拒绝并提示可用清单。`embedding` 连接全局共享、不参与会话绑定（绑定接口对其返回 `400`），在「设置 → 向量记忆」中选择启用；`media` 连接同纪律（M56）：全局共享、不参与会话绑定（绑定接口对其返回 `400`），在「设置 → 媒体生成」中配置启用；`llm`（多 Provider，ADR 0181）：全局共享、不参与会话绑定（绑定接口返回 `400`），在「设置 → 模型与生成 → 模型服务」配置——Agent 按 front-matter `model` 引用：推荐「服务名/模型名」（如 `deepseek/deepseek-flash`，前缀 = 连接名，命中后端点收到去前缀裸名），或写清单裸名（同名以创建序先者为准；含 `/` 的模型名直接写入清单按全串引用）；未命中回退系统默认。
 
 ### 11.3 数据库工作台（M23）
 
@@ -504,6 +506,125 @@ M28 扩展（§13.5 / §13.6）：`mcp.json` 文件直配（生态标准 `mcpSer
 
 Agent 侧对应四工具 `canvas_read` / `canvas_write` / `media_generate` / `media_video`（均 `tier='deferred'`，语义见 design.md §49.6）；画布主区 Tab 与指令条（M36）见 design.md §49 / §51。
 
+## 17. 认证与账号（M57）
+
+多用户基座（P1）：账号 / 登录 / 会话令牌 / API Key / 个人偏好；决策见 [ADR 0134](adr/0134-multi-user-foundation.md)。
+
+| 方法 | 路径 | 说明 | 关键返回 |
+| --- | --- | --- | --- |
+| GET | `/api/auth/status` | 启动路由决策（公开） | `{ needsSetup, authRequired, multiUser }` |
+| POST | `/api/auth/setup` | 首启创建首个管理员（仅无账号时可用；自动登录 + 回填存量归属） | `201 { user, mustChangePassword }` + `sid` cookie |
+| POST | `/api/auth/login` | 登录（IP 限流 + 账号失败锁定；统一失败文案） | `{ user, mustChangePassword }` + `sid` cookie；锁定 `429` |
+| POST | `/api/auth/logout` | 登出（撤销当前令牌，幂等） | `{ ok: true }`（清 cookie） |
+| GET | `/api/auth/me` | 当前用户（客户端权限显隐依据；单用户兼容模式返回合成管理员） | `{ user, isAdmin, needsSetup, authRequired, multiUser }` |
+| POST | `/api/auth/password` | 自助改密（校验原密码；吊销其它会话，当前会话保留） | `{ ok: true }` |
+| GET/PUT | `/api/auth/preferences` | 个人偏好（`user_prefs`；与系统级 settings.json 分离） | `{ preferences }` |
+| GET | `/api/users` | 账号清单（admin） | `{ users: UserInfo[] }` |
+| POST | `/api/users` | 创建账号（admin；邀请制，未给密码则生成且仅返回一次） | `201 { user, initialPassword? }` |
+| PATCH | `/api/users/:id` | 显示名 / 角色 / 状态（admin；禁用即时吊销全部会话） | `{ user }` |
+| POST | `/api/users/:id/password` | 重置密码（admin；强制首登改密 + 吊销会话） | `{ user, initialPassword }` |
+| DELETE | `/api/users/:id` | 删除账号（admin；不能删除自己 / 最后一个管理员） | `{ ok: true }` |
+| GET/POST | `/api/users/:id/api-keys` | API Key 管理（admin 或本人；明文仅创建时返回一次） | `{ keys }` / `201 { key, raw }` |
+| DELETE | `/api/users/:id/api-keys/:keyId` | 撤销 API Key | `{ ok: true }` |
+
+**鉴权通道**：浏览器 `sid` HttpOnly cookie（登录 / setup 下发；`AUTH_COOKIE_SECURE=true` 时加 Secure）；CLI `Authorization: Bearer mk_*`（API Key）；legacy `AUTH_TOKEN`（Bearer / `auth_token` cookie / `/?token=`）映射最早管理员，兼容期保留。
+
+**首登强制改密**：`mustChangePassword=true` 的账号在改密前仅可访问 `/api/health`、 `/api/auth/me`、`/api/auth/password`、`/api/auth/logout`、`/api/auth/preferences`，其余 `/api` 一律 `403`（防初始密码长期有效）。
+
+**隔离语义（P1）**：登录态下所有 `/api/sessions*`、`/api/search`、`/api/runs/*`、`/api/notifications`、会话子资源（消息 / 交付件 / 画布 / 媒体 / 日程 / 绑定 / 浏览器）、`/api/finance/watchlist`、`/api/memories*` 均按属主过滤；跨用户访问一律 `404`。管理面（`/api/connections` 管理端与测试 / 工作台、`/api/mcp/*`、`/api/console/*`、`/api/metrics/*`、`/api/audit`、`PUT /api/settings`、`/api/users`）→ `admin`；成员可在自有会话绑定使用 `member_use=1` 的 system 连接（`GET /api/connections` 返回脱敏可用清单）。单用户兼容模式（尚无账号且未配 `AUTH_TOKEN`）保持旧行为（全部放行）。
+
+## 18. 会话共享协作（M57 P2）
+
+共享角色模型：`owner`（属主，`sessions.owner_id`）→ `editor`（可读写）→ `viewer`（只读，可自助退出）；读取 = owner ∪ 成员，写入 = owner / editor。决策见 [ADR 0142](adr/0142-session-sharing-collaboration.md)。
+
+| 方法 | 路径 | 权限 | 说明 |
+| --- | --- | --- | --- |
+| GET | `/api/sessions/:id/shares` | 任何可见者 | 共享面板：`{ owner, members: SessionShare[] }` |
+| POST | `/api/sessions/:id/shares` | 仅属主 | 邀请（body `{ username, role?: 'editor'\|'viewer' }`）；目标不存在 404 / 已在成员 409 / 邀请自己或属主 400 |
+| PATCH | `/api/sessions/:id/shares/:userId` | 仅属主 | 改角色（`{ role }`） |
+| DELETE | `/api/sessions/:id/shares/:userId` | 仅属主 | 移出共享 |
+| POST | `/api/sessions/:id/leave` | 成员本人 | 自助退出（viewer 亦可；属主 400「不能退出」） |
+
+**行为变化（P2）**：
+
+- `GET /api/sessions` 返回「本人 + 共享给我」，每项附 `role`（`owner` / `editor` / `viewer`）；
+- `GET /api/search` 检索范围同步扩为「本人 + 共享」（跨用户仍不可见）；
+- 会话子路由写操作（消息 / 插话 / 停止 / 审批 / 成员 / 画布 / 上传……）对 `viewer` 一律 `403`（`POST /sessions/:id/leave` 例外）；`DELETE /api/sessions/:id` 与共享管理仅属主；
+- 共享会话（≥2 人类）上下文装配中人类消息改署昵称（`【Alice】…`），独占会话 / 兼容模式沿用 `【用户】`；`GET /api/sessions/:id` 附 `humanNames`（userId → 昵称；客户端消息气泡署名，兼容模式为空）；
+- 变更广播 `notify:share-changed`（payload `{ sessionId, userId, action, role? }`）+ 审计 `session.share-*`；
+- **连接最小权限复核（SSH / 数据库执行侧）**：`ssh_exec` / `db_*` 工具以「本 Run 触发者」复核——成员仅可用 `member_use=1` 的 system 连接（admin / 兼容模式 / 未知触发者不限）；`ssh.exec` / `db.*` 审计携带 `userId`（触发者）；工具只读结果缓存的键含会话与触发者（不跨用户复用）。
+
+## 19. 配额与用量（M57 P3）
+
+按用户配额（并发 / 日 token / 月成本 / 会话数 / 存储）；无配额行 = 全部不限（兼容模式零变化）。决策见 [ADR 0147](adr/0147-user-quota-and-usage.md)。
+
+| 方法 | 路径 | 权限 | 说明 |
+| --- | --- | --- | --- |
+| GET | `/api/usage/me` | 登录用户 | 个人用量汇总 + 生效限额：`{ summary: { todayTokens, monthCostUsd, sessions, storageMb, limits } }`（兼容模式 userId 为空串） |
+| GET | `/api/users/:id/quota` | admin 或本人 | 生效限额（含与 `RUN_MAX_PER_USER` 取小后的并发上限） |
+| PUT | `/api/users/:id/quota` | admin | 设置配额（五字段均可选；`null` = 清除该项回不限；全空自动清理）；审计 `auth.quota-set` |
+| GET | `/api/users/:id/usage` | admin | 逐用户用量汇总（同 `/usage/me` 形状） |
+
+**强制点与文案**：并发超限 → `POST /sessions/:id` 系列返回 400「同时进行的任务数已达上限」；日 token / 月成本超限 → 波次边界收束当前 Run（`run:end reason='quota'` + 系统事件条「用量配额已超限：…」）；会话数超限 → `POST /api/sessions` 403；存储超限 → 附件 / 画布素材上传 403（工作区体积实测 + 本次增量）。
+
+## 20. 个人连接与成员可用开关（M57 P3）
+
+`scope='personal'`（属主私有）与 system 连接的 `memberUse` 开关；决策见 [ADR 0148](adr/0148-personal-connections.md)。
+
+| 行为 | 变化 |
+| --- | --- |
+| `ConnectionDefinition` | 新增 `scope`（system / personal）、`ownerId`、`memberUse`（默认 true） |
+| `POST /api/connections` | 成员放行 → 一律落 personal（scope/owner 服务端定）；成员建 `embedding`/`media` → 403（全局单例） |
+| `GET /api/connections` | 成员 = 可用 system（config 脱敏）+ 本人 personal（config 完整，自管需要） |
+| `GET/PUT/DELETE /api/connections/:id`、`/test`、`/schema`、`/sql`、`/tables/:table/rows`、`/ssh/terminal-token` | 守卫从 adminOnly 改为 **admin 或属主**；成员访问 system / 他人 personal → 404 |
+| `POST /api/sessions/:id/connections`（绑定） | 成员可绑：`member_use=1` 的 system ∪ 本人 personal；其余 403 |
+| `PUT` 配额语义 | 成员改自有 personal 时 `memberUse` 字段被忽略（无意义）；admin 改 system 可关开关后：成员列表隐藏 / 绑定 403 / 工具执行拦截 |
+| 账号删除 | 级联删除其 personal 连接（会话绑定随外键自动清理） |
+
+## 21. 模型直连（BYOK，M57 P3）
+
+用户自带 LLM 凭据（按会话属主解析；无凭据 = 系统默认）；决策见 [ADR 0153](adr/0153-user-byok-llm.md)。
+
+| 方法 | 路径 | 权限 | 说明 |
+| --- | --- | --- | --- |
+| GET | `/api/auth/llm-credentials` | 登录用户 | 状态投影（绝不含密钥）：`{ status: { configured, baseUrl?, model?, updatedAt? } }`；兼容模式 `configured=false` |
+| PUT | `/api/auth/llm-credentials` | 登录用户 | 保存 / 覆盖：`{ apiKey(≥8 必填), baseUrl?(http(s)), model? }`；审计 `auth.llm-credential-set`；兼容模式 400 |
+| DELETE | `/api/auth/llm-credentials` | 登录用户 | 清除回系统默认；审计 `auth.llm-credential-clear`；兼容模式 400 |
+
+**语义**：配置后本人会话的全部模型调用（回合 / 压缩摘要 / 记忆沉淀 / 脑图）走用户凭据；`baseUrl`/`model` 留空分别跟随系统默认；`usage.model` 记录实际生效模型（成本单价准确）；`LLM_MOCK=true` 时 BYOK 不参与（确定性优先）。
+
+## 22. 个人 MCP（M57 P3）
+
+成员的 personal MCP 服务器（属主私有；属主会话内自动授予工具）；决策见 [ADR 0157](adr/0157-user-personal-mcp.md)。
+
+| 方法 | 路径 | 权限 | 说明 |
+| --- | --- | --- | --- |
+| GET | `/api/mcp/servers` | 登录用户 | admin = 全量；成员 = 绑定候选（全部 system ∪ 本人 personal） |
+| GET | `/api/mcp/servers/:id` | ownerOrAdmin | 成员仅限自己的 personal；system / 他人 personal → 404 |
+| POST | `/api/mcp/servers` | 登录用户 | admin = system；**成员一律落 personal**（scope/owner 服务端定）；审计 `mcp.create`（含 scope/ownerId） |
+| PUT / DELETE / POST | `/api/mcp/servers/:id`（含 `/test` `/reconnect` `/refresh` 子路由） | ownerOrAdmin | 成员仅限自己的 personal |
+| GET / POST `/api/mcp/json-config*`、GET `/api/mcp/tools` | 同上 | admin | 管理面（文件权威同步 / 授权矩阵） |
+| POST | `/api/sessions/:id/mcp-servers` | 会话写权限 | 可绑：全部 system（现状）∪ 本人 personal；他人 personal → 404；personal 绑定后自动拉起连接 |
+| GET | `/api/sessions/:id/mcp-servers` | 会话可见 | 绑定清单（防御性过滤：他人 personal 不出现） |
+
+**语义**：personal 服务器仅在其**属主会话**中可用（`session.ownerId === server.ownerId`；非属主会话 / 无属主会话不可见）；执行侧再校验（`ctx.userId` = 会话属主，他人触发拒绝）；属主会话内**自动授予**该会话全部成员（无需管理员编辑 Agent 工具白名单）；账号删除级联清理（先断连再删行，绑定随 FK 解绑）。
+
+## 23. 用户素材库（M68）
+
+per-user 私人素材库（跨会话复用上传 / 收藏的图片 / 视频 / 音频）；独立菜单管理页面（ActivityRail「素材库」，全员可见）。决策见 [ADR 0158](adr/0158-user-material-library.md) · 设计见 [docs/material-library-design.md](material-library-design.md)。
+
+| 方法 | 路径 | 权限 | 说明 |
+| --- | --- | --- | --- |
+| GET | `/api/library/items?query=&kind=&limit=` | 登录用户 | 我的素材列表（元数据，不含内容；新→旧；query 对展示名子串；limit ≤200）→ `{ items: LibraryItem[] }` |
+| POST | `/api/library/uploads` | 登录用户 | raw 二进制上传（≤200MB，`x-file-name` 携原名；图片 / 视频 / 音频白名单；**存储配额闸门** 403）→ `{ item }` |
+| GET | `/api/library/items/:id/content` | 登录用户（owner） | 内容流（sendFile 原生 Range / 206；MIME 白名单；非属主 404） |
+| POST | `/api/library/items/:id/to-canvas` | 登录用户（owner） | **copy-on-use 入仓**：`{ sessionId }` → 拷贝为会话工作区 `library/ref-<ts>-<id><ext>` → `{ path, kind }`（前端 sendArtifact 落节点）；会话不可访问 404 |
+| DELETE | `/api/library/items/:id` | 登录用户（owner） | 删除（行 + 文件双清；非属主 404） |
+| GET | `/api/library/usage` | 登录用户 | 容量：`{ usage: { count, bytes, limitMb? } }`（limitMb 命中用户存储配额时下发） |
+
+**语义**：owner 一律服务端取（登录身份；单用户兼容模式固定 `'local'`）——不信请求体（同 ADR 0148 纪律）；素材种类 `kind = image | video | audio`（扩展名 / MIME 白名单与附件通道 `util/mime.ts` 同口径）；存储落 `workspace/_library/u_<uid>/`（计入存储配额体积与备份面）；账号删除级联清空（行 + 属主目录）；存量会话素材**不自动入库**（按需「存为素材」列 P2）。
+
+
 ## 附录 A：SSE 运行事件速查
 
 | 事件 | 触发 | 关键字段 |
@@ -532,8 +653,9 @@ Agent 侧对应四工具 `canvas_read` / `canvas_write` / `media_generate` / `me
 | 状态码 | 语义 |
 | --- | --- |
 | `400` | 参数校验失败 / 业务前置条件不满足（文案即原因） |
-| `401` | `BIND_ALL=true` 且 token 缺失 / 非法 |
-| `404` | 资源不存在（会话 / 运行 / 消息 / 版本 / 审批） |
+| `401` | 未登录 / 登录已失效（未 setup 的单用户兼容模式下：`BIND_ALL=true` 且 token 缺失 / 非法） |
+| `403` | 角色越权（member 访问 admin 管理面 / 连接不允许成员使用）；非 GET 请求 Origin 不在白名单 |
+| `404` | 资源不存在（会话 / 运行 / 消息 / 版本 / 审批）；**跨用户访问一律 404（不泄漏存在性）** |
 | `413` | 上传或内联内容超限 |
-| `429` | 消息接口触发限流 |
+| `429` | 消息接口触发限流（按用户）；登录失败锁定 / 登录接口限流 |
 | `500` | 服务端异常（统一错误中间件兜底 + 落日志） |

@@ -1,4 +1,4 @@
-# 多 Agent 研发团队
+# Owli Team
 
 本地运行的多角色 AI 协作应用：18 大场景（研发 / 商业战略 / 深度研究 / 投资研究 / 市场增长 / 销售客户 / 财务法务 / 运营行政 / 融资资本 等，覆盖工作与生活）共 73 位角色，在同一会话中自由混搭、共享上下文，通过 `@某角色` 或结构化 `handoff` 工具自主转交、形成接力链，全程流式输出。
 
@@ -35,9 +35,9 @@ npm run dev             # 同起 server(8787) + client(5173)
 | `npm start` | 单端口生产托管（默认 8787，含 API + 前端静态资源） |
 | `npm run test` | 全量测试（server + client vitest） |
 | `npm run typecheck` / `npm run lint` | 类型检查 / ESLint |
-| `npm run eval` | mock 基线评测（18 个 golden 任务 + 回归门禁，非零退出码即回归） |
+| `npm run eval` | mock 基线评测（32 个 golden 任务 + 回归门禁，非零退出码即回归；`--tasks=` 过滤 / `--update-baseline` 刷新基线 / `--judge` 走真实模型） |
 | `npm run e2e` | Playwright E2E（mock 模式，36 条主链路） |
-| `npm run check:agents` / `npm run check:skills` | 校验 Agent 包（目录 / `_group.yaml` / 灵魂 / 协议）与技能文档 front-matter |
+| `npm run check:agents` / `npm run check:skills` | 校验 Agent 包（目录 / `_group.yaml` / 灵魂 / 协议 / 六段骨架 + 正文 ≥1200 字符质量报告）与技能文档（front-matter + 正文 ≥60 行质量报告）；**CI 已启用 strict 门禁**（`QUALITY_STRICT` / `SKILL_STRICT`） |
 | `npm run migrate:agents` | 幂等迁移旧资产：`prompts/*.md` + 头像 → `agents/` 单包目录（`--prune` 清理旧文件） |
 | `npm run migrate:json` | 旧 `data/sessions/*.json` 一次性导入 SQLite |
 | `npm run llm:ping` | 探测真实模型连通性（需 Key） |
@@ -100,7 +100,7 @@ docker compose up -d --build
 ├── client/          React 18 + Vite + Tailwind（仅浅色主题 · 紧凑布局）
 │   └── src/
 │       ├── stores/         agent / session / run / task / ws / ui（byId+order，O(1) 订阅）
-│       └── components/     三栏布局、虚拟消息列表（并行协作组 / system 事件条）、审批卡、Diff 视图、上下文档、AgentPicker、协作图谱（懒加载）、名录页、Trace / 指标抽屉、⌘K
+│       └── components/     三栏布局、虚拟消息列表（并行协作组 / system 事件条）、审批卡、Diff 视图、上下文电池（Composer 底栏）、AgentPicker、协作图谱（懒加载）、名录页、Trace / 指标抽屉、⌘K
 ├── evals/           评测任务（tasks/*.json）+ baseline.json + reports/
 ├── e2e/             Playwright 主链路测试（mock 模式）
 ├── data/            SQLite 库 / settings.json / logs / worktrees（运行时生成）
@@ -112,12 +112,13 @@ docker compose up -d --build
 - **接力与编排**：`@某角色` 或 `handoff(target, reason, expected_output)` 工具转交（`target` 支持多目标 ≤4 = fan-out 并行意图）；同会话永远只有一个活跃 Run，运行中再发消息 = 插话（回合边界注入）；循环检测（波次签名序列 + 3-gram 内容级）自动收尾交还用户。
 - **场景与 Agent 包**：19 大场景（智能协作 / 商业战略 / 研发团队 / 站点可靠性 / 头脑风暴 / 深度研究 / 市场增长 / 销售客户 / 财务法务 / 投资研究 / 商业智能 / 运营行政 / 融资资本 / 健康生活 / 学习成长 / 出行旅行 / 财富管理 / 家庭生活 / 个人管理）；`agents/<场景>/<角色>/` 单目录自包含（AGENT.md 人设 + 可选 souls/ 灵魂变体 + avatar.png 自动发现）；协议分层 = 全局协议 + 场景协议（追加语义）+ 人设 + 灵魂段；新增角色只需建目录并跑 `check:agents`，无需改代码。
 - **灵魂变体**：同一角色可挂多套人格与表达风格（如卢娜的「狂野 / 禅意 / 考据派」），创建会话时可选、运行中可一键切换（落 system 事件条）；无 souls/ 的角色行为与现状完全一致，职责、事实与协议优先级永远高于灵魂。
+- **同角多魂（分身同台）**：同一角色的不同人格可**同时以多个成员实例入编**（如 卢娜·狂野 + 卢娜·禅意 同台）——组队台按「参与性格」勾选入编（首人格走经典成员键、其余为分身键 `agentId~soulId`）；`@名字` 召集该角色全部在场实例、`@名字·灵魂名` 点名单个分身；多实例在场时发布/展示统一为 `名字·灵魂名`（单实例零变化）；分身可随时换装（键替换）或移除。
 - **动态成员**：运行中可邀请 / 移出成员；变更落 `role:'system'` 消息（渲染为成员事件条，不进 LLM 窗口）；加人从下一回合即时生效，当前发言 / 波内进行中的成员拒绝移出。
 - **并行波次**：回合循环升级为波次循环（串行 = 单波特例，默认行为不变）；显式触发（@ ≥2 人 / handoff 多目标 / 场景 `parallel: true`）；波内上下文隔离（统一基于波前历史）+ 波末 fan-in 收敛；`PARALLEL_MAX` 默认 3（=1 关闭），`maxTurnsPerRun` 语义 = 最大波数。
 - **协作图谱**：TeamPanel 第 7 视图（React Flow 懒加载独立 chunk，不占首屏）可视化接力关系与实时状态（发言中 / 排队 / 待你指示）；边由消息 `mentions` 纯前端推导，零后端改动；安静模式 / reduced-motion 降级。
 - **上下文工程**：L0 协议 / L1 记忆 / L1.5 语义召回 / L2 摘要 / L3 半静态 / L4 最近回合 / L5 工具结果分层装配；超预算 × 0.7 触发按「回合组」压缩（结构化摘要 + 增量合并）；压缩事件进 Trace；`remember` 工具 + 记忆面板兜底关键约束。
 - **向量记忆（M25）**：四层关联（会话 / 角色 / 项目 / 全局）的语义记忆；sqlite-vec 双后端（纯 JS 余弦兜底）、嵌入凭据走连接中心 SecretVault（未配置即模块休眠）、混合评分召回注入 L1.5（300ms 超时静默降级）；Run 后可选沉淀候选记忆待审（默认关）。
-- **工具 Harness**：55 内置工具（21 常驻 + 34 延迟加载；文件读写 / glob / grep / apply_patch / web_search 百度检索 / web_fetch / Git 六件套 / 待办 / 记忆 / Skill / 审批 / handoff）；只读并行 + 写类串行、60s 幂等缓存、超时与取消真中断（无遗留副作用）、敏感文件默认拒绝、`run_command` 白名单。
+- **工具 Harness**：55 内置工具（21 常驻 + 34 延迟加载；文件读写 / glob / grep / apply_patch / web_search 联网检索（百度→Bing→搜狗→360 降级链）/ web_fetch / Git 六件套 / 待办 / 记忆 / Skill / 审批 / handoff）；只读并行 + 写类串行、60s 幂等缓存、超时与取消真中断（无遗留副作用）、敏感文件默认拒绝、`run_command` 白名单。
 - **安全与审批**：`APPROVAL_MODE=risky|all|off`，高风险工具（`git_commit` / `run_command` / 覆盖写 / 敏感文件）触发审批卡并挂起 Run，批准 / 拒绝 / 超时（默认 10 分钟）都会回灌模型；服务默认仅监听 `127.0.0.1`。
 - **持久化与恢复**：SQLite（WAL）+ 迁移器，消息 / 运行 / 任务 / 记忆 / 摘要 / usage / 交付件版本 / 工具指标全落库；崩溃重启后未完成 Run 标记 `interrupted`，支持「从断点继续」。
 - **可观测与评测**：`run_events` 全链路 Trace（回合耗时 / token / 工具 / 压缩 / 调度决策）、指标面板、FTS 全文检索、反馈闭环；`npm run eval` 用 mock 断言 + baseline 回归门禁保障 prompt 改动质量。

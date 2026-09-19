@@ -4,12 +4,15 @@
  * - 统一年龄轴（0 → 两盘最晚终限；出生年已知时同轴双标年份 = 出生年 + 年龄）；
  *   泳道一 = 大运（干支 + 年龄区间，当前段 ●，当前大运内标流年点）；
  *   泳道二 = 大限（宫名 + 年龄区间，当前段 ●）；
+ * - M63-F：泳道三 = 行运时点（会话内存在可派生 transit 卡且含扫描时点时——hits → 年龄轴节点；
+ *   虚岁 = 年份 − 出生年 + 1（与卡内流年岁数口径一致）；缺出生年 / 无扫描 → 零渲染不虚构）；
  * - 出生年取自盘内「命造」公历日期；缺失 → 只显年龄（不显年份），绝不虚构；
- * - 交互：点选任一段 → 双泳道重叠段联动高亮 + 只读详情行；只呈现盘内行运数据，不推测应期。
+ * - 交互：点选任一段 → 双泳道重叠段联动高亮 + 只读详情行；点行运◆ → 时点详情（与段选互斥）；
+ *   只呈现盘内行运数据，不推测应期（时点 title 含「参考时点，非事件断言」）。
  */
 import * as React from 'react'
 import { cn } from '../../../../lib/utils'
-import type { BaziModel, PanRowData, ZiweiModel } from './model'
+import type { BaziModel, PanRowData, TransitModel, ZiweiModel } from './model'
 
 interface AlmSeg {
   key: string
@@ -59,13 +62,58 @@ function overlaps(a: { from: number; to: number }, b: { from: number; to: number
   return a.from <= b.to && b.from <= a.to
 }
 
-export function Almanac({ bazi, ziwei }: { bazi: BaziModel; ziwei: ZiweiModel }): React.JSX.Element {
+/** M63-F 行运时点（transit 卡扫描 hits → 年龄轴节点） */
+interface AlmMark {
+  key: string
+  age: number
+  title: string
+}
+
+function transitMarks(t: TransitModel, birth?: number): AlmMark[] {
+  if (!t.scan || birth === undefined) return []
+  const out: AlmMark[] = []
+  t.scan.hits.forEach((h, i) => {
+    const year = Number(h.exact.slice(0, 4))
+    if (!Number.isFinite(year)) return
+    const age = year - birth + 1 // 虚岁口径（与卡内流年岁数一致）
+    const label = `行运${h.transitPlanet}-本命${h.natalPoint} ${h.type}`
+    out.push({ key: `t${i}`, age, title: `${label} · 精确 ${h.exact}（${age} 岁 · 参考时点，非事件断言）` })
+  })
+  return out.sort((a, b) => a.age - b.age)
+}
+
+export function Almanac({
+  bazi,
+  ziwei,
+  transit,
+}: {
+  bazi: BaziModel
+  ziwei: ZiweiModel
+  /** M63-F：行运盘（有扫描时点时出第三泳道） */
+  transit?: TransitModel
+}): React.JSX.Element {
   const birthB = birthYearOf(bazi.detail)
   const birthZ = birthYearOf(ziwei.detail)
   const baseYear = birthB ?? birthZ
   const bs = React.useMemo(() => baziSegs(bazi), [bazi])
   const zs = React.useMemo(() => ziweiSegs(ziwei, birthZ), [ziwei, birthZ])
+  const marks = React.useMemo(() => (transit ? transitMarks(transit, baseYear) : []), [transit, baseYear])
+  /** 同年龄（年）多时点 → 水平错开 22px/序（完全可点；否则同年节点重叠互相遮挡） */
+  const marksLayout = React.useMemo(() => {
+    const groups = new Map<number, AlmMark[]>()
+    for (const m of marks) {
+      const g = groups.get(m.age) ?? []
+      g.push(m)
+      groups.set(m.age, g)
+    }
+    const out: Array<AlmMark & { dx: number }> = []
+    for (const g of groups.values()) {
+      g.forEach((m, i) => out.push({ ...m, dx: (i - (g.length - 1) / 2) * 22 }))
+    }
+    return out
+  }, [marks])
   const [sel, setSel] = React.useState<{ lane: 'bazi' | 'ziwei'; index: number } | null>(null)
+  const [selMark, setSelMark] = React.useState<string | null>(null)
 
   const maxAge = Math.max(...bs.map((s) => s.to), ...zs.map((s) => s.to), 1)
   const pct = (age: number): string => `${(age / maxAge) * 100}%`
@@ -88,7 +136,10 @@ export function Almanac({ bazi, ziwei }: { bazi: BaziModel; ziwei: ZiweiModel })
         aria-pressed={on}
         aria-label={s.title}
         title={s.title}
-        onClick={() => setSel(on ? null : { lane, index: i })}
+        onClick={() => {
+          setSel(on ? null : { lane, index: i })
+          setSelMark(null)
+        }}
       >
         <span className="pn-alm-seg-main">
           {s.main}
@@ -120,9 +171,18 @@ export function Almanac({ bazi, ziwei }: { bazi: BaziModel; ziwei: ZiweiModel })
       : null
 
   const opp = selSeg !== undefined ? (sel?.lane === 'bazi' ? zs : bs).filter((s) => overlaps(s, selSeg)) : []
+  const selMarkObj = selMark ? marks.find((m) => m.key === selMark) : undefined
+  const clampAge = (a: number): number => Math.min(a, maxAge)
+  const detailText = selMarkObj
+    ? selMarkObj.title
+    : selSeg
+      ? `${selSeg.title} ↔ ${opp.length > 0 ? opp.map((s) => s.title).join('、') : '另一泳道无重叠段'}`
+      : marks.length > 0
+        ? '点选任一段：双泳道重叠段联动高亮；点行运 ◆ 看时点详情（参考时点，非事件断言）'
+        : '点选任一段：双泳道重叠段联动高亮'
 
   return (
-    <div className="pn-alm" aria-label="八字 × 紫微 时间轴合参">
+    <div className="pn-alm" aria-label={marks.length > 0 ? '八字 × 紫微 × 行运 时间轴合参' : '八字 × 紫微 时间轴合参'}>
       <div className="pn-alm-cap">时间轴合参（只呈现盘内行运数据，不含推测）</div>
       <div className="pn-alm-axis" aria-hidden="true">
         {ticks.map((a) => (
@@ -142,10 +202,37 @@ export function Almanac({ bazi, ziwei }: { bazi: BaziModel; ziwei: ZiweiModel })
         <div className="pn-alm-lane-cap">紫微 · 大限</div>
         <div className="pn-alm-track">{zs.map((s, i) => segButton('ziwei', i, s))}</div>
       </div>
-      <div className={selSeg ? 'pn-alm-detail' : 'pn-alm-hint'} role="status">
-        {selSeg
-          ? `${selSeg.title} ↔ ${opp.length > 0 ? opp.map((s) => s.title).join('、') : '另一泳道无重叠段'}`
-          : '点选任一段：双泳道重叠段联动高亮'}
+      {marks.length > 0 ? (
+        <div className="pn-alm-lane">
+          <div className="pn-alm-lane-cap">行运 · 时点</div>
+          <div className="pn-alm-track pn-alm-track-node">
+            {marksLayout.map((mk) => {
+              const on = selMark === mk.key
+              return (
+                <button
+                  key={mk.key}
+                  type="button"
+                  className={cn('pn-alm-node', on && 'is-on')}
+                  style={{ left: `calc(${pct(clampAge(mk.age))} + ${mk.dx}px)` }}
+                  aria-pressed={on}
+                  aria-label={mk.title}
+                  title={mk.title}
+                  onClick={() => {
+                    setSelMark(on ? null : mk.key)
+                    setSel(null)
+                  }}
+                >
+                  <span className="pn-alm-node-dot" aria-hidden="true">
+                    ◆
+                  </span>
+                </button>
+              )
+            })}
+          </div>
+        </div>
+      ) : null}
+      <div className={selSeg || selMarkObj ? 'pn-alm-detail' : 'pn-alm-hint'} role="status">
+        {detailText}
       </div>
     </div>
   )

@@ -25,3 +25,4 @@ stage:
     left: [affirmative]
     right: [negative]
     center: [judge, evidence]
+  parts: [round-track, scoreboard, verdicts, cross-fire, claim-tree]

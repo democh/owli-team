@@ -24,7 +24,7 @@ import type { MindGenerateResponse, MindSource, MindTreeNode } from '@multi-agen
 import { mindTreeInserts, parseMindOutline } from '../../lib/mind'
 import { cn } from '../../lib/utils'
 import { useCanvasStore } from '../../stores/canvas-store'
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '../ui/dialog'
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../ui/dialog'
 
 const SOURCES: Array<{ id: MindSource; label: string; desc: string; icon: LucideIcon }> = [
   { id: 'conversation', label: '对话', desc: '从最近聊天提炼结论与待办', icon: MessagesSquare },
@@ -108,9 +108,6 @@ export function MindDialog({ origin, onClose }: MindDialogProps): React.JSX.Elem
             <Waypoints className="size-4 text-primary" aria-hidden />
             脑图工坊
           </DialogTitle>
-          <DialogDescription className="text-[12px] leading-5">
-            把对话 / 计划 / 任务 / 记忆或一个主题，铺成一张可继续编辑的脑图；也可以粘贴 Markdown 大纲直接成图。
-          </DialogDescription>
         </DialogHeader>
 
         <div className="mt-3 grid grid-cols-2 gap-1.5" role="radiogroup" aria-label="脑图来源">

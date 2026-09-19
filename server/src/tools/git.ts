@@ -72,7 +72,11 @@ const gitStatusTool = {
       const branch = branchLine.replace(/^##\s*/, '').split('...')[0] ?? ''
       const changes = lines.filter((l) => !l.startsWith('##'))
       if (changes.length === 0) {
-        return { ok: true, summary: `分支 ${branch || '(detached)'} · 工作区干净`, detail: '没有未提交的变更。' }
+        return {
+          ok: true,
+          summary: `分支 ${branch || '(detached)'} · 工作区干净`,
+          detail: '没有未提交的变更。',
+        }
       }
       const parsed = changes.map((l) => `${l.slice(0, 2).trim() || '?'} ${l.slice(3)}`)
       return {
@@ -97,7 +101,10 @@ const gitDiffTool = {
     properties: {
       path: { type: 'string', description: '仅看该文件（工作区内相对路径，可选）' },
       staged: { type: 'boolean', description: '查看已暂存（git add 后）的改动，默认 false' },
-      range: { type: 'string', description: '比较范围（如 HEAD~1 / main..HEAD / <commit>），默认工作区 vs 索引' },
+      range: {
+        type: 'string',
+        description: '比较范围（如 HEAD~1 / main..HEAD / <commit>），默认工作区 vs 索引',
+      },
     },
   },
   schema: z.object({
@@ -172,7 +179,7 @@ const gitLogTool = {
 const gitBranchTool = {
   name: 'git_branch',
   description:
-    '查看 / 创建 / 切换分支。无参数列出本地分支；create 新建并切换（git switch -c）；checkout 切换到已有分支。',
+    '查看 / 创建 / 切换分支。无参数列出本地分支；create 新建并切换（git switch -c）；checkout 切换到已有分支。切换会改变工作区文件内容，切换前先 git_status 确认无未提交改动（有改动时切换可能失败或带过去）。',
   parameters: {
     type: 'object',
     properties: {
@@ -189,18 +196,35 @@ const gitBranchTool = {
         const name = assertBranchName(args.create)
         const result = await runGit(repo.cwd, ['switch', '-c', name], { env: gitIdentityEnv() })
         if (!result.ok) return { ok: false, summary: gitFailure(result, `创建分支 ${name} 失败`) }
-        return { ok: true, summary: `已创建并切换到分支 ${name}`, detail: result.stdout.trim() || result.stderr.trim() }
+        return {
+          ok: true,
+          summary: `已创建并切换到分支 ${name}`,
+          detail: result.stdout.trim() || result.stderr.trim(),
+        }
       }
       if (args.checkout) {
         const name = assertBranchName(args.checkout)
         const result = await runGit(repo.cwd, ['switch', name])
-        if (!result.ok) return { ok: false, summary: gitFailure(result, `切换分支 ${name} 失败（分支是否存在？）`) }
-        return { ok: true, summary: `已切换到分支 ${name}`, detail: result.stdout.trim() || result.stderr.trim() }
+        if (!result.ok)
+          return { ok: false, summary: gitFailure(result, `切换分支 ${name} 失败（分支是否存在？）`) }
+        return {
+          ok: true,
+          summary: `已切换到分支 ${name}`,
+          detail: result.stdout.trim() || result.stderr.trim(),
+        }
       }
-      const result = await runGit(repo.cwd, ['branch', '--list', '--format=%(refname:short)%(if)%(HEAD)%(then) *%(end)'])
+      const result = await runGit(repo.cwd, [
+        'branch',
+        '--list',
+        '--format=%(refname:short)%(if)%(HEAD)%(then) *%(end)',
+      ])
       if (!result.ok) return { ok: false, summary: gitFailure(result, '列出分支失败') }
       const out = result.stdout.trim()
-      return { ok: true, summary: `本地分支 ${out ? out.split('\n').length : 0} 个（* = 当前）`, detail: out || '（无分支）' }
+      return {
+        ok: true,
+        summary: `本地分支 ${out ? out.split('\n').length : 0} 个（* = 当前）`,
+        detail: out || '（无分支）',
+      }
     } catch (err) {
       if (isGitAbort(err)) throw toolAbortError()
       return failure(err)
@@ -224,7 +248,8 @@ const gitCommitTool = {
       if ('error' in repo) return repo.error
       const status = await runGit(repo.cwd, ['status', '--porcelain'])
       if (!status.ok) return { ok: false, summary: gitFailure(status, 'git status 失败') }
-      if (!status.stdout.trim()) return { ok: true, summary: '无变更可提交', detail: '工作区干净，没有需要提交的改动。' }
+      if (!status.stdout.trim())
+        return { ok: true, summary: '无变更可提交', detail: '工作区干净，没有需要提交的改动。' }
       const add = await runGit(repo.cwd, ['add', '-A'])
       if (!add.ok) return { ok: false, summary: gitFailure(add, 'git add 失败') }
       const commit = await runGit(repo.cwd, ['commit', '-m', args.message], { env: gitIdentityEnv() })
@@ -246,7 +271,7 @@ const gitCommitTool = {
 const gitRestoreTool = {
   name: 'git_restore',
   description:
-    '还原文件到最近提交的状态（丢弃未提交改动）。必须指定 path，避免误伤整个工作区；staged=true 时仅从暂存区撤回。',
+    '还原文件到最近提交的状态（丢弃未提交改动）。必须指定 path，避免误伤整个工作区；staged=true 时仅从暂存区撤回。丢弃工作区改动不可逆，该操作需要用户审批。',
   parameters: {
     type: 'object',
     properties: {

@@ -7,7 +7,7 @@
  */
 import OpenAI from 'openai'
 import type { AppConfig } from '../config.js'
-import type { ChatRequest, LlmChunk, LlmProvider, LlmToolCall } from './provider.js'
+import { LlmStreamInterruptedError, type ChatRequest, type LlmChunk, type LlmProvider, type LlmToolCall } from './provider.js'
 
 /** DeepSeek V4 思考模式扩展字段（openai SDK 类型未覆盖，整体透传进请求体） */
 interface ThinkingParams {
@@ -75,6 +75,8 @@ export class OpenAIProvider implements LlmProvider {
       // M4：流末回传 usage（OpenAI 兼容协议：choices 为空的最后一个 chunk）
       stream_options: { include_usage: true },
       messages,
+      // 输出截断治理：显式下发单次输出上限（0 = 交给服务商默认）；思考模式下 reasoning 与正文共享该上限
+      ...(this.cfg.llmMaxOutputTokens > 0 ? { max_tokens: this.cfg.llmMaxOutputTokens } : {}),
       ...(thinking ? {} : { temperature: req.temperature }),
       ...thinkingParams,
       ...responseFormatParams,
@@ -97,9 +99,19 @@ export class OpenAIProvider implements LlmProvider {
     // 聚合 tool_calls 增量（index -> 分片累积）
     const buffers = new Map<number, { id: string; name: string; args: string }>()
     let usage: { prompt_tokens?: number; completion_tokens?: number } | undefined
+    /** finish_reason=length：达到单次输出上限被截断（流末通知引擎；不污染正文） */
+    let truncated = false
+    /** 协议收尾标记（finish_reason / usage）：正常流必达；全程缺失 = 流被静默截断 */
+    let sawClosure = false
     for await (const chunk of stream) {
       // M4：usage chunk 的 choices 为空数组，单独收集（协议规定在流末）
-      if (chunk.usage) usage = chunk.usage
+      if (chunk.usage) {
+        usage = chunk.usage
+        sawClosure = true
+      }
+      const finishReason = chunk.choices[0]?.finish_reason
+      if (finishReason) sawClosure = true
+      if (finishReason === 'length') truncated = true
       const delta = chunk.choices[0]?.delta as
         | (OpenAI.Chat.Completions.ChatCompletionChunk.Choice.Delta & { reasoning_content?: string })
         | undefined
@@ -119,6 +131,10 @@ export class OpenAIProvider implements LlmProvider {
       }
     }
 
+    // 流结束复核：全程无收尾标记且非主动中止 → 网络 / 网关静默截断（不可当「完整」收尾）；
+    // 主动中止（abort）场景由 resilience 层按父级信号 / 超时相位统一判定，此处不拦截
+    if (!sawClosure && !signal.aborted) throw new LlmStreamInterruptedError()
+
     const calls: LlmToolCall[] = [...buffers.entries()]
       .sort((a, b) => a[0] - b[0])
       .filter(([, b]) => b.name)
@@ -128,6 +144,7 @@ export class OpenAIProvider implements LlmProvider {
         arguments: b.args || '{}',
       }))
     if (calls.length) yield { type: 'tool_calls', calls }
+    if (truncated) yield { type: 'truncated' }
     if (usage) {
       yield {
         type: 'usage',

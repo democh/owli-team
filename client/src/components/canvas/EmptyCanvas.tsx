@@ -1,10 +1,13 @@
 /**
  * M31：画布空态 —— 四模板卡片（创作台 / 脑图工坊 / 分镜台 / 素材墙）+ 快捷操作提示。
  * 卡片 hover 微动效；模板落位后节点入场动画由 .canvas-node-pop 呈现。
+ * M31 修订：模板按媒体能力门控——创作台（studio）需生图、分镜台（storyboard）需生视频，
+ * 未配置即不展示（脑图工坊 / 素材墙不依赖生成，恒显）。
  */
 import * as React from 'react'
 import { Clapperboard, Frame, Images, Lightbulb, Network, Sparkles, StickyNote, Upload, type LucideIcon } from 'lucide-react'
 import { CANVAS_TEMPLATES, type CanvasTemplateId } from '../../lib/canvas-templates'
+import { useMediaCapabilities } from './useMediaCapabilities'
 
 const TEMPLATE_ICON: Record<CanvasTemplateId, LucideIcon> = {
   studio: Sparkles,
@@ -13,7 +16,24 @@ const TEMPLATE_ICON: Record<CanvasTemplateId, LucideIcon> = {
   wall: Images,
 }
 
+/** 模板 → 能力需求（缺省 = 任能力即可；null = 恒显） */
+const TEMPLATE_GATE: Record<CanvasTemplateId, 'image' | 'video' | null> = {
+  studio: 'image',
+  mind: null,
+  storyboard: 'video',
+  wall: null,
+}
+
 export function EmptyCanvas({ onApply }: { onApply(id: CanvasTemplateId): void }): React.JSX.Element {
+  const { canImage, canVideo } = useMediaCapabilities()
+  const templates = React.useMemo(
+    () =>
+      CANVAS_TEMPLATES.filter((t) => {
+        const gate = TEMPLATE_GATE[t.id]
+        return gate === null || (gate === 'image' ? canImage : canVideo)
+      }),
+    [canImage, canVideo],
+  )
   return (
     <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center p-6">
       <div className="pointer-events-auto w-full max-w-lg rounded-2xl border bg-card/95 p-6 shadow-soft backdrop-blur-sm">
@@ -23,13 +43,11 @@ export function EmptyCanvas({ onApply }: { onApply(id: CanvasTemplateId): void }
           </span>
           <div className="min-w-0">
             <div className="text-[13.5px] font-semibold">空白画布</div>
-            <p className="text-[11px] leading-4 text-muted-foreground">
-              从模板开始，或双击空白处随手放一个便签。
-            </p>
+            <p className="text-[11px] leading-4 text-muted-foreground">双击空白处放一个便签。</p>
           </div>
         </div>
         <div className="mt-4 grid grid-cols-2 gap-2">
-          {CANVAS_TEMPLATES.map((t) => {
+          {templates.map((t) => {
             const Icon = TEMPLATE_ICON[t.id]
             return (
               <button

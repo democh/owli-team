@@ -1,5 +1,5 @@
 {
-  "ts": "2026-09-18T17-46-06",
+  "ts": "2026-09-19T09-36-53",
   "mode": "mock",
   "tasks": {
     "full-relay-login": {
@@ -84,6 +84,18 @@
       "ok": true
     },
     "metaphysics": {
+      "ok": true
+    },
+    "routing-finance": {
+      "ok": true
+    },
+    "handoff-receipts": {
+      "ok": true
+    },
+    "scheduling-guards": {
+      "ok": true
+    },
+    "parallel-guard": {
       "ok": true
     }
   }

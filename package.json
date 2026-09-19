@@ -17,6 +17,7 @@
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
     "migrate:json": "npm run migrate:json -w @multi-agent/server --",
+    "migrate:workspace": "npm run migrate:workspace -w @multi-agent/server --",
     "migrate:agents": "npm run migrate:agents -w @multi-agent/server --",
     "check:agents": "npm run check:agents -w @multi-agent/server",
     "check:prompts": "npm run check:agents -w @multi-agent/server",

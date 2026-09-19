@@ -45,6 +45,7 @@ export function TextInput({
   mono,
   ariaLabel,
   disabled,
+  list,
 }: {
   value: string
   onChange: (v: string) => void
@@ -52,6 +53,8 @@ export function TextInput({
   mono?: boolean
   ariaLabel?: string
   disabled?: boolean
+  /** datalist 候选（原生 list 属性；如模型名候选） */
+  list?: string
 }): React.JSX.Element {
   return (
     <input
@@ -59,6 +62,7 @@ export function TextInput({
       aria-label={ariaLabel}
       disabled={disabled}
       placeholder={placeholder}
+      list={list}
       onChange={(e) => onChange(e.target.value)}
       className={cn(
         'h-8 w-full rounded-md border border-input bg-card px-2.5 text-[12.5px] shadow-sm transition-colors placeholder:text-muted-foreground/70 focus-visible:border-primary/40 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-primary/15 disabled:cursor-not-allowed disabled:opacity-60',

@@ -8,12 +8,18 @@ import { createSession, expectYourTurn, openApp, sendMessage } from './helpers'
 test('M12 微交互：帮助面板 / 进度链 / 迷你档案 / 回底浮标', async ({ page }) => {
   await openApp(page)
 
-  // 1) ? 打开快捷键帮助，Esc 关闭
+  // 1) ? 打开快捷键帮助（分组 Tab：默认「通用」；「指派语义」随「输入框」页签），Esc 关闭
   await page.keyboard.press('?')
-  await expect(page.getByText('键盘快捷键')).toBeVisible()
-  await expect(page.getByText('指派语义')).toBeVisible()
+  const help = page.getByRole('dialog')
+  await expect(help.getByText('键盘快捷键')).toBeVisible()
+  await expect(help.getByRole('tab', { name: '通用' })).toBeVisible()
+  await expect(help.getByText('命令面板')).toBeVisible()
+  await help.getByRole('tab', { name: '输入框' }).click()
+  await expect(help.getByText('指派语义')).toBeVisible()
+  await help.getByRole('tab', { name: '画布' }).click()
+  await expect(help.getByText('手型工具 / 选择工具')).toBeVisible()
   await page.keyboard.press('Escape')
-  await expect(page.getByText('键盘快捷键')).toBeHidden()
+  await expect(help.getByText('键盘快捷键')).toBeHidden()
 
   // 2) 完整接力收束（mock 剧本）
   await createSession(page, { title: `E2E-M12-${Date.now()}` })
@@ -30,7 +36,10 @@ test('M12 微交互：帮助面板 / 进度链 / 迷你档案 / 回底浮标', a
 
   // 4) 迷你档案：单击成员卡弹出，最近出手 / 常用交接 / 能力 可见
   await page.getByRole('tab', { name: '成员' }).click()
-  await page.getByTitle(/查看 .* 的档案/).first().click()
+  await page
+    .getByTitle(/查看 .* 的档案/)
+    .first()
+    .click()
   const dossier = page.getByRole('dialog')
   await expect(dossier.getByText('最近出手')).toBeVisible()
   await expect(dossier.getByText(/常用交接/)).toBeVisible()

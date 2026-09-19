@@ -29,6 +29,8 @@ interface WatchRow {
   name: string
   note: string | null
   sort: number
+  /** M57：自选按用户（users.id；'' = 单用户兼容模式） */
+  user_id: string
   created_at: string
 }
 
@@ -54,53 +56,63 @@ export interface WatchAddInput {
 export class FinanceStore {
   constructor(private readonly db: AppDb) {}
 
-  /** 全部自选（sort 升序；新添加排最后） */
-  list(): WatchItem[] {
+  /** 某用户全部自选（sort 升序；新添加排最后；M57：'' = 单用户兼容模式） */
+  list(userId = ''): WatchItem[] {
     return this.db
-      .all<WatchRow>('SELECT * FROM finance_watchlist ORDER BY sort ASC, created_at ASC')
+      .all<WatchRow>('SELECT * FROM finance_watchlist WHERE user_id = ? ORDER BY sort ASC, created_at ASC', userId)
       .map(rowToItem)
   }
 
-  get(symbol: string): WatchItem | undefined {
-    const row = this.db.get<WatchRow>('SELECT * FROM finance_watchlist WHERE symbol = ?', symbol)
+  get(symbol: string, userId = ''): WatchItem | undefined {
+    const row = this.db.get<WatchRow>(
+      'SELECT * FROM finance_watchlist WHERE symbol = ? AND user_id = ?',
+      symbol,
+      userId,
+    )
     return row ? rowToItem(row) : undefined
   }
 
-  count(): number {
-    const row = this.db.get<{ n: number }>('SELECT COUNT(*) AS n FROM finance_watchlist')
+  count(userId = ''): number {
+    const row = this.db.get<{ n: number }>('SELECT COUNT(*) AS n FROM finance_watchlist WHERE user_id = ?', userId)
     return Number(row?.n ?? 0)
   }
 
-  /** 添加（symbol 唯一：已存在则更新名称 / 类型 / 备注；created 标记是否新增行） */
-  add(input: WatchAddInput): { item: WatchItem; created: boolean } {
-    const existing = this.get(input.symbol)
+  /** 添加（同用户 symbol 唯一：已存在则更新名称 / 类型 / 备注；created 标记是否新增行） */
+  add(input: WatchAddInput & { userId?: string }): { item: WatchItem; created: boolean } {
+    const userId = input.userId ?? ''
+    const existing = this.get(input.symbol, userId)
     if (existing) {
       this.db.run(
-        'UPDATE finance_watchlist SET name = ?, type = ?, note = ? WHERE symbol = ?',
+        'UPDATE finance_watchlist SET name = ?, type = ?, note = ? WHERE symbol = ? AND user_id = ?',
         input.name,
         input.type,
         input.note ?? existing.note ?? null,
         input.symbol,
+        userId,
       )
-      return { item: this.get(input.symbol)!, created: false }
+      return { item: this.get(input.symbol, userId)!, created: false }
     }
     const id = newId('fwl')
-    const maxRow = this.db.get<{ m: number | null }>('SELECT MAX(sort) AS m FROM finance_watchlist')
+    const maxRow = this.db.get<{ m: number | null }>(
+      'SELECT MAX(sort) AS m FROM finance_watchlist WHERE user_id = ?',
+      userId,
+    )
     const sort = Number(maxRow?.m ?? 0) + 1
     this.db.run(
-      'INSERT INTO finance_watchlist (id, symbol, type, name, note, sort, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      'INSERT INTO finance_watchlist (id, symbol, type, name, note, sort, user_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
       id,
       input.symbol,
       input.type,
       input.name,
       input.note ?? null,
       sort,
+      userId,
       nowIso(),
     )
-    return { item: this.get(input.symbol)!, created: true }
+    return { item: this.get(input.symbol, userId)!, created: true }
   }
 
-  remove(symbol: string): boolean {
-    return this.db.run('DELETE FROM finance_watchlist WHERE symbol = ?', symbol).changes > 0
+  remove(symbol: string, userId = ''): boolean {
+    return this.db.run('DELETE FROM finance_watchlist WHERE symbol = ? AND user_id = ?', symbol, userId).changes > 0
   }
 }

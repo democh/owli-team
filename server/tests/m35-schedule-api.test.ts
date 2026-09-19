@@ -65,6 +65,8 @@ async function makeApi(overrides: Record<string, unknown> = {}) {
     schedules: service,
     engine: env.engine,
     notify: env.notify,
+    // M57：路由守卫依赖（测试无账号 → 单用户兼容模式）
+    access: env.access,
   } as unknown as ApiDeps
   const url = await listenRouter(createSchedulesRouter(deps))
   return {

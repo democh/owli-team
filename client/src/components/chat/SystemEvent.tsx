@@ -68,7 +68,7 @@ export function HandoffBar({ message }: { message: ChatMessage }): React.JSX.Ele
     return (
       <div className="mt-2 flex justify-center">
         <div className={shellCls} title={`${from?.name ?? message.agentId} 交还给用户`}>
-          <AgentAvatar agent={from} size={22} animated={false} className="rounded-full ring-1 ring-primary/15" />
+          <AgentAvatar agent={from} size={22} animated={false} className="ring-1 ring-primary/15" />
           <span className="shrink-0 font-medium">{from?.name ?? message.agentId}</span>
           <ArrowRight className="mx-0.5 size-3 shrink-0 text-muted-foreground/60" />
           <span className="font-medium text-primary">你的回合</span>
@@ -84,7 +84,7 @@ export function HandoffBar({ message }: { message: ChatMessage }): React.JSX.Ele
     return (
       <div className="mt-2 flex justify-center">
         <div className={shellCls} title={`${from?.name ?? message.agentId} 交棒给 ${names.join('、')}`}>
-          <AgentAvatar agent={from} size={22} animated={false} className="rounded-full ring-1 ring-primary/15" />
+          <AgentAvatar agent={from} size={22} animated={false} className="ring-1 ring-primary/15" />
           <span className="shrink-0 font-medium">{from?.name ?? message.agentId}</span>
           <ArrowRight className="mx-0.5 size-3 shrink-0 text-muted-foreground/60" />
           <div className="flex shrink-0 -space-x-1.5">
@@ -99,7 +99,7 @@ export function HandoffBar({ message }: { message: ChatMessage }): React.JSX.Ele
                   className="rounded-full transition-transform hover:z-10 hover:-translate-y-0.5"
                   onClick={() => insertToComposer(`@${name} `)}
                 >
-                  <AgentAvatar agent={target} size={22} animated={false} className="rounded-full ring-2 ring-card" />
+                  <AgentAvatar agent={target} size={22} animated={false} className="ring-2 ring-card" />
                 </button>
               )
             })}
@@ -140,7 +140,7 @@ export function SystemMessage({ message }: { message: ChatMessage }): React.JSX.
         title={message.content}
       >
         {agent && (
-          <AgentAvatar agent={agent} size={18} animated={false} className="shrink-0 rounded-full ring-1 ring-border" />
+          <AgentAvatar agent={agent} size={18} animated={false} className="shrink-0 ring-1 ring-border" />
         )}
         <span className="min-w-0 truncate">{message.content}</span>
         <span className="shrink-0 text-[10.5px] text-muted-foreground/70">{formatClock(message.createdAt)}</span>

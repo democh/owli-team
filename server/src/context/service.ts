@@ -14,11 +14,16 @@ import type { ArtifactStore } from '../store/artifacts.js'
 import type { MemoryStore } from '../store/memory.js'
 import type { PlanStore } from '../store/plans.js'
 import type { PromptLibrary } from '../store/prompts.js'
+import type { SessionMemberStore } from '../store/session-members.js'
 import type { SessionStore } from '../store/sessions.js'
 import type { SkillLibrary } from '../store/skills.js'
 import type { SummaryStore } from '../store/summaries.js'
+import type { UserStore } from '../store/users.js'
 import { buildActivePlansBlock, buildSystemPrompt, buildTurnInstruction, buildWindow, foldWorkspaceListing, VISION_MAX_BYTES } from './assembler.js'
-import type { TurnInstructionExtra } from './assembler.js'
+import type { RosterMember, TurnInstructionExtra } from './assembler.js'
+import { parseDeliverableSpec, type DeliverableTier } from './deliverable-spec.js'
+import { resolveMembers } from '../orchestration/members.js'
+import { createUserLabelResolver } from './user-label.js'
 import type { CompressionResult, Compressor } from './compressor.js'
 import { countTokensCalibrated } from './tokenizer.js'
 import { mimeOfExt } from '../util/mime.js'
@@ -39,6 +44,10 @@ export interface ContextServiceDeps {
   plans?: PlanStore
   /** M25：向量记忆服务（语义召回 L1.5；缺省 = 不召回，既有行为零差异） */
   memories?: MemoryService
+  /** M57 P2：共享成员（共享会话人类消息署昵称；缺省 = 沿用【用户】） */
+  members?: SessionMemberStore
+  /** M57 P2：账号存储（昵称解析；与 members 同时提供才生效） */
+  users?: UserStore
 }
 
 export interface PrepareTurnInput {
@@ -72,6 +81,8 @@ export interface PreparedTurn {
   estimatedTokens: number
   /** M25：本回合语义召回明细（L1.5；未启用 / 无召回时 undefined） */
   recalled?: RecalledMemory[]
+  /** 交付规格声明（用户消息解析；undefined = 未声明，按角色契约默认档） */
+  deliverableSpec?: DeliverableTier
   /** 本回合发生了压缩（引擎据此 emit context:compressed） */
   compression?: {
     untilSeq: number
@@ -88,6 +99,13 @@ export class ContextService {
   private lastRecalls = new Map<string, RecallOutcome>()
 
   constructor(private readonly deps: ContextServiceDeps) {}
+
+  // ---------- M57 P2：共享会话昵称署名 ----------
+
+  /** 共享会话（owner 之外存在 ≥1 共享成员）→ 返回昵称解析器；否则 undefined（行为零差异）。 */
+  private userLabelResolver(sessionId: string): ((message: ChatMessage) => string | undefined) | undefined {
+    return createUserLabelResolver(this.deps)(sessionId)
+  }
 
   async prepareTurn(input: PrepareTurnInput): Promise<PreparedTurn> {
     const { cfg } = this.deps
@@ -238,10 +256,19 @@ export class ContextService {
     if (!agent) throw new Error(`角色 ${input.agentId} 不存在`)
     const session = sessions.getSession(input.sessionId)
     if (!session) throw new Error('会话不存在')
-    const roster = prompts.list().filter((a) => session.participantIds.includes(a.id))
+    // M77：花名册按成员实例投影（分身展示 `名字·灵魂名`，@ 寻址与队列/计划归属同源）
+    const memberInfos = resolveMembers(session, prompts)
+    const roster: RosterMember[] = memberInfos.map((m) => ({
+      key: m.key,
+      agentId: m.agentId,
+      label: m.label,
+      role: m.agent.role,
+    }))
+    const memberLabels: Record<string, string> = {}
+    for (const m of memberInfos) memberLabels[m.key] = m.label
 
-    // 灵魂（§26）：会话覆盖 > 角色默认（souls/default.md）；无灵魂 = 不注入
-    const soul = prompts.soul(agent.id, session.memberSouls?.[agent.id])
+    // 灵魂（§26 · M77）：会话覆盖（经典）> 成员键内嵌（分身）> 角色默认（souls/default.md）；无灵魂 = 不注入
+    const soul = prompts.soul(input.agentId, session.memberSouls?.[input.agentId])
 
     // 预载 Skill（front-matter skills 的正文直接进提示）
     const preloaded: Array<{ name: string; body: string }> = []
@@ -267,6 +294,7 @@ export class ContextService {
       agentBody: prompts.body(agent.id),
       soul: soul ?? undefined,
       roster,
+      selfKey: input.agentId,
       preloadedSkills: preloaded,
       skillsIndex: skills.indexText(),
       workspaceListing: foldWorkspaceListing(this.describeWorkspace(input.sessionId)),
@@ -282,6 +310,14 @@ export class ContextService {
       toolDiscoveryBlock: input.toolDiscoveryBlock,
     })
 
+    // 交付规格（报告专业化）：从用户消息解析档位声明（会话级粘性；未声明 → undefined 不注入）
+    const deliverableSpec = parseDeliverableSpec(
+      sessions
+        .messages(input.sessionId)
+        .filter((m) => m.role === 'user' && m.content.trim())
+        .map((m) => m.content),
+    )
+
     const turnInstruction = buildTurnInstruction(
       agent,
       roster,
@@ -292,6 +328,8 @@ export class ContextService {
         planSteps: input.planSteps,
         reviewTargets: input.reviewTargets,
         handoffs: input.handoffs,
+        selfKey: input.agentId,
+        deliverableSpec,
       },
     )
     const instructionTokens = countTokensCalibrated(turnInstruction)
@@ -331,11 +369,16 @@ export class ContextService {
     const window = buildWindow({
       messages,
       agentId: agent.id,
+      // M77：分身实例自我判定与成员标签（他人消息前缀含 `·灵魂名`）
+      selfKey: input.agentId,
+      memberLabels,
       agents: prompts.list(),
       fromSeq,
       budgetTokens: windowBudget,
       toolDetailKeep: cfg.toolDetailKeep,
       loadImage,
+      // M57 P2：共享会话（owner + ≥1 成员）人类消息署昵称；独占会话 / 兼容模式沿用【用户】
+      userLabel: this.userLabelResolver(input.sessionId),
     })
 
     // 硬截断 / 压缩降级提示（L4 层）
@@ -387,6 +430,7 @@ export class ContextService {
       layers,
       estimatedTokens: systemTokens + noticeTokens + window.tokens + instructionTokens,
       recalled: recall && recall.items.length > 0 ? recall.items : undefined,
+      deliverableSpec,
     }
   }
 
@@ -408,6 +452,8 @@ export class ContextService {
       agentId: input.agentId,
       projectId: session.projectId,
       exclude,
+      // M57：多用户隔离（global 桶按用户切分 + 命中行按用户过滤；单用户兼容模式 session.ownerId 为空 → 行为同旧版）
+      userId: session.ownerId,
     })
     this.rememberRecall(input.sessionId, outcome)
     return outcome

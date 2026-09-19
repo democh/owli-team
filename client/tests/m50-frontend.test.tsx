@@ -8,7 +8,7 @@
  * - 窄屏（matchMedia 命中）：三页签收敛为单面板 + 选来源自动切「编制」页。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { AgentDefinition, AgentGroup, RosterPreset, SoulMeta } from '@multi-agent/shared'
 import { SessionList } from '../src/components/sessions/SessionList'
@@ -174,9 +174,11 @@ describe('建会话组队台 CreateSessionDialog（M50）', () => {
     expect(screen.getByText('已选 1 位')).toBeInTheDocument()
     expect(screen.getByText('已微调')).toBeInTheDocument()
 
-    // 编制行给费利设灵魂覆盖（狂野 → 禅意）
+    // 编制行给费利设灵魂覆盖（狂野 → 禅意）：多选面板先勾禅意、再取消狂野（回到单人格禅意）
     await user.click(screen.getByRole('button', { name: '狂野' }))
-    await user.click(screen.getByRole('button', { name: /^禅意/ }))
+    const soulMenu = screen.getByText('参与性格（可多选）').parentElement as HTMLElement
+    await user.click(within(soulMenu).getByRole('button', { name: /^禅意/ }))
+    await user.click(within(soulMenu).getByRole('button', { name: /^狂野/ }))
     expect(screen.getByRole('button', { name: '禅意' })).toBeInTheDocument()
 
     // 重选同一来源 → 整体替换：souls 清空（恢复默认狂野）、已微调消失

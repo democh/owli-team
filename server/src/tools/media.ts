@@ -12,7 +12,6 @@
  */
 import { z } from 'zod'
 import type { MediaCapability, MediaJob, MediaJobInput } from '@multi-agent/shared'
-import { autoPosition } from '../canvas/store.js'
 import type { AgentTool, ToolResult, ToolRuntime } from './registry.js'
 
 const IMAGE_CAPS = ['text2image', 'image2image'] as const
@@ -24,12 +23,6 @@ const CAPABILITY_LABEL: Record<MediaCapability, string> = {
   text2video: '文生视频',
   image2video: '图生视频',
   firstlast2video: '首尾帧视频',
-}
-
-/** 会话画布上的产物落位目标（place_on_canvas 缺省开启；服务端未装配画布时放弃放置） */
-function autoCanvasTarget(ctx: ToolRuntime): { x: number; y: number } | undefined {
-  if (!ctx.canvas) return undefined
-  return autoPosition(ctx.canvas.get(ctx.sessionId))
 }
 
 interface MediaToolArgs {
@@ -72,7 +65,8 @@ function runMediaTool(args: MediaToolArgs, ctx: ToolRuntime): ToolResult {
     negative: args.negative,
     inputs,
     params,
-    canvasTarget: args.place_on_canvas ? autoCanvasTarget(ctx) : undefined,
+    // M31 修订：占位落位由服务端接管（创建即落；缺省自动排布，天然错开并发任务）
+    placeOnCanvas: args.place_on_canvas,
   })
   if ('error' in result) {
     return {
@@ -83,14 +77,16 @@ function runMediaTool(args: MediaToolArgs, ctx: ToolRuntime): ToolResult {
     }
   }
   const job = result.job
-  const placed = Boolean(job.canvasTarget)
+  const placed = job.placedCanvas === true
   return {
     ok: true,
     summary: `已创建${CAPABILITY_LABEL[job.capability]}任务 ${job.id}（连接：${job.connectionName ?? job.connectionId}${job.model ? `，模型：${job.model}` : ''}）`,
     detail: [
-      `任务已进入队列。媒体生成为异步长任务（数分钟级）：完成后产物落到交付件${placed ? '并自动出现在画布' : ''}；用户可在画布生成面板查看进度 / 取消 / 再生成。`,
+      `任务已进入队列。媒体生成为异步长任务（数分钟级）：完成后产物落到交付件${placed ? '并在画布上原地完成（占位节点已就位）' : ''}；用户可在画布生成面板查看进度 / 取消 / 再生成。`,
       '本回合无需等待：可继续其它工作（如用 canvas_write 预摆提示词 / 便签节点，产物落位后再连线）。',
     ].join('\n'),
+    // M31 修订：占位节点 id 随 meta 持久化（消息侧「在画布查看」定位到生成中的节点）
+    meta: job.canvasNodeId ? { canvasNodes: [job.canvasNodeId] } : undefined,
   }
 }
 

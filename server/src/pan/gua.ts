@@ -180,6 +180,80 @@ function liuShenStart(dayGan: string): number {
 }
 
 // ---------------------------------------------------------------------------
+// M63-A：伏神 / 月建日辰关系 / 回头生克
+// ---------------------------------------------------------------------------
+
+/** 地支相冲对 */
+const ZHI_CHONG_PAIRS: Array<[string, string]> = [
+  ['子', '午'], ['丑', '未'], ['寅', '申'], ['卯', '酉'], ['辰', '戌'], ['巳', '亥'],
+]
+
+const isChong = (a: string, b: string): boolean =>
+  ZHI_CHONG_PAIRS.some(([x, y]) => (x === a && y === b) || (x === b && y === a))
+
+const ALL_QIN = ['父母', '兄弟', '子孙', '妻财', '官鬼']
+
+/**
+ * 伏神（附录 A.5）：本宫首卦（八宫各一）的六亲配置；本卦所缺之亲伏于首卦该亲首个爻位。
+ * 返回 Map<爻位 1-6, 伏神>。
+ */
+function computeFuShen(bits: string, hex: GuaHexagram): Map<number, { liuQin: string; ganZhi: string; wuxing: string }> {
+  const map = new Map<number, { liuQin: string; ganZhi: string; wuxing: string }>()
+  const inner = NAJIA_INNER[bits.slice(0, 3)]!
+  const outer = NAJIA_OUTER[bits.slice(3)]!
+  const present = new Set<string>()
+  for (let i = 0; i < 6; i++) {
+    const gz = i < 3 ? inner[i]! : outer[i - 3]!
+    present.add(liuQinOf(hex.palaceElement, ZHI_WUXING[gz.charAt(1)] ?? 'earth'))
+  }
+  const seedBits = PALACE_ORDER.find((p) => p.name === hex.palace)?.bits
+  if (!seedBits) return map
+  const sInner = NAJIA_INNER[seedBits.slice(0, 3)]!
+  const sOuter = NAJIA_OUTER[seedBits.slice(3)]!
+  for (const qin of ALL_QIN) {
+    if (present.has(qin)) continue
+    for (let i = 0; i < 6; i++) {
+      const gz = i < 3 ? sInner[i]! : sOuter[i - 3]!
+      const el = ZHI_WUXING[gz.charAt(1)] ?? 'earth'
+      if (liuQinOf(hex.palaceElement, el) === qin) {
+        map.set(i + 1, { liuQin: qin, ganZhi: gz, wuxing: WUXING_CN[el] })
+        break
+      }
+    }
+  }
+  return map
+}
+
+/**
+ * 月建 / 日辰关系（附录 A.5）：
+ * - 月破 = 爻支与月建相冲；
+ * - 静爻与日辰相冲：旺相 → 暗动、衰囚 → 日破；
+ * - 旺相休囚死简档（以月建五行为令：当令旺 / 令生相 / 生令休 / 克令囚 / 令克死）。
+ */
+function dayRelationTags(zhi: string, isDong: boolean, monthZhi: string, dayZhi: string): string[] {
+  const tags: string[] = []
+  const el = ZHI_WUXING[zhi] ?? 'earth'
+  const monthEl = ZHI_WUXING[monthZhi] ?? 'earth'
+  const strong = el === monthEl || SHENG[monthEl] === el
+  if (isChong(zhi, monthZhi)) tags.push('月破')
+  if (!isDong && isChong(zhi, dayZhi)) tags.push(strong ? '暗动' : '日破')
+  if (el === monthEl) tags.push('旺')
+  else if (SHENG[monthEl] === el) tags.push('相')
+  else if (SHENG[el] === monthEl) tags.push('休')
+  else if (KE[el] === monthEl) tags.push('囚')
+  else tags.push('死')
+  return tags
+}
+
+/** 回头生克（附录 A.5）：变爻对动爻——生我回头生 / 克我回头克 / 我生回头泄 */
+function bianHintOf(own: WuXingKey, bian: WuXingKey): '回头生' | '回头克' | '回头泄' | undefined {
+  if (SHENG[bian] === own) return '回头生'
+  if (KE[bian] === own) return '回头克'
+  if (SHENG[own] === bian) return '回头泄'
+  return undefined
+}
+
+// ---------------------------------------------------------------------------
 // 类型
 // ---------------------------------------------------------------------------
 
@@ -222,6 +296,12 @@ export interface GuaLine {
   /** 动爻变卦后五行（中文） */
   bianWuxing?: string
   bianLiuQin?: string
+  /** 伏神（本宫首卦所缺六亲：六亲 + 干支 + 五行；仅缺失亲所在爻位；M63-A） */
+  fuShen?: { liuQin: string; ganZhi: string; wuxing: string }
+  /** 月建 / 日辰关系标签（月破 / 日破 / 暗动 + 旺相休囚死简档；M63-A） */
+  dayRelations?: string[]
+  /** 回头生克标注（变爻对动爻：回头生 / 回头克 / 回头泄；M63-A） */
+  bianHint?: '回头生' | '回头克' | '回头泄'
 }
 
 /** 卦气：起卦时刻四柱 + 日辰旬空 */
@@ -377,6 +457,7 @@ function buildLines(
   bianBits: string,
   dayGan: string,
   kongSet: Set<string>,
+  extras: { monthZhi: string; dayZhi: string; fuShen: Map<number, { liuQin: string; ganZhi: string; wuxing: string }> },
 ): GuaLine[] {
   const inner = NAJIA_INNER[bits.slice(0, 3)]!
   const outer = NAJIA_OUTER[bits.slice(3)]!
@@ -401,12 +482,18 @@ function buildLines(
       liuShen: LIU_SHEN[(shenStart + i) % 6]!,
       shiYing: hex.shi === i + 1 ? '世' : hex.ying === i + 1 ? '应' : '',
       kongWang: kongSet.has(zhi),
+      dayRelations: dayRelationTags(zhi, dongSet.has(i + 1), extras.monthZhi, extras.dayZhi),
     }
+    const fu = extras.fuShen.get(i + 1)
+    if (fu) line.fuShen = fu
     if (line.dong) {
       const bg = isInner ? bianInner[i]! : bianOuter[i - 3]!
+      const bianEl = ZHI_WUXING[bg.charAt(1)] ?? 'earth'
       line.bianGanZhi = bg
-      line.bianWuxing = WUXING_CN[ZHI_WUXING[bg.charAt(1)] ?? 'earth']
-      line.bianLiuQin = liuQinOf(hex.palaceElement, ZHI_WUXING[bg.charAt(1)] ?? 'earth')
+      line.bianWuxing = WUXING_CN[bianEl]
+      line.bianLiuQin = liuQinOf(hex.palaceElement, bianEl)
+      const hint = bianHintOf(el, bianEl)
+      if (hint) line.bianHint = hint
     }
     return line
   })
@@ -542,7 +629,11 @@ export function computeGua(input: GuaInput): GuaResult {
 
   const dongSetObj = new Set(dongArr)
   const kongSet = new Set(dayInfo.xunKong.split(''))
-  const lines = buildLines(bits, benHex, dongSetObj, bianBits, dayGan, kongSet)
+  // M63-A：伏神（本宫首卦所缺六亲）+ 月建 / 日辰（月破 / 日破 / 暗动与旺衰简档）
+  const fuShen = computeFuShen(bits, benHex)
+  const monthZhi = dayInfo.pillars.month.charAt(1)
+  const dayZhi = dayInfo.pillars.day.charAt(1)
+  const lines = buildLines(bits, benHex, dongSetObj, bianBits, dayGan, kongSet, { monthZhi, dayZhi, fuShen })
   const tiYong = dongArr.length === 1 ? buildTiYong(bits, dongArr[0]!) : null
 
   return {

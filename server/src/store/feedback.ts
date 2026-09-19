@@ -13,6 +13,8 @@ export interface FeedbackInput {
   /** 1 = 好评，-1 = 差评 */
   rating: number
   reason?: string
+  /** M57：反馈提交人（users.id；缺省 = 单用户兼容模式） */
+  userId?: string
 }
 
 interface FeedbackRow {
@@ -21,6 +23,7 @@ interface FeedbackRow {
   message_id: string
   rating: number
   reason: string | null
+  user_id?: string | null
   created_at: string
 }
 
@@ -45,13 +48,14 @@ export class FeedbackStore {
     const id = `fb_${randomUUID().slice(0, 8)}`
     const createdAt = nowIso()
     this.db.run(
-      `INSERT INTO feedback (id, session_id, message_id, rating, reason, created_at)
-       VALUES (?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO feedback (id, session_id, message_id, rating, reason, user_id, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
       id,
       input.sessionId,
       input.messageId,
       rating,
       input.reason?.trim() || null,
+      input.userId ?? null,
       createdAt,
     )
     return { id, sessionId: input.sessionId, messageId: input.messageId, rating, reason: input.reason?.trim() || undefined, createdAt }

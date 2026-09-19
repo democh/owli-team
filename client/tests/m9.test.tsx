@@ -303,7 +303,7 @@ describe('MetricsPanel 指标面板（M9）', () => {
     expect(screen.getByText('评审打分')).toBeInTheDocument()
   })
 
-  it('窗口切换按 24h / 7 天 / 全部 传递 sinceMs；请求失败保留空态', async () => {
+  it('窗口切换按 24h / 7 天 / 全部 传递 sinceMs（summary + M61 调度同窗）；请求失败保留空态', async () => {
     const user = userEvent.setup()
     fetchMock.mockResolvedValue(jsonResponse(metricsBody))
     render(<MetricsPanel />)
@@ -313,10 +313,12 @@ describe('MetricsPanel 指标面板（M9）', () => {
     expect(urls()[0]).toBe('/api/metrics/summary?sinceMs=86400000')
 
     await user.click(screen.getByRole('button', { name: '7 天' }))
-    await waitFor(() => expect(urls().at(-1)).toBe('/api/metrics/summary?sinceMs=604800000'))
+    await waitFor(() => expect(urls()).toContain('/api/metrics/summary?sinceMs=604800000'))
+    // M61-D6：调度端点与 summary 同窗并行拉取
+    expect(urls()).toContain('/api/metrics/scheduling?sinceMs=604800000')
 
     await user.click(screen.getByRole('button', { name: '全部' }))
-    await waitFor(() => expect(urls().at(-1)).toBe('/api/metrics/summary'))
+    await waitFor(() => expect(urls()).toContain('/api/metrics/summary'))
 
     fetchMock.mockReset()
     fetchMock.mockRejectedValue(new Error('断网'))

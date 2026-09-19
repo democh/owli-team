@@ -247,12 +247,19 @@ const canvasWriteTool = {
   async execute(args: CanvasWriteArgs, ctx: ToolRuntime): Promise<ToolResult> {
     if (!ctx.canvas) return { ok: false, summary: '画布存储未启用（服务端未装配画布）' }
     const ops = toCanvasOps(args.ops)
-    const { doc, applied } = ctx.canvas.applyOps(ctx.sessionId, ops)
+    // M31 修订：写入者透传（节点 by 注入 + 广播 actor，供前端作者徽标与写入高亮）
+    const { doc, applied } = ctx.canvas.applyOps(ctx.sessionId, ops, { by: ctx.agentId })
     const lines = ops.map((op, i) => appliedLine(op, applied[i]))
+    // M31 修订：写入的节点 id 清单随 meta 持久化（消息侧「在画布查看」精确定位）
+    const nodeIds = ops
+      .map((op, i) => ({ op: op.op, id: applied[i]?.id }))
+      .filter((x) => (x.op === 'add_node' || x.op === 'update_node') && Boolean(x.id))
+      .map((x) => x.id as string)
     return {
       ok: true,
       summary: `画布已更新（${ops.length} 项操作，v${doc.version}）`,
       detail: [...lines, `画布现有 ${doc.nodes.length} 节点 / ${doc.edges.length} 连线。`].join('\n'),
+      meta: { canvasNodes: nodeIds },
     }
   },
 }

@@ -47,7 +47,11 @@ const ZIWEI_ITEMS: Row[] = [
   { label: '兄弟 乙酉', value: '天府(旺) ｜ 大限 115-124' },
 ]
 
-function renderAlm(baziFields: Row[] = BAZI_FIELDS, ziweiFields: Row[] = ZIWEI_FIELDS): {
+function renderAlm(
+  baziFields: Row[] = BAZI_FIELDS,
+  ziweiFields: Row[] = ZIWEI_FIELDS,
+  transitPans?: { fields: Row[]; items: Row[] },
+): {
   container: HTMLElement
   lanes: NodeListOf<HTMLElement>
 } {
@@ -55,9 +59,23 @@ function renderAlm(baziFields: Row[] = BAZI_FIELDS, ziweiFields: Row[] = ZIWEI_F
   const z = derivePan('ziwei', '紫微', ziweiFields, ZIWEI_ITEMS)
   expect(b?.kind).toBe('bazi')
   expect(z?.kind).toBe('ziwei')
-  const { container } = render(<Almanac bazi={b as BaziModel} ziwei={z as ZiweiModel} />)
+  const t = transitPans ? derivePan('transit', '行运 2026-11-05', transitPans.fields, transitPans.items) : null
+  const { container } = render(
+    <Almanac bazi={b as BaziModel} ziwei={z as ZiweiModel} {...(t?.kind === 'transit' ? { transit: t } : {})} />,
+  )
   return { container, lanes: container.querySelectorAll<HTMLElement>('.pn-alm-lane') }
 }
+
+/** M63-F 行运卡 fixture（扫描 2 命中：2026-11-04 / 2026-11-08 → 虚岁 37） */
+const TRANSIT_FIELDS: Row[] = [
+  { label: '本命', value: '1990-05-12 14:30 ｜ Asia/Shanghai' },
+  { label: '扫描', value: '2026-11-01 ~ 2026-11-10' },
+]
+const TRANSIT_ITEMS: Row[] = [
+  { label: '行运太阳', value: '天蝎 12.9°（222.85°）｜ 2 宫' },
+  { label: '行运土星-本命金星', value: '合相 | 精确 2026-11-04 12:00 ｜ 影响窗 ±14 天' },
+  { label: '行运太阳-本命ASC', value: '六合 | 精确 2026-11-08 16:30 ｜ 影响窗 ±14 天' },
+]
 
 describe('Almanac 时间轴合参', () => {
   it('双泳道：大运 3 段 / 大限 12 段，当前段 ●（is-current）', () => {
@@ -130,5 +148,51 @@ describe('Almanac 时间轴合参', () => {
     expect(labels).toHaveLength(12)
     expect(labels.every((t) => t !== null && !t.includes('（'))).toBe(true)
     expect(labels).toContain('命宫 大限 5-14 岁')
+  })
+
+  it('M63-F 行运泳道：第三泳道 + 时点节点（虚岁 = 年份 − 出生年 + 1）', () => {
+    const { container, lanes } = renderAlm(BAZI_FIELDS, ZIWEI_FIELDS, { fields: TRANSIT_FIELDS, items: TRANSIT_ITEMS })
+    expect(lanes).toHaveLength(3)
+    expect(container.querySelectorAll('.pn-alm-node')).toHaveLength(2)
+    // title 口径：相位名 + 精确时点 + 虚岁 + 参考时点声明
+    const first = container.querySelector<HTMLButtonElement>('.pn-alm-node')!
+    expect(first.getAttribute('title')).toContain('行运土星-本命金星 合相')
+    expect(first.getAttribute('title')).toContain('精确 2026-11-04 12:00')
+    expect(first.getAttribute('title')).toContain('37 岁')
+    expect(first.getAttribute('title')).toContain('参考时点，非事件断言')
+    // 同年（2026）双时点 → left 水平错开（完全可点，互不遮挡）
+    const nodes = container.querySelectorAll<HTMLButtonElement>('.pn-alm-node')
+    expect(nodes[0]!.style.left).not.toBe(nodes[1]!.style.left)
+    // 容器 aria-label 标注行运
+    expect(container.querySelector('.pn-alm')?.getAttribute('aria-label')).toContain('行运')
+  })
+
+  it('M63-F 节点交互：点 ◆ → 中选 + 详情行；点段 → 互斥清节点', () => {
+    const { container } = renderAlm(BAZI_FIELDS, ZIWEI_FIELDS, { fields: TRANSIT_FIELDS, items: TRANSIT_ITEMS })
+    const node = container.querySelector<HTMLButtonElement>('.pn-alm-node')!
+    fireEvent.click(node)
+    expect(node.classList.contains('is-on')).toBe(true)
+    expect(container.querySelector('.pn-alm-detail')?.textContent).toContain('精确 2026-11-04 12:00')
+    // 点当前大运段 → 节点取消、详情切段选
+    fireEvent.click(container.querySelector<HTMLButtonElement>('.pn-alm-seg.is-current')!)
+    expect(container.querySelectorAll('.pn-alm-node.is-on')).toHaveLength(0)
+    expect(container.querySelector('.pn-alm-detail')?.textContent).toContain('大运')
+    // 再点节点 → 段选清、详情切节点
+    fireEvent.click(node)
+    expect(container.querySelector('.pn-alm-detail')?.textContent).toContain('行运土星-本命金星')
+  })
+
+  it('M63-F 零渲染：无 transit / 无扫描时点 → 仍双泳道（零回归）', () => {
+    const noTransit = renderAlm()
+    expect(noTransit.lanes).toHaveLength(2)
+    expect(noTransit.container.querySelectorAll('.pn-alm-node')).toHaveLength(0)
+    // 有 transit 但无「扫描」字段（无 hits）→ 仍双泳道
+    const noScan = renderAlm(BAZI_FIELDS, ZIWEI_FIELDS, {
+      fields: TRANSIT_FIELDS.filter((r) => r.label !== '扫描'),
+      items: TRANSIT_ITEMS,
+    })
+    expect(noScan.lanes).toHaveLength(2)
+    expect(noScan.container.querySelectorAll('.pn-alm-node')).toHaveLength(0)
+    expect(noScan.container.querySelector('.pn-alm-hint')?.textContent).toContain('双泳道')
   })
 })

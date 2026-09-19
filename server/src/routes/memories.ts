@@ -10,7 +10,9 @@
  * 旧 /api/sessions/:id/memory（GET/POST/PATCH/DELETE）保持兼容，见 routes/context.ts。
  */
 import { Router } from 'express'
+import type { Request } from 'express'
 import type { MemoryKind, MemoryScope, MemoryStatus } from '@multi-agent/shared'
+import type { AuthUser } from '../auth/service.js'
 import { MEMORY_KINDS, MEMORY_SCOPES, MEMORY_STATUSES } from '../store/memory.js'
 import type { ApiDeps } from './index.js'
 
@@ -25,6 +27,19 @@ function asNumber(value: unknown): number | undefined {
 
 export function createMemoriesRouter(deps: ApiDeps): Router {
   const router = Router()
+
+  const userOf = (req: Request): AuthUser | undefined => (req as Request & { user?: AuthUser }).user
+  /** M57：多用户下强制用户维度过滤（单用户兼容模式 null = 不过滤） */
+  const scopeUserIdOf = (req: Request): string | undefined => {
+    if (!deps.access.multiUser) return undefined
+    return userOf(req)?.id || ''
+  }
+  /** 条目是否属于当前用户命名空间（跨用户一律 404） */
+  const ownedByUser = (req: Request, item: { userId?: string } | undefined): boolean => {
+    if (!deps.access.multiUser) return true
+    const uid = userOf(req)?.id
+    return Boolean(uid) && item?.userId === uid
+  }
 
   router.get('/memories', (req, res) => {
     const rawScope = asString(req.query.scope)
@@ -47,6 +62,8 @@ export function createMemoriesRouter(deps: ApiDeps): Router {
       q: asString(req.query.q),
       limit: asNumber(req.query.limit),
       offset: asNumber(req.query.offset),
+      // M57：仅本人命名空间（global 按用户分桶；历史 NULL 归属行不返回——安全侧默认）
+      userId: scopeUserIdOf(req),
     })
     res.json({ memory: items })
   })
@@ -66,6 +83,10 @@ export function createMemoriesRouter(deps: ApiDeps): Router {
   })
 
   router.post('/memories/reindex', async (req, res) => {
+    // M57：重建为系统级运维操作（多用户下仅 admin）
+    if (deps.access.multiUser && userOf(req)?.role !== 'admin') {
+      return res.status(403).json({ error: '需要管理员权限' })
+    }
     const force = Boolean((req.body as { force?: unknown } | undefined)?.force)
     const result = await deps.memories.reindex(force)
     if (!result.ok) return res.status(400).json({ error: result.error ?? '重建失败', result })
@@ -84,6 +105,8 @@ export function createMemoriesRouter(deps: ApiDeps): Router {
       topK: asNumber(body.topK),
       minScore: asNumber(body.minScore),
       budgetTokens: asNumber(body.budgetTokens),
+      // M57：多用户下强制本人维度（命中行按用户过滤，防跨用户探测）
+      userId: scopeUserIdOf(req),
       // 评分调试：绕过「语义召回开关」（休眠/超时仍静默跳过）
       force: true,
     })
@@ -92,11 +115,11 @@ export function createMemoriesRouter(deps: ApiDeps): Router {
 
   router.post('/memories/:id/supersede', (req, res) => {
     const old = deps.memory.get(req.params.id)
-    if (!old) return res.status(404).json({ error: '记忆不存在' })
+    if (!old || !ownedByUser(req, old)) return res.status(404).json({ error: '记忆不存在' })
     const newId = asString((req.body as { newId?: unknown } | undefined)?.newId)
     if (!newId) return res.status(400).json({ error: 'newId 不能为空' })
     const next = deps.memory.get(newId)
-    if (!next) return res.status(404).json({ error: '替代条目不存在' })
+    if (!next || !ownedByUser(req, next)) return res.status(404).json({ error: '替代条目不存在' })
     if (next.id === old.id) return res.status(400).json({ error: '不能自我取代' })
     if (old.scope !== next.scope || old.ownerId !== next.ownerId) {
       return res.status(400).json({ error: '仅同 scope 同 owner 的条目可互相取代' })
@@ -110,6 +133,8 @@ export function createMemoriesRouter(deps: ApiDeps): Router {
     if (!status || !MEMORY_STATUSES.includes(status as MemoryStatus)) {
       return res.status(400).json({ error: `status 必须是：${MEMORY_STATUSES.join(' / ')}` })
     }
+    const existing = deps.memory.get(req.params.id)
+    if (!existing || !ownedByUser(req, existing)) return res.status(404).json({ error: '记忆不存在' })
     const item = deps.memory.setStatus(req.params.id, status as MemoryStatus)
     if (!item) return res.status(404).json({ error: '记忆不存在' })
     // 流转回 active（候选审核通过）→ 加速嵌入消费

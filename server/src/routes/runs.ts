@@ -1,5 +1,7 @@
 import { Router } from 'express'
+import type { Request } from 'express'
 import { initSse, startSseHeartbeat } from '../sse.js'
+import type { AuthUser } from '../auth/service.js'
 import { approvalDecisionSchema, firstIssue, queueOrderSchema } from './schemas.js'
 import type { ApiDeps } from './index.js'
 
@@ -67,7 +69,7 @@ export function createRunsRouter(deps: ApiDeps): Router {
     }
   })
 
-  /** M8：本 Run 用量汇总（顶部用量条「本 Run 费用」） */
+  /** M8：本 Run 用量汇总（底栏上下文电池「本 Run 费用」） */
   router.get('/runs/:runId/usage', (req, res) => {
     res.json({ usage: deps.usage.sumByRun(req.params.runId) })
   })
@@ -81,8 +83,12 @@ export function createRunsRouter(deps: ApiDeps): Router {
     res.json({ run, events, usage: deps.usage.sumByRun(req.params.runId) })
   })
 
-  router.get('/runs/active', (_req, res) => {
-    res.json({ runs: deps.engine.listActiveRuns() })
+  router.get('/runs/active', (req, res) => {
+    // M57：仅返回本人可见会话的活跃 Run
+    const user = (req as Request & { user?: AuthUser }).user
+    res.json({
+      runs: deps.engine.listActiveRuns().filter((run) => deps.access.canAccessSession(user, run.sessionId)),
+    })
   })
 
   /**
@@ -96,7 +102,9 @@ export function createRunsRouter(deps: ApiDeps): Router {
     if (decision === 'custom' && !feedback?.trim()) {
       return res.status(400).json({ error: 'custom 决策需附 feedback（修改意见）' })
     }
-    const approval = deps.approvals.decide(req.params.runId, req.params.approvalId, decision, feedback)
+    // M57：决策人归因（多用户审计）
+    const approver = (req as Request & { user?: AuthUser }).user
+    const approval = deps.approvals.decide(req.params.runId, req.params.approvalId, decision, feedback, approver?.id)
     if (!approval) return res.status(404).json({ error: '审批不存在或已处理' })
     res.json({ approval })
   })
@@ -106,11 +114,20 @@ export function createRunsRouter(deps: ApiDeps): Router {
     res.json({ approvals: deps.approvals.forRun(req.params.runId) })
   })
 
-  /** WS 降级轮询：同一 NotificationCenter（§18.6） */
+  /** WS 降级轮询：同一 NotificationCenter（§18.6）；M57：仅返回本人可见会话的事件（全局主题仅 admin） */
   router.get('/notifications', (req, res) => {
     const since = Number(req.query.since ?? 0)
     const sessionId = typeof req.query.sessionId === 'string' ? req.query.sessionId : undefined
-    res.json(deps.notify.list(sessionId, Number.isFinite(since) ? since : 0))
+    const result = deps.notify.list(sessionId, Number.isFinite(since) ? since : 0)
+    const user = (req as Request & { user?: AuthUser }).user
+    const isAdminUser = !deps.access.multiUser || user?.role === 'admin'
+    const visible = deps.access.visibleSessionIds(user)
+    const notifications = result.notifications.filter((env) =>
+      env.sessionId.startsWith('__')
+        ? isAdminUser
+        : visible === undefined || visible.has(env.sessionId),
+    )
+    res.json({ ...result, notifications })
   })
 
   return router

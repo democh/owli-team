@@ -2,10 +2,12 @@
  * LLM 接入层韧性（M4）：把「一次抖动就整轮失败」变成可自愈。
  * - 错误分类：可重试（429 尊重 Retry-After / 408 / 5xx / 网络类）/ 致命（400 参数、401/403）/ 上下文超长特判；
  * - 流式重试：仅「首个有效增量之前」的失败可安全重试（已产出内容重放会产生重复文本）；
+ * - 静默中止兜底：OpenAI SDK 对 abort 静默结束迭代器（不抛错），循环正常退出前须复核
+ *   父级信号与超时相位，否则中断 / 超时会被误判为「正常完成」；
  * - 超时分层：首 token 超时 / 流空闲超时（单次尝试级）；整回合超时由引擎的回合信号负责；
  * - 并发信号量：全局 LLM_MAX_CONCURRENCY 限流（FIFO 队列，名额移交避免惊群）。
  */
-import { abortError, isAbortError, type LlmChunk } from './provider.js'
+import { LlmStreamInterruptedError, abortError, isAbortError, type LlmChunk } from './provider.js'
 
 export type LlmErrorKind = 'retryable' | 'fatal' | 'context_length'
 
@@ -47,6 +49,7 @@ export class LlmTimeoutError extends Error {
 /** 错误分类：决定「重试 / 上抛 / 触发压缩」 */
 export function classifyLlmError(err: unknown): ClassifiedLlmError {
   if (err instanceof LlmTimeoutError) return { kind: 'retryable', message: err.message }
+  if (err instanceof LlmStreamInterruptedError) return { kind: 'retryable', message: err.message }
   if (isAbortError(err)) return { kind: 'fatal', message: '请求已中断' }
 
   const anyErr = err as { status?: unknown; code?: unknown; message?: unknown; headers?: unknown; error?: { message?: unknown } }
@@ -165,6 +168,10 @@ export async function* resilientStream(
         armIdle()
         yield chunk
       }
+      // 静默中止兜底（OpenAI SDK：abort 后「exit without throwing」）：循环正常退出也可能是
+      // 被中止 / 超时的假象——退出前复核，抛回 catch 路径按「父级中断不重试 / 超时分层」统一处理
+      if (opts.parentSignal?.aborted) throw abortError()
+      if (timedOutPhase) throw new LlmTimeoutError(timedOutPhase)
       return
     } catch (err) {
       lastError = err

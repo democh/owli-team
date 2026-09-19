@@ -20,6 +20,8 @@ interface RunRow {
   fallback_used: number
   handed_to_user: number
   pending_user_messages: string
+  /** M57：运行归因（users.id；NULL = 单用户兼容模式） */
+  user_id?: string | null
   error: string | null
   created_at: string
   updated_at: string
@@ -57,6 +59,8 @@ export interface RunCreateInput {
   sessionId: string
   state: RunSnapshot['state']
   queue: string[]
+  /** M57：运行归因（会话属主；单用户兼容模式缺省） */
+  userId?: string
 }
 
 export interface RunStateUpdate {
@@ -91,16 +95,27 @@ export class RunStore {
   create(input: RunCreateInput): void {
     const ts = nowIso()
     this.db.run(
-      `INSERT INTO runs (id, session_id, state, queue, spoken, turn_index, fallback_used, handed_to_user, pending_user_messages, created_at, updated_at)
-       VALUES (?, ?, ?, ?, '[]', 0, 0, 0, '[]', ?, ?)
+      `INSERT INTO runs (id, session_id, state, queue, spoken, turn_index, fallback_used, handed_to_user, pending_user_messages, user_id, created_at, updated_at)
+       VALUES (?, ?, ?, ?, '[]', 0, 0, 0, '[]', ?, ?, ?)
        ON CONFLICT(id) DO NOTHING`,
       input.id,
       input.sessionId,
       input.state,
       JSON.stringify(input.queue),
+      input.userId ?? null,
       ts,
       ts,
     )
+  }
+
+  /** M57：某用户在活跃/排队中的运行数（per-user 并发上限依据；跨重启持久统计） */
+  activeCountForUser(userId: string): number {
+    const row = this.db.get<{ n: number }>(
+      `SELECT COUNT(*) AS n FROM runs
+       WHERE user_id = ? AND state IN ('waiting', 'running', 'awaiting_approval', 'awaiting_plan')`,
+      userId,
+    )
+    return Number(row?.n ?? 0)
   }
 
   get(id: string): RunSnapshot | undefined {

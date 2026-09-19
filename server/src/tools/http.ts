@@ -4,6 +4,9 @@
  * - 会话 Cookie 罐（tough-cookie）：Set-Cookie 自动入库并按域/路径/过期语义回传（降低「无会话脚本」判定）；
  * - 域名级限速：同 host 串行队列 + 最小间隔（HTTP_MIN_INTERVAL_MS），避免密集请求触发风控；
  * - 风控冷却：识别到拦截后对该 host 冷却 60s，冷却期内请求直接拒绝（不加剧封禁）；
+ * - 软封锁升级：连接被异常中断（ECONNRESET / other side closed）或 JSON 接口空响应
+ *   连续 2 次「请求」（同一请求内部重试不重复计数）→ 视为 IP 级软封（冷却 5 分钟），
+ *   避免持续重试加剧封禁；
  * - 指数退避重试：仅 429 / 5xx / 网络错误（尊重 Retry-After）；外部取消不重试；
  * - 响应体解码：BOM → content-type charset → <meta charset> → utf-8 兜底（GBK 家族归一 gb18030）；
  * - 风控页识别：wappass / 百度安全验证 / Cloudflare 挑战 / 403 → AntiBotError('blocked')；
@@ -70,15 +73,25 @@ export const DEFAULT_BROWSER_UA = UA_POOL[0].ua
 
 /** 触发风控后的 host 冷却时长 */
 const COOLDOWN_MS = 60_000
+/** 软封锁升级阈值：连续 N 次「连接异常中断 / JSON 空响应」视为 IP 级软封 */
+const SOFT_BLOCK_THRESHOLD = 2
+/** 软封锁冷却（IP 级封锁恢复期通常数分钟，长于页面级风控的 60s） */
+const SOFT_COOLDOWN_MS = 5 * 60_000
+/**
+ * 连接层软封锁特征（匹配 undici 错误消息与其 cause 消息）。
+ * 注意：ECONNREFUSED（端口无服务）是明确拒绝而非软封锁，不在其中。
+ */
+const SOFT_BLOCK_RE = /ECONNRESET|other side closed|socket hang up|empty reply|connection closed|premature close|UND_ERR_SOCKET|UND_ERR_CLOSED/i
 /** 重试退避基数（第 n 次重试等待 base * 2^(n-1)） */
 const RETRY_BASE_MS = 500
 /** 单次重试等待上限 */
 const RETRY_MAX_WAIT_MS = 10_000
 
-/** 模块级状态：同 host 串行队列 / 限速时间槽 / 风控冷却 / host→UA 指纹（进程内共享，多工具一致） */
+/** 模块级状态：同 host 串行队列 / 限速时间槽 / 风控冷却 / 软失败计数 / host→UA 指纹（进程内共享，多工具一致） */
 const hostQueue = new Map<string, Promise<unknown>>()
 const hostNextSlot = new Map<string, number>()
 const hostCooldown = new Map<string, number>()
+const hostSoftFails = new Map<string, number>()
 const hostUaProfile = new Map<string, UaProfile>()
 
 /**
@@ -105,6 +118,7 @@ export function resetAntiBotState(): void {
   hostQueue.clear()
   hostNextSlot.clear()
   hostCooldown.clear()
+  hostSoftFails.clear()
   hostUaProfile.clear()
   cookieJar.removeAllCookiesSync()
 }
@@ -134,10 +148,16 @@ export function browserHeaders(
 
 /**
  * 风控/验证页识别（返回匹配原因；null = 正常页面）。
- * 优先判定最终 URL（重定向到验证域），其次标题/正文特征。
+ * 优先判定最终 URL（重定向到验证域），其次标题/正文特征；
+ * expectJson：JSON 接口 200 + 空内容 → 疑似软风控（东财等站点封禁时静默返回空）。
  */
-export function detectBlockPage(opts: { status: number; finalUrl: string; text: string }): string | null {
-  const { status, finalUrl, text } = opts
+export function detectBlockPage(opts: {
+  status: number
+  finalUrl: string
+  text: string
+  expectJson?: boolean
+}): string | null {
+  const { status, finalUrl, text, expectJson = false } = opts
   if (/wappass\.baidu\.com|verify\.baidu\.com|\/sorry\//i.test(finalUrl)) {
     return '被重定向到百度安全验证页（触发风控）'
   }
@@ -147,6 +167,7 @@ export function detectBlockPage(opts: { status: number; finalUrl: string; text: 
   if (/Just a moment|Attention Required|Checking your browser/i.test(title)) return 'Cloudflare 人机验证页'
   if (/cf-chl-|challenge-platform/.test(head)) return 'Cloudflare 挑战页'
   if (status === 403) return 'HTTP 403（网站拒绝访问，疑似风控）'
+  if (expectJson && status === 200 && text.trim() === '') return '空响应（JSON 接口无内容，疑似软风控）'
   return null
 }
 
@@ -264,8 +285,27 @@ function assertNotCooling(host: string): void {
 }
 
 /** 标记 host 触发风控（冷却期内不再发起请求） */
-function markBlocked(host: string): void {
-  hostCooldown.set(host, Date.now() + COOLDOWN_MS)
+function markBlocked(host: string, cooldownMs = COOLDOWN_MS): void {
+  hostCooldown.set(host, Date.now() + cooldownMs)
+}
+
+/** 软失败计数守卫：同一逻辑请求（含其重试）最多计一次数 */
+interface SoftFailGuard {
+  counted: boolean
+}
+
+/** 软失败累计：偶发（1 次）→ network（可重试）；连续 N 次请求失败 → blocked + host 长冷却（防加剧封禁） */
+function softFail(host: string, message: string, guard?: SoftFailGuard): never {
+  if (guard?.counted) throw new AntiBotError('network', message)
+  if (guard) guard.counted = true
+  const fails = (hostSoftFails.get(host) ?? 0) + 1
+  if (fails >= SOFT_BLOCK_THRESHOLD) {
+    hostSoftFails.delete(host)
+    markBlocked(host, SOFT_COOLDOWN_MS)
+    throw new AntiBotError('blocked', `${message}（连续 ${fails} 次，冷却 ${Math.round(SOFT_COOLDOWN_MS / 1_000)}s）`)
+  }
+  hostSoftFails.set(host, fails)
+  throw new AntiBotError('network', message)
 }
 
 function parseRetryAfter(res: Response): number | undefined {
@@ -300,6 +340,7 @@ async function fetchOnce(
   req: AntiBotRequest,
   host: string,
   limits: { timeoutMs: number; maxBytes: number },
+  softGuard: SoftFailGuard,
 ): Promise<AntiBotResponse> {
   const ctl = new AbortController()
   let timedOut = false
@@ -364,8 +405,11 @@ async function fetchOnce(
       await drain(res)
     }
     const finalUrl = res.url
-    const blocked = detectBlockPage({ status: res.status, finalUrl, text })
+    const expectJson = (req.readBody ?? true) && (req.accept ?? '').includes('json')
+    const blocked = detectBlockPage({ status: res.status, finalUrl, text, expectJson })
     if (blocked) {
+      // JSON 空响应属软风控信号（计数升级）；其余为页面级拦截（立即冷却）
+      if (blocked.startsWith('空响应')) softFail(host, blocked, softGuard)
       markBlocked(host)
       throw new AntiBotError('blocked', blocked, { status: res.status })
     }
@@ -388,7 +432,13 @@ async function fetchOnce(
       if (timedOut) throw new AntiBotError('timeout', `请求超时（${limits.timeoutMs}ms）`)
       throw toolAbortError()
     }
-    throw new AntiBotError('network', (err as Error).message.slice(0, 160))
+    // undici 将底层原因藏在 cause（ECONNRESET / other side closed …）→ 拼接后判定软封锁
+    const cause = (err as { cause?: unknown }).cause
+    const causeMsg = cause instanceof Error ? cause.message : ''
+    const base = (err as Error).message || '网络请求失败'
+    const msg = causeMsg && !base.includes(causeMsg) ? `${base}: ${causeMsg}` : base
+    if (SOFT_BLOCK_RE.test(msg)) softFail(host, `连接被站点异常中断（${msg.slice(0, 120)}）`, softGuard)
+    throw new AntiBotError('network', msg.slice(0, 160))
   } finally {
     clearTimeout(timer)
     req.signal?.removeEventListener('abort', onParentAbort)
@@ -400,7 +450,8 @@ async function fetchOnce(
  * 成功返回结构化响应（含解码后的 text）；失败抛 AntiBotError（调用方按 kind 转提示）。
  */
 export async function antiBotFetch(req: AntiBotRequest): Promise<AntiBotResponse> {
-  const host = new URL(req.url).hostname
+  // 限速/冷却/软失败按 host:port 隔离（显式端口的服务实例互不影响；默认端口时与 hostname 等价）
+  const host = new URL(req.url).host
   const maxRetries = Math.max(0, req.maxRetries ?? 1)
   const limits = {
     timeoutMs: req.timeoutMs && req.timeoutMs > 0 ? req.timeoutMs : 15_000,
@@ -415,12 +466,14 @@ export async function antiBotFetch(req: AntiBotRequest): Promise<AntiBotResponse
     // 排队期间同 host 其他请求可能已触发风控 → 出队前复查
     assertNotCooling(host)
     let lastErr: AntiBotError | undefined
+    const softGuard: SoftFailGuard = { counted: false }
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
       if (req.signal?.aborted) throw toolAbortError()
       await waitForSlot(host, minIntervalMs)
       try {
-        const res = await fetchOnce(req, host, limits)
+        const res = await fetchOnce(req, host, limits, softGuard)
         hostNextSlot.set(host, Date.now() + minIntervalMs)
+        hostSoftFails.delete(host)
         return res
       } catch (err) {
         hostNextSlot.set(host, Date.now() + minIntervalMs)

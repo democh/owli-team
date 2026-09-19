@@ -74,7 +74,7 @@ async function makeMemoryEnv(overrides: Partial<AppConfig> = {}) {
 async function startApp(deps: { memory: MemoryStore; memories: MemoryService }): Promise<{ url: string; close: () => Promise<void> }> {
   const app = express()
   app.use(express.json())
-  app.use('/api', createMemoriesRouter(deps as unknown as ApiDeps))
+  app.use('/api', createMemoriesRouter({ access: { multiUser: false }, ...deps } as unknown as ApiDeps))
   app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
     res.status(500).json({ error: `内部错误：${err.message}` })
   })
@@ -353,8 +353,7 @@ function makeToolEnv() {
     allowRunCommand: false,
     allowedCommands: [],
     allowSensitive: false,
-    webFetchAllowedDomains: [],
-    webSearch: { enabled: false, apiKey: '', apiUrl: '', htmlUrl: '' },
+    webSearch: { apiKey: '', apiUrl: '', htmlUrl: '' },
     httpUserAgent: '',
     httpMinIntervalMs: 0,
     httpTimeoutMs: 15_000,

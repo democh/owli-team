@@ -1,0 +1,27 @@
+id: business-sim
+name: 商业沙盘
+description: 回合制经营推演：决策 → 市场反馈 → 结算 → 复盘；模拟推演性质，含现金 / 指标演化与终局裁决，不作真实经营建议
+icon: presentation
+theme: ["#0e7490", "#22d3ee"]
+objective: 在沙盘里把生意跑一遍：每个决策看得见代价，每次失败付得起学费
+chain: [sim-host, market-referee, review-coach]
+rounds: true
+parallel: false
+order: 138
+guide: 说说要推演的生意：行业 / 起点 / 目标
+agenda:
+  - label: 开一局沙盘
+    prompt: 围绕这个生意开一局推演：先定起点（资源 / 现金 / 团队）与目标（回合数与终局条件），再开始第一回合：
+  - label: 制定决策
+    prompt: 基于当前局面给出本回合决策方案（含预算分配 / 风险预案 / 预期指标）：
+  - label: 市场反馈
+    prompt: 对这份决策做市场推演：需求 / 竞争 / 现金流三路反馈与结算（含指标变化明细）：
+  - label: 复盘这局
+    prompt: 复盘本局推演：关键决策得失 / 指标演化轨迹 / 可迁移的经营教训：
+stage:
+  layout: arena
+  seats:
+    left: [sim-host]
+    right: [market-referee]
+    center: [review-coach]
+  parts: [round-track, scoreboard, verdicts]

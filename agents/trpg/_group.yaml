@@ -1,0 +1,24 @@
+id: trpg
+name: 跑团工坊
+description: 桌面角色扮演与剧本杀：开团安全工具 / 回合主持 / 剧本创作 / NPC 扮演与规则裁判；骰子走 dice_roll（种子可复现），玩家向娱乐体验，不作现实预测
+icon: sparkles
+theme: ["#4c1d95", "#a78bfa"]
+objective: 把一场团玩得又顺又燃：安全、有节奏、失败也精彩、战报可回放
+chain: [gm-host, scenario-writer, npc-player, rule-keeper]
+defaultSkills: [trpg-hosting]
+rounds: true
+parallel: false
+order: 132
+guide: 说说想开的团：题材 / 人数 / 时长
+agenda:
+  - label: 开一场团
+    prompt: 围绕下面这个题材开场：先对齐安全工具（Lines & Veils）与角色创建，再给第一幕钩子：
+  - label: 剧本创作
+    prompt: 帮我写一段跑团剧本：三幕结构 / 线索设计（≥3 条路径防卡死）/ 关键 NPC（含目的与破绽）：
+  - label: 掷骰判定
+    prompt: 按这个场景做一次判定（说明骰式与难度 DC），结果用骰卡呈现（含种子可复现）：
+  - label: 战报与续章
+    prompt: 帮我整理上次战报并生成下回预告：关键判定（骰式 + 种子）/ 未解悬念 / 下回开场钩子：
+stage:
+  layout: roundtable
+  panel: pool

@@ -1,0 +1,21 @@
+id: ecommerce
+name: 电商经营
+description: 平台电商经营闭环：选品测算 → Listing 上架 → 店铺运营 → 客服售后；每个决策挂在利润口径与平台规则上，卖得对、算得清、售后稳
+icon: package
+theme: ["#ea580c", "#fb923c"]
+objective: 把货卖对、把账算清：每个 SKU 有数据、有利润、有下一动作
+chain: [category-scout, listing-optimizer, store-operator, shop-support]
+order: 122
+guide: 说说你要卖的货或要带的店
+agenda:
+  - label: 选品评估
+    prompt: 围绕这个品类做选品评估：需求 / 竞争 / 利润 / 供应链四维打分，给出做或不做的结论与依据：
+  - label: 上架优化
+    prompt: 帮我写这组商品的 Listing：标题 / 五点卖点 / 详情结构（含关键词布局与广告法红线自查）：
+  - label: 大促节奏
+    prompt: 为这个节点制定运营节奏（大促 / 上新）：报名 / 预热 / 爆发 / 返场四阶段动作与检查点：
+  - label: 客服话术
+    prompt: 帮我准备这组客服话术：售前异议 / 售中物流 / 售后纠纷（含差评响应与平台流程预演）：
+stage:
+  layout: dock
+  panel: console

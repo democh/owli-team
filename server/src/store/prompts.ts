@@ -20,7 +20,7 @@ import path from 'node:path'
 import YAML from 'yaml'
 import { z } from 'zod'
 import type { AgentDefinition, AgentGroup, RosterPreset, SoulMeta, StageLayout, StagePanel } from '@multi-agent/shared'
-import { DEFAULT_CHAIN, STAGE_LAYOUTS, STAGE_PANELS } from '@multi-agent/shared'
+import { DEFAULT_CHAIN, STAGE_LAYOUTS, STAGE_PANELS, baseAgentId, soulIdOfMember } from '@multi-agent/shared'
 
 /** 角色 front-matter 校验（§13.1 / §25）：失败时给出精确报错 */
 export const AgentFrontMatterSchema = z.object({
@@ -242,23 +242,25 @@ export class PromptLibrary {
 
   get(id: string): AgentDefinition | undefined {
     this.maybeReload()
-    return this.agents.get(id)
+    // M77：容忍成员键（分身 `agentId~soulId` → 返回基础角色定义；经典键等于 agentId）
+    return this.agents.get(baseAgentId(id))
   }
 
   body(id: string): string {
     this.maybeReload()
-    return this.bodies.get(id) ?? ''
+    return this.bodies.get(baseAgentId(id)) ?? ''
   }
 
   /**
-   * 解析灵魂：显式 soulId（须归属该角色）> 角色默认 > 无。
+   * 解析灵魂：显式 soulId（须归属该角色）> 成员键内嵌（分身 `agentId~soulId`）> 角色默认 > 无。
    * 语法上调用方需先用返回值校验归属（`doc.meta.id === soulId`）。
    */
   soul(agentId: string, soulId?: string | null): SoulDoc | undefined {
     this.maybeReload()
-    const souls = this.soulDocs.get(agentId)
+    const base = baseAgentId(agentId)
+    const souls = this.soulDocs.get(base)
     if (!souls) return undefined
-    const id = soulId ?? this.agents.get(agentId)?.defaultSoul
+    const id = soulId ?? soulIdOfMember(agentId) ?? this.agents.get(base)?.defaultSoul
     if (!id) return undefined
     return souls.get(id)
   }
@@ -266,7 +268,7 @@ export class PromptLibrary {
   /** avatar.png 绝对路径（不存在时 undefined → API 404） */
   avatarFile(id: string): string | undefined {
     this.maybeReload()
-    return this.avatarPaths.get(id)
+    return this.avatarPaths.get(baseAgentId(id))
   }
 
   /** 当前加载模式（agents = 包目录；legacy = 旧 prompts/ 回退） */

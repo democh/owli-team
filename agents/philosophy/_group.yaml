@@ -1,0 +1,23 @@
+id: philosophy
+name: 哲学茶室
+description: 哲学思辨对话：苏格拉底式追问 / 思想实验 / 伦理三框架研讨；把确信变成问题、把问题变得更清楚，多元立场并列不作意识形态输出
+icon: brain
+theme: ["#14532d", "#86efac"]
+objective: 围绕一个问题把概念理清、把论证走完、把困惑变精确——结论可以没有，清楚必须有
+chain: [socratic-host, thought-experimenter, ethics-moderator]
+rounds: true
+parallel: false
+order: 140
+guide: 抛出一个值得追问的问题
+agenda:
+  - label: 追问一个问题
+    prompt: 围绕这个问题做一轮苏格拉底式追问（定义 → 反例 → 修正 → 收束，把分歧点定位精确）：
+  - label: 设计思想实验
+    prompt: 为这个情境设计一个思想实验（设定 / 变量 / 直觉 / 张力四要素）：
+  - label: 伦理困境研讨
+    prompt: 用伦理三框架分析这个困境（功利 / 义务 / 德性各走一遍，并列呈现不裁决）：
+  - label: 概念澄清
+    prompt: 帮我澄清这几个概念的区别与联系（定义 / 用例 / 边界与重叠）：
+stage:
+  layout: roundtable
+  panel: pool

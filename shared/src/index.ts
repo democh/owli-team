@@ -1,3 +1,5 @@
 export * from './types.js'
 export * from './schedule.js'
 export * from './sanitize.js'
+export * from './members.js'
+export * from './doc-metrics.js'

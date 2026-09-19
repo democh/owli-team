@@ -11,6 +11,7 @@
  * 约定：绑定状态按会话隔离（切换竞态守卫）；busyId 标记正在测试 / 重连 / 刷新的服务器。
  */
 import { create } from 'zustand'
+import { useAuthStore } from './auth-store'
 import type {
   McpJsonImportOutcome,
   McpJsonStatus,
@@ -77,9 +78,10 @@ export const useMcpStore = create<McpState>((set, get) => ({
       // 会话可能在等待期间被切换：绑定面按 current 再校验（切换竞态守卫）
       const current = get().sessionId
       const patch: Partial<McpState> = { loading: false }
-      if (list.status === 'fulfilled') patch.servers = list.value.servers
-      if (directory.status === 'fulfilled') patch.tools = directory.value.tools
-      if (binds.status === 'fulfilled' && binds.value && current === sessionId) patch.bindings = binds.value.bindings
+      // 契约防御：响应缺数组字段时不把 undefined 写入状态（否则渲染侧 .map / .filter 崩溃）
+      if (list.status === 'fulfilled') patch.servers = list.value.servers ?? []
+      if (directory.status === 'fulfilled') patch.tools = directory.value.tools ?? []
+      if (binds.status === 'fulfilled' && binds.value && current === sessionId) patch.bindings = binds.value.bindings ?? []
       // json-config 未装配（503）时保持原值：卡片隐藏 / 不闪断
       if (json.status === 'fulfilled') patch.jsonConfig = json.value.config
       set(patch)
@@ -91,18 +93,25 @@ export const useMcpStore = create<McpState>((set, get) => ({
   loadForSession: async (sessionId) => {
     set({ sessionId, loading: true })
     const guard = (): boolean => get().sessionId === sessionId
-    const [list, directory, binds, json] = await Promise.allSettled([
+    // M57 P3：members 不访问管理面（工具目录 / json 配置为 adminOnly）——避免 403 噪声
+    const authState = useAuthStore.getState()
+    const isAdmin = !authState.status.multiUser || authState.user?.role === 'admin'
+    const tasks: Array<Promise<unknown>> = [
       apiGet<{ servers: McpServerDefinition[] }>('/api/mcp/servers'),
-      apiGet<{ tools: McpToolDirectoryEntry[] }>('/api/mcp/tools'),
       apiGet<{ bindings: SessionMcpBinding[] }>(`/api/sessions/${sessionId}/mcp-servers`),
-      apiGet<{ config: McpJsonStatus }>('/api/mcp/json-config'),
-    ])
+    ]
+    if (isAdmin) {
+      tasks.push(apiGet<{ tools: McpToolDirectoryEntry[] }>('/api/mcp/tools'))
+      tasks.push(apiGet<{ config: McpJsonStatus }>('/api/mcp/json-config'))
+    }
+    const [list, binds, toolsRes, jsonRes] = await Promise.allSettled(tasks)
     if (!guard()) return
     const patch: Partial<McpState> = { loading: false }
-    if (list.status === 'fulfilled') patch.servers = list.value.servers
-    if (directory.status === 'fulfilled') patch.tools = directory.value.tools
-    if (binds.status === 'fulfilled') patch.bindings = binds.value.bindings
-    if (json.status === 'fulfilled') patch.jsonConfig = json.value.config
+    // 契约防御：响应缺数组字段时不把 undefined 写入状态（否则渲染侧 .map / .filter 崩溃）
+    if (list.status === 'fulfilled') patch.servers = (list.value as { servers: McpServerDefinition[] }).servers ?? []
+    if (binds.status === 'fulfilled') patch.bindings = (binds.value as { bindings: SessionMcpBinding[] }).bindings ?? []
+    if (toolsRes?.status === 'fulfilled') patch.tools = (toolsRes.value as { tools: McpToolDirectoryEntry[] }).tools ?? []
+    if (jsonRes?.status === 'fulfilled') patch.jsonConfig = (jsonRes.value as { config: McpJsonStatus }).config
     set(patch)
   },
 
@@ -185,7 +194,7 @@ export const useMcpStore = create<McpState>((set, get) => ({
       const res = await apiPost<{ result: McpJsonSyncResult; status: McpJsonStatus; servers: McpServerDefinition[] }>(
         '/api/mcp/json-config/sync',
       )
-      set({ servers: res.servers, jsonConfig: res.status })
+      set({ servers: res.servers ?? [], jsonConfig: res.status })
       return res.result
     } finally {
       set({ jsonSyncing: false })
@@ -199,7 +208,7 @@ export const useMcpStore = create<McpState>((set, get) => ({
         '/api/mcp/json-config/import',
         { json },
       )
-      set({ servers: res.servers })
+      set({ servers: res.servers ?? [] })
       return res.outcome
     } finally {
       set({ jsonSyncing: false })
@@ -214,7 +223,7 @@ export const useMcpStore = create<McpState>((set, get) => ({
       const res = await apiPost<{ bindings: SessionMcpBinding[] }>(`/api/sessions/${sessionId}/mcp-servers`, {
         serverId,
       })
-      set({ bindings: res.bindings })
+      set({ bindings: res.bindings ?? [] })
     } finally {
       set({ busyId: undefined })
     }
@@ -228,7 +237,7 @@ export const useMcpStore = create<McpState>((set, get) => ({
       const res = await apiDelete<{ bindings: SessionMcpBinding[] }>(
         `/api/sessions/${sessionId}/mcp-servers/${serverId}`,
       )
-      set({ bindings: res.bindings })
+      set({ bindings: res.bindings ?? [] })
     } finally {
       set({ busyId: undefined })
     }

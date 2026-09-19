@@ -1,0 +1,16 @@
+{
+  "id": "handoff-receipts",
+  "name": "文本接力链：双棒推进与转交回执落库（M61 D4/D6）",
+  "participants": ["backend", "qa"],
+  "prompt": "@马克斯 实现导出功能的后端接口说明，完成后交给 @诺娃 测试。",
+  "maxTurns": 4,
+  "assertions": [
+    { "type": "handoff_targets", "values": ["qa"] },
+    { "type": "agent_spoke", "values": ["backend", "qa"] },
+    { "type": "artifact_exists", "path": "docs/接口设计-导出.md" },
+    { "type": "scheduling", "wavesMin": 2, "stallSuppressedMax": 0, "writeConflictsMax": 0 },
+    { "type": "no_loop" },
+    { "type": "no_stall" },
+    { "type": "run_end_reason", "value": "completed" }
+  ]
+}

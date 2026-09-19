@@ -196,4 +196,11 @@ describe('M48：成员回合指令（buildTurnInstruction）', () => {
     expect(review).toContain('以评审范式发言')
     expect(review).not.toContain('暂时不在场')
   })
+
+  it('三范式回合指令统一声明输出语言纪律（简体中文）', () => {
+    const env = makeEnv()
+    for (const mode of ['execute', 'plan', 'review'] as const) {
+      expect(instruction(env, 'backend', mode)).toContain('全程使用简体中文输出')
+    }
+  })
 })

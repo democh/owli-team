@@ -4,7 +4,7 @@
  *   500ms 节流后刷新（无需等 run 收束）、收束后条目保持并去流式标记；空正文 + 流式 → 「发言中…」；
  * - 冻结面边界：流式消息中的 `::: claim` 半截容器不进论断树（容器解析面仍走完成态快照），
  *   收束后自动出现——实时（纯文本投影）与冻结（容器解析）两通道互不越界；
- * - 宽度自适应（clamp(164px, 20%, 280px)）为纯 CSS，实测断言归 E2E（m52-stage arena 用例）。
+ * - 宽度自适应（clamp(164px, 22%, 340px)）为纯 CSS，实测断言归 E2E（m52-stage arena 用例）。
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, render } from '@testing-library/react'

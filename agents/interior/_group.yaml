@@ -1,0 +1,24 @@
+id: interior
+name: 家装设计工作室
+description: 家装设计生产链：需求研判 → 空间规划 → 3D 方案与效果图；与置业工程（housing 预算 / 排期 / 验收）区隔——设计专项，产物是方案与视觉呈现
+icon: armchair
+theme: ["#0d9488", "#5eead4"]
+objective: 把「住得舒服」翻译成看得见、改得动、能落地的设计方案
+chain: [interior-designer, space-planner, visualizer]
+defaultSkills: [interior-design]
+parallel: true
+parallelMax: 2
+order: 119
+guide: 说说你的家，做一套能落地的设计方案
+agenda:
+  - label: 上传户型图做方案
+    prompt: 我上传了户型图，帮我做一套设计方案：先解析户型结构，再给功能分区与风格方向，最后出 3D 布局与效果图：
+  - label: 客厅改造
+    prompt: 帮我改造客厅：现状痛点与想要的氛围如下，给动线 / 收纳 / 照明与风格方案，并出效果图：
+  - label: 风格与材质定位
+    prompt: 帮我定位风格与材质：按我的生活场景与偏好，给风格方向、色卡与主材清单（含质感说明）：
+  - label: 生成效果图
+    prompt: 基于当前方案生成效果图：视角与风格如下，先出 3D 布局拍快照，再走图生图：
+stage:
+  layout: dock
+  panel: studio

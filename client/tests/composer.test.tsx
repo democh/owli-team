@@ -1,8 +1,8 @@
 /**
  * Composer 键盘交互：@ 补全菜单（开启 / 过滤 / 键盘选择 / 关闭）+ M11 指挥台成员条
- * + M52-G 成员条让位（场景席位已覆盖全员时隐藏）。
+ * + ADR 0135 成员条统一常驻（全场景一致展示，M52-G 席位让位判定已撤销）。
  */
-import { beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { AgentDefinition, AgentGroup } from '@multi-agent/shared'
@@ -43,7 +43,7 @@ function makeGroup(id: string, stage?: AgentGroup['stage']): AgentGroup {
   }
 }
 
-/** 替换当前会话编制（成员条让位用例用） */
+/** 替换当前会话编制（成员条场景用例用） */
 function setSession(participantIds: string[]): void {
   useSessionStore.setState({
     sessions: [
@@ -61,6 +61,8 @@ function setSession(participantIds: string[]): void {
 }
 
 beforeEach(() => {
+  // 底栏上下文电池（ContextBar）挂载即拉取快照：stub 网络为常挂起，避免真实请求与 act 警告
+  vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>(() => {})))
   // 草稿持久化（M8）会写 localStorage：清空避免用例间串扰
   localStorage.clear()
   useAgentStore.setState({
@@ -90,6 +92,10 @@ beforeEach(() => {
     loadingMessages: false,
     artifactVersion: 0,
   })
+})
+
+afterEach(() => {
+  vi.unstubAllGlobals()
 })
 
 describe('Composer @ 自动补全', () => {
@@ -180,7 +186,7 @@ describe('M11 指挥台与首棒语义提示', () => {
   })
 })
 
-describe('M52-G 成员条让位（场景席位已覆盖全员）', () => {
+describe('ADR 0135 成员条统一常驻（全场景一致展示）', () => {
   /** 谈判桌 arena 编制：谭成（左席）/ 祁弈（右席）+ 苏纵（教练，未入席） */
   function setupArena(participantIds: string[]): void {
     useAgentStore.setState({
@@ -196,21 +202,29 @@ describe('M52-G 成员条让位（场景席位已覆盖全员）', () => {
     setSession(participantIds)
   }
 
-  it('arena 全员入席：成员条让位（席位承担召唤），@ 菜单仍可用', async () => {
+  it('arena 全员入席：成员条照常展示（与席位并存，点击插入 @名字）', async () => {
     setupArena(['negotiator', 'counterpart'])
     render(<Composer />)
-    expect(screen.queryByTitle(/召唤 谭成/)).toBeNull()
-    // 召唤能力未丢：@ 候选菜单仍可选中成员
     const user = userEvent.setup()
-    await user.type(screen.getByRole('textbox'), '@')
-    expect(screen.getByRole('listbox').textContent).toContain('谭成')
+    await user.click(screen.getByTitle(/召唤 谭成/))
+    expect(screen.getByRole('textbox')).toHaveValue('@谭成 ')
   })
 
-  it('arena 有未入席成员：成员条保留（新人可见可召唤）', () => {
+  it('arena 部分入席：成员条同样展示（全员可见可召唤）', () => {
     setupArena(['negotiator', 'counterpart', 'coach'])
     render(<Composer />)
     expect(screen.getByTitle(/召唤 谭成/)).not.toBeNull()
     expect(screen.getByTitle(/召唤 苏纵/)).not.toBeNull()
+  })
+
+  it('roundtable：席位环展示不取代成员条（统一常驻）', () => {
+    useAgentStore.setState({
+      agents: [makeAgent('facilitator', '梅森', '主持人', 'brainstorm')],
+      groups: [makeGroup('brainstorm', { layout: 'roundtable' })],
+    })
+    setSession(['facilitator'])
+    render(<Composer />)
+    expect(screen.getByTitle(/召唤 梅森/)).not.toBeNull()
   })
 
   it('stream：无席位载体，成员条照常展示', () => {
@@ -219,7 +233,7 @@ describe('M52-G 成员条让位（场景席位已覆盖全员）', () => {
     expect(screen.getByTitle(/召唤 艾达/)).not.toBeNull()
   })
 
-  it('arena 切回纯列表：席位不渲染，成员条恢复', () => {
+  it('arena 切回纯列表：成员条照常展示', () => {
     setupArena(['negotiator', 'counterpart'])
     useSceneStore.setState({ listMode: true })
     render(<Composer />)

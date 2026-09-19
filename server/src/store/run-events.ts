@@ -10,7 +10,7 @@
  *
  * 观测写入失败绝不打断主流程（调用方兜底 try/catch）。
  */
-import type { TraceEntry } from '@multi-agent/shared'
+import type { SchedulingStats, TraceEntry } from '@multi-agent/shared'
 import type { AppDb } from './db.js'
 import { nowIso } from './sessions.js'
 
@@ -20,6 +20,8 @@ export interface RunEventInput {
   turnIndex?: number
   type: string
   payload?: Record<string, unknown>
+  /** M57：用户归因（users.id；缺省 = 单用户兼容模式） */
+  userId?: string
 }
 
 export interface RunEventStats {
@@ -44,13 +46,14 @@ export class RunEventStore {
 
   record(input: RunEventInput): void {
     this.db.run(
-      `INSERT INTO run_events (run_id, session_id, turn_index, type, payload, ts)
-       VALUES (?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO run_events (run_id, session_id, turn_index, type, payload, user_id, ts)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
       input.runId,
       input.sessionId,
       Math.max(0, Math.round(input.turnIndex ?? 0)),
       input.type,
       JSON.stringify(input.payload ?? {}),
+      input.userId ?? null,
       nowIso(),
     )
   }
@@ -95,6 +98,30 @@ export class RunEventStore {
       }
     }
     return { runs, turns, compressions, avgTurnMs: n > 0 ? Math.round(total / n) : 0 }
+  }
+
+  /** M61-D6：调度健康聚合（路由 / 波次 / 抑制 / 冲突 / 接单）——payload 条件在 JS 侧判定 */
+  schedulingStats(sinceMs?: number): SchedulingStats {
+    const where = sinceMs ? 'AND ts >= ?' : ''
+    const params: string[] = sinceMs ? [new Date(Date.now() - sinceMs).toISOString()] : []
+    const payloads = (type: string): Array<Record<string, unknown>> =>
+      this.db
+        .all<{ payload: string }>(`SELECT payload FROM run_events WHERE type = ? ${where}`, type, ...params)
+        .map((r) => parsePayload(r.payload))
+    const routeAll = payloads('routing:dispatched')
+    const scheduleAll = payloads('schedule')
+    const waves = payloads('wave:start')
+    return {
+      runs: this.count(`type = 'run:start' ${where}`, params),
+      routes: routeAll.filter((p) => p.fallback !== true).length,
+      routeFallbacks: routeAll.filter((p) => p.fallback === true).length,
+      waves: waves.length,
+      parallelWaves: waves.filter((p) => p.parallel === true).length,
+      loopSuppressed: scheduleAll.filter((p) => p.loopSuppressed === true).length,
+      stallSuppressed: scheduleAll.filter((p) => p.stallSuppressed === true).length,
+      writeConflicts: this.count(`type = 'wave:write-conflict' ${where}`, params),
+      handoffAccepted: this.count(`type = 'handoff:accepted' ${where}`, params),
+    }
   }
 
   private count(where: string, params: string[]): number {

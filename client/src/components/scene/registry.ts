@@ -8,7 +8,7 @@ import { ArenaStage } from './ArenaStage'
 import { DockStage } from './DockStage'
 import { RoundtableStage } from './RoundtableStage'
 import { StreamStage } from './StreamStage'
-import { BoardPanel, ChartboardPanel, CoachPanel, ConsolePanel, PoolPanel, VersusPanel } from './panels'
+import { BoardPanel, ChartboardPanel, CoachPanel, ConsolePanel, PoolPanel, StudioPanel, VersusPanel } from './panels'
 
 export interface StageContainerProps {
   children: React.ReactNode
@@ -30,22 +30,19 @@ export const STAGE_PANEL_COMPONENTS: Record<StagePanel, React.ComponentType> = {
   console: ConsolePanel,
   coach: CoachPanel,
   chartboard: ChartboardPanel,
+  studio: StudioPanel,
 }
 
-/** 合法元件名 → 中文名（stage.parts 声明口径；空声明 = 场景默认集） */
+/** 合法元件名 → 中文名（stage.parts 声明口径；空声明 = 场景默认集全启用）。
+ *  v68：收敛为实际受 parts 控制的 arena 五件套（其余视觉元件为容器 / 面板内部固定组成，不参与裁剪）。
+ *  M63（U2）：六件套——新增 cross-fire（交锋看板，findings 配对聚合）。*/
 export const PART_NAMES: Record<string, string> = {
   'round-track': '回合轴',
   scoreboard: '计分板',
-  'seat-card': '席位卡',
-  'seat-ring': '席位环',
-  'momentum-bar': '局势条',
-  'claim-tree': '论证树',
-  'agenda-track': '议程推进条',
-  kanban: '管道看板',
-  'progress-grid': '打卡进度',
-  'delivery-panel': '交付件面板',
-  verdict: '裁决卡',
-  panboard: '盘面板',
+  verdicts: '裁决流',
+  'claim-tree': '论断树',
+  offers: '报价流',
+  'cross-fire': '交锋看板',
 }
 
 /** stage.parts 是否启用某元件（声明为空 = 场景默认集全启用） */

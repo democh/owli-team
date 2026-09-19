@@ -95,7 +95,7 @@ export function AgentsDirectory(): React.JSX.Element {
                     style={group ? { borderTopColor: group.theme[0], borderTopWidth: 2 } : undefined}
                   >
                     <div className="flex items-start gap-3">
-                      <AgentAvatar agent={a} size={64} animated={false} className="rounded-lg" />
+                      <AgentAvatar agent={a} size={64} animated={false} />
                       <div className="min-w-0 flex-1">
                         <div className="flex flex-wrap items-center gap-1.5">
                           <span className="text-[14px] font-semibold">{a.name}</span>
@@ -158,6 +158,10 @@ export function AgentsDirectory(): React.JSX.Element {
                               </div>
                             </div>
                           ))}
+                          {/* M77：多套人格可同时入编（分身同台）——名录页提供用法提示 */}
+                          <p className="pt-0.5 text-[10px] leading-4 text-muted-foreground/80">
+                            可同台：组队台「参与性格」多选即分身入编；@名字 召集主实例（编制首位），@名字·灵魂名 点名单个；全员请逐一点名（@ 候选「全部 N 位」一键插入）。
+                          </p>
                         </div>
                       )}
                     </div>

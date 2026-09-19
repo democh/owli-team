@@ -168,6 +168,12 @@ export function GenerationPanel(): React.JSX.Element | null {
   const [duration, setDuration] = React.useState(5)
   const [quantity, setQuantity] = React.useState(1)
   const [submitting, setSubmitting] = React.useState(false)
+  /** M31 修订：画布选中节点对应的任务 id（任务行高亮：点选画布节点 → 面板行互链） */
+  const selectedJobId = useCanvasStore((s) => {
+    if (s.selectedIds.length !== 1) return undefined
+    const n = s.doc?.nodes.find((x) => x.id === s.selectedIds[0])
+    return (n?.data as { jobId?: string } | undefined)?.jobId
+  })
 
   const provider: MediaProviderInfo | undefined = providers.find((p) => p.connectionId === providerId) ?? providers[0]
   const capabilities = React.useMemo(() => provider?.capabilities ?? [], [provider])
@@ -275,6 +281,13 @@ export function GenerationPanel(): React.JSX.Element | null {
   const activeJobs = jobs.filter((j) => j.status === 'queued' || j.status === 'running')
   const history = jobs.filter((j) => j.status === 'succeeded' || j.status === 'failed' || j.status === 'canceled')
 
+  /** M31 修订：任务行 hover → 画布上该任务的节点闪环（节点↔面板互链） */
+  const pulseJobNodes = (jobId: string): void => {
+    const d = useCanvasStore.getState().doc
+    const ids = (d?.nodes ?? []).filter((n) => (n.data as { jobId?: string }).jobId === jobId).map((n) => n.id)
+    if (ids.length > 0) useCanvasStore.getState().pulseNodes(ids)
+  }
+
   return (
     <div
       className="absolute right-3 top-3 z-30 flex w-[300px] flex-col overflow-hidden rounded-lg border bg-card/95 shadow-soft backdrop-blur"
@@ -323,7 +336,7 @@ export function GenerationPanel(): React.JSX.Element | null {
               <span className="text-[11.5px] leading-5 text-muted-foreground">
                 还没有可用的媒体生成连接。
                 <br />
-                到「设置 → 媒体生成」创建并启用（ComfyUI / SD WebUI / OpenAI 兼容 / 任务模板）后即可在画布直接生成。
+                到「设置 → 媒体生成」创建并启用后即可在画布直接生成。
               </span>
               <div className="mt-1 flex items-center gap-1.5">
                 <button
@@ -569,7 +582,14 @@ export function GenerationPanel(): React.JSX.Element | null {
           {activeJobs.length > 0 && (
             <div className="flex flex-col gap-1.5">
               {activeJobs.slice(0, 3).map((job) => (
-                <div key={job.id} className="rounded-md border bg-background/60 px-2 py-1.5">
+                <div
+                  key={job.id}
+                  className={cn(
+                    'rounded-md border bg-background/60 px-2 py-1.5 transition-colors',
+                    selectedJobId === job.id && 'border-primary/40 bg-primary/5',
+                  )}
+                  onMouseEnter={() => pulseJobNodes(job.id)}
+                >
                   <div className="flex items-center gap-1.5 text-[10.5px] text-muted-foreground">
                     <Loader2 className="size-3 animate-spin" aria-hidden />
                     <span className="shrink-0">{CAPABILITY_LABEL[job.capability]}</span>
@@ -600,7 +620,14 @@ export function GenerationPanel(): React.JSX.Element | null {
             <div className="flex flex-col gap-1">
               <span className="text-[10.5px] font-medium text-muted-foreground/80">最近任务</span>
               {history.slice(0, HISTORY_VISIBLE).map((job) => (
-                <div key={job.id} className="group flex items-center gap-1.5 rounded-md px-1 py-0.5 hover:bg-accent/60">
+                <div
+                  key={job.id}
+                  className={cn(
+                    'group flex items-center gap-1.5 rounded-md px-1 py-0.5 hover:bg-accent/60',
+                    selectedJobId === job.id && 'bg-primary/5 ring-1 ring-primary/30',
+                  )}
+                  onMouseEnter={() => pulseJobNodes(job.id)}
+                >
                   {statusIcon(job)}
                   {job.status === 'succeeded' && job.outputs[0] && sessionId ? (
                     outputKindOf(job.capability) === 'image' ? (

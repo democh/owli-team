@@ -324,6 +324,8 @@ export class ScheduleService {
     const message = sessions.appendMessage({
       sessionId: task.sessionId,
       role: 'user',
+      // M57：定时触发以会话属主名义注入（多用户署名 / 归因）
+      userId: sessions.getSession(task.sessionId)?.ownerId,
       content: `@${target} ${task.instruction}`,
       mentions: [target],
       status: 'complete',

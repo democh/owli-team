@@ -31,7 +31,7 @@ export function SeatStrip({
             title={`${agent.name} · ${agent.role}`}
             onClick={() => onSelect?.(agent.id)}
           >
-            <AgentAvatar agent={agent} size={24} animated={speaking} className="rounded-full ring-2 ring-background" />
+            <AgentAvatar agent={agent} size={24} animated={speaking} className="ring-2 ring-background" />
             <span className="scene-strip-name">{agent.name}</span>
           </button>
         )

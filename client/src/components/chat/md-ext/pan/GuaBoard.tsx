@@ -21,7 +21,16 @@ function segName(seg: string): string {
 
 /** 小六爻图见 parts.MiniGua（错·综预览与摇卦台共用） */
 
-export function GuaBoard({ model, onOpenToss }: { model: GuaModel; onOpenToss?: () => void }): React.JSX.Element {
+export function GuaBoard({
+  model,
+  onAsk,
+  onOpenToss,
+}: {
+  model: GuaModel
+  /** 草稿回填（M63-A：请教此爻）；缺省 noop */
+  onAsk?: (text: string) => void
+  onOpenToss?: () => void
+}): React.JSX.Element {
   const firstDong = model.yao.find((y) => y.dong)
   const [sel, setSel] = React.useState<number>(firstDong ? firstDong.pos : 1)
   const [theater, setTheater] = React.useState(false)
@@ -87,6 +96,16 @@ export function GuaBoard({ model, onOpenToss }: { model: GuaModel; onOpenToss?: 
 
   const showBian = (y: GuaYao): boolean => y.bian !== undefined && (theater || sel === y.pos)
 
+  // M63-A：请教此爻（含伏神与月日；§5.10 模板 18）
+  const askYao = (): void => {
+    const rel = selYao.dayRel && selYao.dayRel.length > 0 ? `（${selYao.dayRel.join('、')}）` : ''
+    const fu = selYao.fuShen
+      ? `；伏神 ${selYao.fuShen.liuQin} ${selYao.fuShen.ganZhi} ${selYao.fuShen.wuXing}（若有）`
+      : ''
+    const hint = selYao.bianHint ? `；变爻${selYao.bianHint}` : ''
+    onAsk?.(`请解读${posLabel(selYao)}爻（${selYao.liuQin}·${selYao.ganZhi}）的爻位与月日关系${rel}含义${fu}${hint}，及依据。`)
+  }
+
   return (
     <div className="pn-board pn-gua">
       <div className="pn-gua-title">
@@ -138,6 +157,12 @@ export function GuaBoard({ model, onOpenToss }: { model: GuaModel; onOpenToss?: 
                     空亡
                   </span>
                 ) : null}
+                {/* M63-A：月日关系标签（月破 / 日破 / 暗动 + 旺衰档；无字段 → 不渲染） */}
+                {y.dayRel && y.dayRel.length > 0 ? (
+                  <span className="pn-yao-rel" title={`月建日辰：${y.dayRel.join('、')}`}>
+                    {y.dayRel.join('·')}
+                  </span>
+                ) : null}
               </span>
               {model.digits ? <span className="pn-yao-digit">{model.digits[y.pos - 1]}</span> : null}
               <span className="pn-yao-badge">
@@ -146,6 +171,7 @@ export function GuaBoard({ model, onOpenToss }: { model: GuaModel; onOpenToss?: 
               {showBian(y) ? (
                 <span className="pn-yao-bian">
                   变 {y.bian!.ganZhi} {y.bian!.wuXing} {y.bian!.liuQin}
+                  {y.bianHint ? <em className="pn-bian-hint"> · {y.bianHint}</em> : null}
                 </span>
               ) : null}
             </button>
@@ -168,7 +194,17 @@ export function GuaBoard({ model, onOpenToss }: { model: GuaModel; onOpenToss?: 
             {selYao.bian ? (
               <span className="pn-detail-bian">
                 变：{selYao.bian.ganZhi} {selYao.bian.wuXing} {selYao.bian.liuQin}
+                {selYao.bianHint ? ` · ${selYao.bianHint}` : ''}
               </span>
+            ) : null}
+            {/* M63-A：伏神 / 月日关系（仅详情呈现，不参与主爻图） */}
+            {selYao.fuShen ? (
+              <span className="pn-detail-fu">
+                伏神 {selYao.fuShen.liuQin} {selYao.fuShen.ganZhi} {selYao.fuShen.wuXing}
+              </span>
+            ) : null}
+            {selYao.dayRel && selYao.dayRel.length > 0 ? (
+              <span className="pn-detail-rel">月日 {selYao.dayRel.join('·')}</span>
             ) : null}
           </div>
 
@@ -208,6 +244,9 @@ export function GuaBoard({ model, onOpenToss }: { model: GuaModel; onOpenToss?: 
               onClick={() => setCuoZong(cuoZong === 'zong' ? null : 'zong')}
             >
               综卦
+            </button>
+            <button type="button" className="pn-act pn-act-ask" onClick={askYao}>
+              请教此爻
             </button>
             {!hasDong ? <span className="pn-gua-nodong">无动爻</span> : null}
           </div>

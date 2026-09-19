@@ -26,6 +26,7 @@ import {
   X,
 } from 'lucide-react'
 import type { MemoryItem, MemoryKind, MemoryScope, MemoryStatus, RecalledMemory } from '@multi-agent/shared'
+import { baseAgentId } from '@multi-agent/shared'
 import { apiDelete, apiGet, apiPatch, apiPost } from '../../lib/api'
 import { cn } from '../../lib/utils'
 import { useAgentStore } from '../../stores/agent-store'
@@ -113,8 +114,18 @@ export function MemoryPanel(): React.JSX.Element {
   // supersede：展开选择替代者的条目 id
   const [supersedeFor, setSupersedeFor] = React.useState<string | null>(null)
 
-  // agent scope 的成员选择（默认会话首位成员）
-  const participantIds = session?.participantIds ?? []
+  // agent scope 的成员选择（默认会话首位成员；M77：按基础角色去重——记忆归属与 remember 工具同为角色级）
+  const participantIds = React.useMemo(() => {
+    const seen = new Set<string>()
+    const out: string[] = []
+    for (const key of session?.participantIds ?? []) {
+      const base = baseAgentId(key)
+      if (seen.has(base)) continue
+      seen.add(base)
+      out.push(base)
+    }
+    return out
+  }, [session])
   const [agentOwner, setAgentOwner] = React.useState('')
   const participantKey = participantIds.join(',')
   React.useEffect(() => {

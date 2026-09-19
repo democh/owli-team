@@ -458,9 +458,11 @@ const finWatchTool: AgentTool = {
     if (!guard.ok) return guard.result
     const store = ctx.financeStore
     if (!store) return { ok: false, summary: '自选列表未启用（服务端未装配 FinanceStore）' }
+    // M57：自选按用户（会话属主；单用户兼容模式 '' 口径）
+    const userId = ctx.userId ?? ''
 
     if (args.action === 'list') {
-      const items = store.list()
+      const items = store.list(userId)
       if (items.length === 0) return { ok: true, summary: '自选列表为空（用 action=add 添加）' }
       const rows = items.map((item) => [
         item.symbol,
@@ -490,17 +492,18 @@ const finWatchTool: AgentTool = {
         type: sym.type,
         name: sym.name ?? sym.symbol,
         ...(args.note ? { note: args.note } : {}),
+        userId,
       })
       return {
         ok: true,
         summary: `已${created ? '添加' : '更新'}自选：${item.name}（${item.symbol}）`,
-        detail: `自选总数：${store.count()}${item.note ? `\n备注：${item.note}` : ''}\n自选列表已同步。`,
+        detail: `自选总数：${store.count(userId)}${item.note ? `\n备注：${item.note}` : ''}\n自选列表已同步。`,
       }
     }
 
     // remove：先本地定位（支持带/不带交易所前缀），审批后删除
     const raw = args.symbol.trim()
-    const items = store.list()
+    const items = store.list(userId)
     const resolved = await resolveFinSymbol(guard.gateway, raw)
     const candidates = resolved.ok ? [resolved.symbol.symbol, raw] : [raw]
     const hit = items.find((item) => candidates.includes(item.symbol)) ?? items.find((item) => item.symbol.endsWith(raw))
@@ -509,9 +512,9 @@ const finWatchTool: AgentTool = {
     }
     const approval = await approveWrite(ctx, '移出自选列表', `将从自选列表移除：${hit.name}（${hit.symbol}）`)
     if (!approval.ok) return approval.result
-    const removed = store.remove(hit.symbol)
+    const removed = store.remove(hit.symbol, userId)
     return removed
-      ? { ok: true, summary: `已移除自选：${hit.name}（${hit.symbol}）`, detail: `自选剩余：${store.count()} 条` }
+      ? { ok: true, summary: `已移除自选：${hit.name}（${hit.symbol}）`, detail: `自选剩余：${store.count(userId)} 条` }
       : { ok: false, summary: `移除失败：「${hit.symbol}」可能已被删除` }
   },
 }

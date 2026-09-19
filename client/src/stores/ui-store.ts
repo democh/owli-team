@@ -31,13 +31,21 @@ export interface PanTossRequest {
   sessionId?: string
 }
 
+/** M78：抽牌台打开请求（AppLayout 级全局宿主 TarotRitualHost 消费；preset = 入口预设） */
+export interface TarotDrawRequest {
+  sessionId?: string
+  presetSpread?: 'single' | 'three' | 'cross'
+  presetQuestion?: string
+}
+
 /** M26：应用级视图（左侧 ActivityRail 切换；workspace = 现有三栏工作台） */
 // M27：新增 MCP 管理（第四入口）
 // M26 延伸：连接管理（自右栏「连接」面板迁入，全局资源收口 rail）
 // M36：设置（自弹窗升级为主区页，覆盖全部运行期设置与资源概览）
-export type AppView = 'workspace' | 'agents' | 'skills' | 'mcp' | 'connections' | 'settings'
+// M57：用户管理（admin；账号邀请 / 禁用 / 重置密码）
+export type AppView = 'workspace' | 'materials' | 'agents' | 'skills' | 'mcp' | 'connections' | 'settings' | 'users'
 
-export const APP_VIEWS: AppView[] = ['workspace', 'agents', 'skills', 'mcp', 'connections', 'settings']
+export const APP_VIEWS: AppView[] = ['workspace', 'materials', 'agents', 'skills', 'mcp', 'connections', 'settings', 'users']
 
 /** M26：应用视图持久化（刷新保持上次所在视图；非法值回退工作台） */
 const APP_VIEW_KEY = 'ma:appView'
@@ -200,6 +208,10 @@ interface UiState {
   quietMode: boolean
   /** 停留在对话页时新交付件计数（Tab 上的小角标） */
   newArtifactCount: number
+  /** M31 修订：不在画布页时 agent 画布写入计数（主区「画布」页签角标；切到画布即清零） */
+  newCanvasCount: number
+  /** M31 修订：其他会话的画布写入标记（会话列表小点；切到该会话即清零） */
+  otherCanvasWrites: Record<string, number>
   /** 最近一次更新的交付件路径（树高亮用） */
   lastArtifactPath?: string
   /** 接力目标（消息交付件 chip 点击 → 跳交付件页并选中） */
@@ -208,7 +220,7 @@ interface UiState {
   focusRequest?: { id: string; nonce: number }
   /** M8：⌘K 命令面板 */
   commandOpen: boolean
-  /** M8：上下文抽屉（用量条点击 / 命令面板） */
+  /** M8：上下文抽屉（底栏电池点击 / 命令面板） */
   contextOpen: boolean
   /** M8：内联编辑中的用户消息 id（编辑重发） */
   editingMessageId?: string
@@ -244,6 +256,14 @@ interface UiState {
   noteArtifact: (path?: string) => void
   /** 交付件角标清零（实况·交付件面可见 / 打开交付件工作台时调用） */
   clearArtifactCount: () => void
+  /** M31 修订：agent 画布写入通知入口（非画布页时累计角标，切到画布即清零） */
+  noteCanvasWrite: (count?: number) => void
+  /** M31 修订：画布角标清零（进入画布 / 合流看到写入时调用） */
+  clearCanvasCount: () => void
+  /** M31 修订：其他会话的画布写入（会话列表小点；跨会话 agent 写入提示） */
+  noteOtherCanvasWrite: (sessionId: string) => void
+  /** M31 修订：清零指定会话的画布写入标记（切到该会话时） */
+  clearOtherCanvasWrite: (sessionId: string) => void
   /** 交付件 chip 跳转：请求选中（右栏实况·交付件面钉住由 live-panel-store 订阅响应） */
   requestArtifact: (path: string) => void
   consumeArtifactRequest: () => void
@@ -274,6 +294,19 @@ interface UiState {
   openPanToss: (req: PanTossRequest) => void
   /** M54 续完善：关闭摇卦台 */
   closePanToss: () => void
+  /** M78：抽牌台打开请求（全局宿主消费；null = 关闭）——弹窗不随消息行回收 / 面板卸载消失 */
+  tarotDraw: TarotDrawRequest | null
+  /** M78：请求打开抽牌台（面板入口 / 消息卡 / 图鉴手记共用同一宿主） */
+  openTarotDraw: (req: TarotDrawRequest) => void
+  closeTarotDraw: () => void
+  /** M78：78 张图鉴弹窗开关（同一宿主族） */
+  tarotCodex: boolean
+  openTarotCodex: () => void
+  closeTarotCodex: () => void
+  /** M78：抽牌手记弹窗开关（同一宿主族） */
+  tarotJournal: boolean
+  openTarotJournal: () => void
+  closeTarotJournal: () => void
 }
 
 export const useUiStore = create<UiState>((set, get) => ({
@@ -285,16 +318,21 @@ export const useUiStore = create<UiState>((set, get) => ({
   leftPanelOpen: loadLeftPanelOpen(),
   quietMode: false,
   newArtifactCount: 0,
+  newCanvasCount: 0,
+  otherCanvasWrites: {},
   commandOpen: false,
   contextOpen: false,
   helpOpen: false,
   inviteOpen: false,
   panToss: null,
+  tarotDraw: null,
+  tarotCodex: false,
+  tarotJournal: false,
 
   setMainTab: (tab) => {
     if (tab === 'artifacts') set({ mainTab: tab, newArtifactCount: 0 })
-    // 回到常态层（对话 / 画布）清除深看返回目标；database / terminal 直切视为无来源的深看
-    else if (tab === 'chat' || tab === 'canvas') set({ mainTab: tab, deepFrom: undefined })
+    // 回到常态层（对话 / 画布）清除深看返回目标；进画布即清零写入角标（同交付件模式）
+    else if (tab === 'chat' || tab === 'canvas') set({ mainTab: tab, deepFrom: undefined, ...(tab === 'canvas' ? { newCanvasCount: 0 } : {}) })
     else set({ mainTab: tab })
   },
   setAppView: (view) => {
@@ -354,6 +392,17 @@ export const useUiStore = create<UiState>((set, get) => ({
       lastArtifactPath: path ?? s.lastArtifactPath,
     })),
   clearArtifactCount: () => set({ newArtifactCount: 0 }),
+  noteCanvasWrite: (count = 1) => set((s) => ({ newCanvasCount: s.newCanvasCount + count })),
+  clearCanvasCount: () => set({ newCanvasCount: 0 }),
+  noteOtherCanvasWrite: (sessionId) =>
+    set((s) => ({ otherCanvasWrites: { ...s.otherCanvasWrites, [sessionId]: (s.otherCanvasWrites[sessionId] ?? 0) + 1 } })),
+  clearOtherCanvasWrite: (sessionId) =>
+    set((s) => {
+      if (!s.otherCanvasWrites[sessionId]) return s
+      const next = { ...s.otherCanvasWrites }
+      delete next[sessionId]
+      return { otherCanvasWrites: next }
+    }),
   requestArtifact: (path) => set({ requestedArtifactPath: path, newArtifactCount: 0 }),
   consumeArtifactRequest: () => set({ requestedArtifactPath: undefined }),
   focusMessage: (id) =>
@@ -383,4 +432,10 @@ export const useUiStore = create<UiState>((set, get) => ({
   consumeCreate: () => set({ pendingCreate: undefined }),
   openPanToss: (req) => set({ panToss: req }),
   closePanToss: () => set({ panToss: null }),
+  openTarotDraw: (req) => set({ tarotDraw: req }),
+  closeTarotDraw: () => set({ tarotDraw: null }),
+  openTarotCodex: () => set({ tarotCodex: true }),
+  closeTarotCodex: () => set({ tarotCodex: false }),
+  openTarotJournal: () => set({ tarotJournal: true }),
+  closeTarotJournal: () => set({ tarotJournal: false }),
 }))

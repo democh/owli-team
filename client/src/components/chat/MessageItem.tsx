@@ -6,14 +6,18 @@
  */
 import * as React from 'react'
 import { toast } from 'sonner'
-import { Brain, ChevronDown, ClipboardList, Clock, Loader2, SearchCheck } from 'lucide-react'
+import { Brain, Calculator, ChevronDown, ClipboardList, Clock, Loader2, SearchCheck } from 'lucide-react'
 import { apiPatch, apiPost } from '../../lib/api'
+import { baseAgentId } from '@multi-agent/shared'
+import { labelOfMemberKey } from '../../lib/members'
 import { useAgentStore } from '../../stores/agent-store'
+import { useAuthStore } from '../../stores/auth-store'
 import { usePlanStore } from '../../stores/plan-store'
 import { useRunStore } from '../../stores/run-store'
 import { useSessionStore } from '../../stores/session-store'
 import { useUiStore } from '../../stores/ui-store'
 import { useThrottledValue } from '../../lib/hooks'
+import { calcExpressionOf } from '../../lib/calc-badge'
 import { formatClock } from '../../lib/time'
 import { cn } from '../../lib/utils'
 import { Badge } from '../ui/badge'
@@ -21,6 +25,7 @@ import { Button } from '../ui/button'
 import { AgentAvatar } from '../agents/AgentAvatar'
 import { Markdown } from './Markdown'
 import { DeliveryFiles } from './DeliveryList'
+import { ChangeCard, isChangeMessage } from './ChangeCard'
 import { MessageActions } from './MessageActions'
 import { MessageAttachments } from './MessageAttachments'
 import { ToolCallsPanel } from './ToolCard'
@@ -42,6 +47,20 @@ function ScheduleBadge(): React.JSX.Element {
     >
       <Clock className="size-2.5" />
       定时
+    </span>
+  )
+}
+
+/** M41（FI-2）：口径校验徽章——消息内成功执行 calc 时亮「已核算」，hover 展示表达式（不新增工具面） */
+function CalcBadge({ expr }: { expr: string }): React.JSX.Element {
+  return (
+    <span
+      data-calc-badge=""
+      title={`已核算：${expr}`}
+      className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-1.5 text-[10.5px] font-medium leading-[1.7] text-emerald-600"
+    >
+      <Calculator className="size-3" aria-hidden />
+      已核算
     </span>
   )
 }
@@ -120,7 +139,12 @@ function MessageItemInner({ messageId }: { messageId: string }): React.JSX.Eleme
   const message = useSessionStore((s) => s.byId.get(messageId))
   const agents = useAgentStore((s) => s.agents)
   const groups = useAgentStore((s) => s.groups)
+  // M77：成员实例标签（同角多魂 = `名字·灵魂名`；经典/单实例 = 名字）
+  const session = useSessionStore((s) => s.sessions.find((x) => x.id === s.currentId))
   const flashed = useUiStore((s) => s.focusRequest?.id === messageId)
+  // M57 P2：共享会话人类署名（他人昵称表 + 本人 id；兼容模式 humanNames 为空 → 仍为「你」）
+  const myUserId = useAuthStore((s) => s.user?.id)
+  const humanNames = useSessionStore((s) => s.humanNames)
 
   // M37：消息级上下文（checklist / choice 容器需要 messageId 落交互态、sessionId 隔离存储键）
   const mdContext = React.useMemo<MdMessageInfo>(
@@ -138,6 +162,8 @@ function MessageItemInner({ messageId }: { messageId: string }): React.JSX.Eleme
       ? s.reviews.find((r) => r.runId === message.runId && r.agentId === message.agentId)
       : undefined,
   )
+  // M41（FI-2）：口径校验徽章（成功 calc 的表达式；无 calc → undefined）
+  const calcExpr = React.useMemo(() => calcExpressionOf(message?.toolCalls), [message?.toolCalls])
 
   // M8：内联编辑（编辑重发）——编辑态与草稿内聚在条目内
   const editing = useUiStore((s) => s.editingMessageId === messageId)
@@ -158,6 +184,8 @@ function MessageItemInner({ messageId }: { messageId: string }): React.JSX.Eleme
   const animate = Date.now() - Date.parse(message.createdAt) < ANIMATE_WINDOW_MS
   const agent = message.agentId ? agents.find((a) => a.id === message.agentId) : undefined
   const group = agent ? groups.find((g) => g.id === agent.group) : undefined
+  // M77：作者展示名（分身 = 名字·灵魂名）
+  const authorLabel = message.agentId ? labelOfMemberKey(agents, session, message.memberKey ?? message.agentId) : undefined
 
   const cancelEdit = (): void => {
     useUiStore.getState().startEditMessage(undefined)
@@ -192,6 +220,8 @@ function MessageItemInner({ messageId }: { messageId: string }): React.JSX.Eleme
   }
 
   if (message.role === 'user') {
+    // M57 P2：共享会话人类署名（他人消息显示昵称；自己/兼容模式仍为「你」）
+    const senderName = message.userId && message.userId !== myUserId ? (humanNames[message.userId] ?? '成员') : '你'
     return (
       <div
         id={`msg-${message.id}`}
@@ -206,7 +236,7 @@ function MessageItemInner({ messageId }: { messageId: string }): React.JSX.Eleme
             {message.scheduleId && <ScheduleBadge />}
             {message.mode && message.mode !== 'execute' && <ModeBadge mode={message.mode} />}
             <span>{formatClock(message.createdAt)}</span>
-            <span className="font-medium text-foreground">你</span>
+            <span className="font-medium text-foreground">{senderName}</span>
             <span className="flex items-center opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100 max-md:opacity-100">
               <MessageActions messageId={message.id} />
             </span>
@@ -251,14 +281,16 @@ function MessageItemInner({ messageId }: { messageId: string }): React.JSX.Eleme
                 <div className="mt-2 flex flex-wrap items-center gap-1.5 border-t border-primary/10 pt-2 text-[11px] text-muted-foreground">
                   <span>点名</span>
                   {message.mentions.map((id) => {
-                    const a = agents.find((x) => x.id === id)
+                    const a = agents.find((x) => x.id === baseAgentId(id))
                     return (
                       <span
                         key={id}
                         className="inline-flex items-center gap-1 rounded-full bg-card py-0.5 pl-0.5 pr-2 shadow-sm ring-1 ring-primary/15"
                       >
-                        <AgentAvatar agent={a} size={16} animated={false} className="rounded-full" />
-                        <span className="text-[10.5px] font-medium text-foreground">{a?.name ?? id}</span>
+                        <AgentAvatar agent={a} size={16} animated={false} />
+                        <span className="text-[10.5px] font-medium text-foreground">
+                          {labelOfMemberKey(agents, session, id)}
+                        </span>
                       </span>
                     )
                   })}
@@ -283,10 +315,10 @@ function MessageItemInner({ messageId }: { messageId: string }): React.JSX.Eleme
         flashed && 'msg-flash',
       )}
     >
-      <AgentAvatar agent={agent} size={34} state={avatarState} className="mt-0.5 rounded-md" />
+      <AgentAvatar agent={agent} size={34} state={avatarState} className="mt-0.5" />
       <div className="min-w-0 max-w-[82%] flex-1">
         <div className="mb-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11.5px] text-muted-foreground">
-          <span className="text-[12.5px] font-semibold text-foreground">{agent?.name ?? message.agentId}</span>
+          <span className="text-[12.5px] font-semibold text-foreground">{authorLabel ?? message.agentId}</span>
           {agent && <span className="turn-role">{agent.role}</span>}
           {message.mode && message.mode !== 'execute' &&
             (review ? <ReviewVerdictBadge verdict={review.verdict} /> : <ModeBadge mode={message.mode} />)}
@@ -295,6 +327,7 @@ function MessageItemInner({ messageId }: { messageId: string }): React.JSX.Eleme
               第 {message.turnIndex + 1} 波
             </span>
           )}
+          {calcExpr ? <CalcBadge expr={calcExpr} /> : null}
           <span className="text-[10.5px]">·</span>
           <span>{formatClock(message.createdAt)}</span>
           {message.status === 'stopped' && <Badge variant="warning">已停止</Badge>}
@@ -335,7 +368,12 @@ function MessageItemInner({ messageId }: { messageId: string }): React.JSX.Eleme
 
           {message.toolCalls && message.toolCalls.length > 0 && <ToolCallsPanel calls={message.toolCalls} />}
 
-          {message.artifacts && message.artifacts.length > 0 && <DeliveryFiles paths={message.artifacts} />}
+          {message.artifacts && message.artifacts.length > 0 &&
+            (isChangeMessage(message) ? (
+              <ChangeCard message={message} />
+            ) : (
+              <DeliveryFiles paths={message.artifacts} agentId={message.agentId} />
+            ))}
         </div>
 
         <HandoffBar message={message} />

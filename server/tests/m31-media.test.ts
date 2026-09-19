@@ -13,6 +13,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import type { MediaCapability, MediaConnectionConfig, MediaJob } from '@multi-agent/shared'
+import { CanvasStore } from '../src/canvas/store.js'
 import { SecretVault } from '../src/connections/crypto.js'
 import { deepReplaceVars, getPath, sleep } from '../src/media/adapters/http.js'
 import { MediaService } from '../src/media/service.js'
@@ -34,10 +35,12 @@ interface MediaEnv {
   artifacts: ArtifactStore
   service: MediaService
   published: PublishedNotification[]
+  /** M31 修订：装配的画布存储（canvas: true 时；落位用例专用） */
+  canvas?: CanvasStore
 }
 
 /** 每个用例独立 SQLite + Vault + workspace（互不污染）；notify 假体做深拷贝快照（job 引用会被原地更新） */
-function makeMediaEnv(opts: { concurrency?: number } = {}): MediaEnv {
+function makeMediaEnv(opts: { concurrency?: number; canvas?: boolean } = {}): MediaEnv {
   const dir = makeTmpDir('ma-m31-media-')
   const db = openDatabase(path.join(dir, 'app.db'))
   const vault = SecretVault.load({ keyFile: path.join(dir, 'secrets.key') })
@@ -52,8 +55,16 @@ function makeMediaEnv(opts: { concurrency?: number } = {}): MediaEnv {
       return input
     },
   } as unknown as NotifyHub
-  const service = new MediaService({ connections, artifacts, notify, concurrency: opts.concurrency })
-  return { dir, sessionId: session.id, connections, artifacts, service, published }
+  // M31 修订：画布落位用例才装配（与 index.ts 同口径：publish 转发 notify:canvas-changed）
+  const canvasStore = opts.canvas
+    ? new CanvasStore({
+        dataDir: dir,
+        publish: (sessionId, version, by, meta) =>
+          notify.publish({ type: 'notify:canvas-changed', sessionId, payload: { sessionId, version, by, ...meta } }),
+      })
+    : undefined
+  const service = new MediaService({ connections, artifacts, notify, concurrency: opts.concurrency, canvas: canvasStore })
+  return { dir, sessionId: session.id, connections, artifacts, service, published, canvas: canvasStore }
 }
 
 let connSeq = 0
@@ -525,5 +536,153 @@ describe('M31 适配器共享工具：deepReplaceVars 与 getPath', () => {
     expect(getPath(source, 'data.missing')).toBeUndefined()
     expect(getPath(source, '')).toBeUndefined()
     expect(getPath(undefined, 'a.b')).toBeUndefined()
+  })
+})
+
+describe('M31 修订：画布全周期落位（创建落占位 → 终态结算）', () => {
+  const canvasNotes = (env: MediaEnv): PublishedNotification[] =>
+    env.published.filter((p) => p.type === 'notify:canvas-changed')
+
+  it('create 落占位（pending / jobId / 尺寸 / canvasTarget）+ 广播；成功原地替换为产物', async () => {
+    const env = makeMediaEnv({ canvas: true })
+    createMediaConnection(env)
+    let release: (() => void) | undefined
+    env.service.register(
+      mockAdapter(async (_job, ctx) => {
+        await new Promise<void>((r) => {
+          release = r
+        })
+        return { outputs: [ctx.saveOutput(Buffer.from('x'), 'png')] }
+      }),
+    )
+    const job = jobOf(
+      env.service.create(env.sessionId, 'user', { capability: 'text2image', prompt: '占位', canvasTarget: { x: 40, y: 60 } }),
+    )
+    expect(job.placedCanvas).toBe(true)
+    expect(job.canvasNodeId).toMatch(/^nd_/)
+    const node = env.canvas!.get(env.sessionId).nodes.find((n) => n.id === job.canvasNodeId)!
+    expect(node.type).toBe('image')
+    expect(node.position).toEqual({ x: 40, y: 60 })
+    expect(node.width).toBe(280)
+    expect(node.height).toBe(200)
+    const data = node.data as { pending?: boolean; jobId?: string; source?: string }
+    expect(data.pending).toBe(true)
+    expect(data.jobId).toBe(job.id)
+    expect(data.source).toBe('generate')
+    const note = canvasNotes(env)[0]!
+    expect(note.payload.reason).toBe('media')
+    expect((note.payload.touched as { added: string[] }).added).toContain(job.canvasNodeId)
+
+    release!()
+    await until(() => env.service.get(job.id)!.status === 'succeeded')
+    const settled = env.canvas!.get(env.sessionId).nodes.find((n) => n.id === job.canvasNodeId)!
+    const sd = settled.data as { artifact?: string; pending?: boolean }
+    expect(sd.pending).toBe(false)
+    expect(sd.artifact).toBe(env.service.get(job.id)!.outputs[0])
+    expect(env.canvas!.get(env.sessionId).nodes).toHaveLength(1) // 原地替换，不新增
+  })
+
+  it('成功多产物：占位原地替换 + 附加产物按尺寸横向排开', async () => {
+    const env = makeMediaEnv({ canvas: true })
+    createMediaConnection(env)
+    env.service.register(
+      mockAdapter(async (_job, ctx) => ({
+        outputs: [ctx.saveOutput(Buffer.from('1'), 'png'), ctx.saveOutput(Buffer.from('2'), 'png')],
+      })),
+    )
+    const job = jobOf(
+      env.service.create(env.sessionId, 'user', { capability: 'text2image', prompt: '双图', canvasTarget: { x: 0, y: 0 } }),
+    )
+    await until(() => env.service.get(job.id)!.status === 'succeeded')
+    const nodes = env.canvas!.get(env.sessionId).nodes
+    expect(nodes).toHaveLength(2)
+    expect(nodes[0]!.id).toBe(job.canvasNodeId)
+    expect(nodes[1]!.position).toEqual({ x: 280 + 24, y: 0 })
+    expect((nodes[1]!.data as { pending?: boolean }).pending).toBe(false)
+    expect((nodes[1]!.data as { artifact?: string }).artifact).toBe(env.service.get(job.id)!.outputs[1])
+  })
+
+  it('失败：占位保留并标记 error（pending 清除，节点可重试）', async () => {
+    const env = makeMediaEnv({ canvas: true })
+    createMediaConnection(env)
+    env.service.register(
+      mockAdapter(async () => {
+        throw new Error('上游 500')
+      }),
+    )
+    const job = jobOf(env.service.create(env.sessionId, 'user', { capability: 'text2image', prompt: 'x' }))
+    await until(() => env.service.get(job.id)!.status === 'failed')
+    const node = env.canvas!.get(env.sessionId).nodes.find((n) => n.id === job.canvasNodeId)!
+    const data = node.data as { pending?: boolean; error?: string }
+    expect(data.pending).toBe(false)
+    expect(data.error).toContain('上游 500')
+  })
+
+  it('取消（排队中）：占位节点移除（不留残影）', async () => {
+    const env = makeMediaEnv({ canvas: true, concurrency: 1 })
+    createMediaConnection(env)
+    env.service.register(
+      mockAdapter(async (_job, ctx) => {
+        await sleep(600_000, ctx.signal)
+        throw new Error('不可达')
+      }),
+    )
+    const running = jobOf(env.service.create(env.sessionId, 'user', { capability: 'text2image', prompt: '跑着的' }))
+    const queued = jobOf(env.service.create(env.sessionId, 'user', { capability: 'text2image', prompt: '排队的' }))
+    expect(queued.status).toBe('queued')
+    expect(env.canvas!.get(env.sessionId).nodes).toHaveLength(2)
+    env.service.cancel(queued.id)
+    await until(() => env.service.get(queued.id)!.status === 'canceled')
+    expect(env.canvas!.get(env.sessionId).nodes.some((n) => n.id === queued.canvasNodeId)).toBe(false)
+    env.service.cancel(running.id)
+  })
+
+  it('未装配画布 / place_on_canvas=false：不落位、无 canvas 广播（placedCanvas 非 true）', async () => {
+    const env = makeMediaEnv() // 无 canvas
+    createMediaConnection(env)
+    env.service.register(mockAdapter(async (_job, ctx) => ({ outputs: [ctx.saveOutput(Buffer.from('x'), 'png')] })))
+    const job = jobOf(env.service.create(env.sessionId, 'user', { capability: 'text2image', prompt: 'x' }))
+    expect(job.placedCanvas).not.toBe(true)
+    expect(canvasNotes(env)).toHaveLength(0)
+    await until(() => env.service.get(job.id)!.status === 'succeeded')
+    expect(canvasNotes(env)).toHaveLength(0) // 结算也不广播
+
+    const env2 = makeMediaEnv({ canvas: true })
+    createMediaConnection(env2)
+    env2.service.register(mockAdapter(async (_job, ctx) => ({ outputs: [ctx.saveOutput(Buffer.from('x'), 'png')] })))
+    jobOf(env2.service.create(env2.sessionId, 'user', { capability: 'text2image', prompt: 'x', placeOnCanvas: false }))
+    expect(env2.canvas!.get(env2.sessionId).nodes).toHaveLength(0)
+    expect(canvasNotes(env2)).toHaveLength(0)
+  })
+
+  it('agent 任务：占位节点记录 by（作者徽标依据）；user 任务不记', async () => {
+    const env = makeMediaEnv({ canvas: true })
+    createMediaConnection(env)
+    env.service.register(
+      mockAdapter(async () => {
+        throw new Error('x')
+      }),
+    )
+    const byAgent = jobOf(env.service.create(env.sessionId, 'researcher', { capability: 'text2image', prompt: 'x' }))
+    const byUser = jobOf(env.service.create(env.sessionId, 'user', { capability: 'text2image', prompt: 'y' }))
+    const nodes = env.canvas!.get(env.sessionId).nodes
+    expect(nodes.find((n) => n.id === byAgent.canvasNodeId)!.by).toBe('researcher')
+    expect(nodes.find((n) => n.id === byUser.canvasNodeId)!.by).toBeUndefined()
+  })
+
+  it('并发任务无 canvasTarget：第二个占位自动错开（不重叠）', async () => {
+    const env = makeMediaEnv({ canvas: true })
+    createMediaConnection(env)
+    env.service.register(
+      mockAdapter(async () => {
+        throw new Error('x')
+      }),
+    )
+    const a = jobOf(env.service.create(env.sessionId, 'user', { capability: 'text2image', prompt: 'a' }))
+    const b = jobOf(env.service.create(env.sessionId, 'user', { capability: 'text2image', prompt: 'b' }))
+    const nodes = env.canvas!.get(env.sessionId).nodes
+    const na = nodes.find((n) => n.id === a.canvasNodeId)!
+    const nb = nodes.find((n) => n.id === b.canvasNodeId)!
+    expect(nb.position.x).toBeGreaterThan(na.position.x)
   })
 })

@@ -131,7 +131,7 @@ describe('lib/pk：对决分侧与阶段', () => {
     expect(duelPhaseOf(-1)).toBe('立论')
   })
 
-  it('duelTally：发言数 / 缺陷数 / 被响应数（跨消息提及口径）', () => {
+  it('duelTally：发言数 / 主张数 / 缺陷数 / 被响应数（跨消息提及口径）', () => {
     const tally = duelTally(
       [
         { role: 'agent', agentId: 'affirmative', content: '::: findings t\n- 缺陷 1 | a | b\n:::' },
@@ -142,8 +142,9 @@ describe('lib/pk：对决分侧与阶段', () => {
       ],
       { left: ['affirmative'], right: ['negative'] },
     )
-    expect(tally.left).toEqual({ speaks: 2, findings: 1, responded: 1 })
-    expect(tally.right).toEqual({ speaks: 2, findings: 1, responded: 1 })
+    // M63：tally 增 claims 字段（本用例无 claim 容器 → 0）
+    expect(tally.left).toEqual({ speaks: 2, claims: 0, findings: 1, responded: 1 })
+    expect(tally.right).toEqual({ speaks: 2, claims: 0, findings: 1, responded: 1 })
   })
 
   it('duelVerdictLabel：左右标签化胜负文案', () => {

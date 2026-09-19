@@ -27,6 +27,11 @@
  * （退避序列），重挂原管理页（目标仍在时）并恢复域 / 事件 / 帧流；重试耗尽才落 error + onClosed。
  * 重连期间状态为 reconnecting（区别于首次启动的 launching），动作入口（runExclusive / evaluateRaw / input）
  * 等待恢复结果，不产生误导性超时。
+ *
+ * 多用户治理（M62）：实例可被同用户多会话复用——后续会话强制新建管理页（forceFreshTarget），
+ * 他人管理页永不接管（isForeignTarget；含新页 / 空白页观察 / 回退候选三条路径），管理页变化
+ * 上报 runtime 占用表（onPageChange）；重连前端点再解析（resolveEndpoint）；对外暴露空闲判定
+ * 依据（lastActiveAt）与关闭原因（getCloseReason）。
  */
 import fs from 'node:fs'
 import path from 'node:path'
@@ -85,6 +90,16 @@ export interface BrowserSessionOptions {
   cdpFactory?: () => CdpClient
   /** 断线重连退避序列（ms）；重试耗尽后终止会话。测试可注入小值 */
   reconnectDelaysMs?: number[]
+  /** M62：强制新建管理页（复用实例的后续会话：不与既有会话抢页；重连时 preferTargetId 优先） */
+  forceFreshTarget?: boolean
+  /** M62：target 是否归其他会话管理（true → 永不接管；含回退候选过滤） */
+  isForeignTarget?: (targetId: string) => boolean
+  /** M62：管理页变化上报（runtime 占用表；undefined = 释放） */
+  onPageChange?: (targetId: string | undefined) => void
+  /** M62-B：重连前端点再解析（remote 换端口 / local 重启；返回 undefined = 沿用当前端点） */
+  resolveEndpoint?: () => Promise<string | undefined>
+  /** M62-B：端点更新通知（重连换端口成功后 runtime 落库） */
+  onEndpointChange?: (endpoint: string) => void
 }
 
 export interface SnapshotElement {
@@ -215,7 +230,8 @@ export class BrowserSession {
   readonly sessionId: string
   readonly connectionId?: string
   readonly backend: BrowserBackend
-  readonly endpoint: string
+  /** CDP 端点（M62-B：重连再解析成功后可更新） */
+  endpoint: string
   readonly createdAt = new Date().toISOString()
   /** 启动形态（无头 / 打开窗口）：信息面展示用 */
   readonly headless: boolean
@@ -261,6 +277,18 @@ export class BrowserSession {
   private busy = false
   /** 断线重连任务（进行中时动作入口等待；同一时刻仅一个） */
   private reconnectTask?: Promise<void>
+  /** M62：强制新建管理页（复用实例的后续会话） */
+  private readonly forceFreshTarget: boolean
+  /** M62：他人管理页判定（永不接管 / 非回退候选） */
+  private readonly isForeignTarget?: (targetId: string) => boolean
+  /** M62：管理页变化上报（runtime 占用表） */
+  private readonly onPageChange?: (targetId: string | undefined) => void
+  /** M62-B：重连前端点再解析 */
+  private readonly resolveEndpoint?: () => Promise<string | undefined>
+  /** M62-B：端点更新通知（重连换端口成功后落库） */
+  private readonly onEndpointChange?: (endpoint: string) => void
+  /** M62：最近活动时间戳（空闲回收判定：动作 / 人工输入 / 步骤） */
+  private lastActiveAtMs = Date.now()
 
   constructor(opts: BrowserSessionOptions) {
     this.id = opts.id
@@ -276,6 +304,11 @@ export class BrowserSession {
     this.cdpFactory =
       opts.cdpFactory ?? (() => new CdpClient({ keepaliveMs: opts.cfg.browserKeepaliveMs }))
     this.reconnectDelaysMs = opts.reconnectDelaysMs ?? RECONNECT_DELAYS_MS
+    this.forceFreshTarget = opts.forceFreshTarget ?? false
+    this.isForeignTarget = opts.isForeignTarget
+    this.onPageChange = opts.onPageChange
+    this.resolveEndpoint = opts.resolveEndpoint
+    this.onEndpointChange = opts.onEndpointChange
     this.viewport = { width: opts.cfg.browserViewportWidth, height: opts.cfg.browserViewportHeight }
   }
 
@@ -314,15 +347,29 @@ export class BrowserSession {
     this.blankPages.clear()
     for (const page of pages) this.trackPage(page)
 
+    // M62 页面分治：他人会话管理的页面永不接管（同步 / 异步切换与回退同源）；
+    // 无隔离需求时保持既有 attachToPage 语义（兼容模式与单实例场景零变化）
+    const isForeign = (targetId: string): boolean => this.isForeignTarget?.(targetId) ?? false
+    const hasForeign = pages.some((page) => page.targetId && isForeign(page.targetId))
     const preferred = opts.preferTargetId
     let attached: { sessionId: string; targetId: string }
-    if (preferred && pages.some((page) => page.targetId === preferred)) {
+    if (preferred && pages.some((page) => page.targetId === preferred) && !isForeign(preferred)) {
       const sessionId = await cdp.attachToTarget(preferred)
       attached = { sessionId, targetId: preferred }
+    } else if (this.forceFreshTarget || hasForeign) {
+      // 复用实例的后续会话：自建管理页（不与既有会话抢页；登录态仍在同 Profile）
+      const usable = pages.filter((page) => page.targetId && !isForeign(page.targetId))
+      const startUrl = opts.startUrl
+      const matched = startUrl ? usable.find((page) => page.url?.includes(startUrl)) : undefined
+      const target = matched ?? usable[0]
+      attached = target?.targetId
+        ? { sessionId: await cdp.attachToTarget(target.targetId), targetId: target.targetId }
+        : await cdp.createTargetAttach('about:blank')
     } else {
       attached = await cdp.attachToPage(opts.startUrl)
     }
     this.pageTargetId = attached.targetId
+    this.onPageChange?.(attached.targetId)
     // 初始地址取 attach 目标页；重连时目标页元数据缺失则保留最后已知地址
     this.currentUrl = this.knownPages.get(attached.targetId)?.url ?? this.currentUrl
 
@@ -435,6 +482,7 @@ export class BrowserSession {
     this.knownPages.clear()
     this.blankPages.clear()
     this.pendingSwitch = undefined
+    this.onPageChange?.(undefined)
     try {
       await this.cdp?.send('Page.stopScreencast', {}, { timeoutMs: 2_000 })
     } catch {
@@ -451,6 +499,25 @@ export class BrowserSession {
 
   isClosed(): boolean {
     return this.closed
+  }
+
+  /** M62：最近活动时间（空闲回收判定；动作 / 人工输入 / 步骤刷新） */
+  lastActiveAt(): number {
+    return this.lastActiveAtMs
+  }
+
+  /** M62：当前是否正在执行动作（空闲回收排除项） */
+  isBusy(): boolean {
+    return this.busy
+  }
+
+  /** M62：关闭原因（runtime 落库 / 健康回写用） */
+  getCloseReason(): string | undefined {
+    return this.closeReason
+  }
+
+  private touch(): void {
+    this.lastActiveAtMs = Date.now()
   }
 
   // ---------- 断线自愈 ----------
@@ -483,6 +550,13 @@ export class BrowserSession {
       await sleep(delays[attempt - 1] ?? 0)
       if (this.closed) return
       const cdp = this.cdpFactory()
+      // M62-B：端点再解析（remote 重启换端口 / local 重启后 DevToolsActivePort 漂移；失败沿用当前端点）
+      const resolved = await this.resolveEndpoint?.().catch(() => undefined)
+      if (resolved && resolved !== this.endpoint) {
+        this.endpoint = resolved
+        this.onEndpointChange?.(resolved)
+        getLogger().info({ browserSessionId: this.id, endpoint: resolved }, '浏览器端点已再解析（重连）')
+      }
       try {
         await cdp.connect(this.endpoint, RECONNECT_CONNECT_TIMEOUT_MS)
         await this.attachPipeline(cdp, { preferTargetId: this.pageTargetId })
@@ -533,6 +607,7 @@ export class BrowserSession {
       currentUrl: this.currentUrl,
       createdAt: this.createdAt,
       closedAt: this.closed ? new Date().toISOString() : undefined,
+      closeReason: this.closeReason,
       lastFrameAt: this.lastFrameAt,
       topic: `browser:${this.id}`,
     }
@@ -672,6 +747,8 @@ export class BrowserSession {
     if (!info || info.type !== 'page' || !info.targetId) return
     this.trackPage(info)
     if (info.targetId === this.pageTargetId) return
+    // M62：他人会话管理的页面：只跟踪，永不接管（含 opener 链 / 空白页观察路径）
+    if (this.isForeignTarget?.(info.targetId)) return
     if (!this.pageTargetId) {
       this.scheduleSwitch(info.targetId, '接管可用页面')
       return
@@ -695,6 +772,8 @@ export class BrowserSession {
     const info = (raw as { targetInfo?: TargetInfoLike }).targetInfo
     if (!info || info.type !== 'page' || !info.targetId) return
     this.trackPage(info)
+    // M62：他人会话管理的页面：仅同步元数据，不参与空白页观察 / 切换
+    if (info.targetId !== this.pageTargetId && (this.isForeignTarget?.(info.targetId) ?? false)) return
     const url = info.url ?? ''
     if (info.targetId === this.pageTargetId) {
       if (!isBlankUrl(url)) this.currentUrl = url
@@ -715,7 +794,10 @@ export class BrowserSession {
     this.blankPages.delete(targetId)
     if (targetId !== this.pageTargetId) return
     this.pageTargetId = undefined
-    const fallback = [...this.knownPages.keys()].pop()
+    this.onPageChange?.(undefined) // M62：释放占用登记（回退成功时由 doSwitch 重新登记）
+    const fallback = [...this.knownPages.keys()]
+      .filter((targetId) => !(this.isForeignTarget?.(targetId) ?? false))
+      .pop()
     if (fallback) {
       this.scheduleSwitch(fallback, '当前页面已关闭，回退到剩余页面')
       return
@@ -738,6 +820,7 @@ export class BrowserSession {
       }
       await cdp.attachToTarget(target.targetId)
       this.pageTargetId = target.targetId
+      this.onPageChange?.(target.targetId)
       await cdp.send('Page.enable', {}, { timeoutMs: 10_000 })
       await cdp.send('Runtime.enable', {}, { timeoutMs: 10_000 })
       try {
@@ -789,6 +872,7 @@ export class BrowserSession {
     } catch (err) {
       // attach 失败：旧 session 已断开且新页未接管 → 置空，让后续新页可重新接管
       if (this.pageTargetId === previousTarget) this.pageTargetId = undefined
+      this.onPageChange?.(undefined)
       this.recordStep({
         action: 'switch_page',
         args: { target: target.targetId },
@@ -804,6 +888,7 @@ export class BrowserSession {
 
   /** 人工接管（面板 watch → takeover；输入开始生效） */
   async takeover(actor = 'human'): Promise<void> {
+    this.touch()
     this.controller = 'human'
     this.setState('human')
     this.recordStep({ actor: 'human', action: 'takeover', ok: true, detail: `${actor} 接管控制` })
@@ -811,6 +896,7 @@ export class BrowserSession {
 
   /** 归还控制权给 Agent */
   async release(actor = 'human'): Promise<void> {
+    this.touch()
     this.controller = 'agent'
     this.setState('ready')
     this.recordStep({ actor: 'human', action: 'release', ok: true, detail: `${actor} 归还控制` })
@@ -818,6 +904,7 @@ export class BrowserSession {
 
   /** Agent 主动请求人工介入（登录 / 验证码 / 敏感确认） */
   async requestHuman(reason: string): Promise<void> {
+    this.touch()
     this.recordStep({ actor: 'agent', action: 'request_human', ok: true, detail: reason })
     this.setState('awaiting_human')
   }
@@ -830,6 +917,7 @@ export class BrowserSession {
   // ---------- 人工输入原语（也用于 agent 输入的底层实现） ----------
 
   private async rawInput(input: HumanInput): Promise<void> {
+    this.touch()
     await this.waitReconnect() // 断线重连中：等待恢复结果
     const cdp = this.requireCdp()
     switch (input.kind) {
@@ -908,6 +996,7 @@ export class BrowserSession {
 
   private runExclusive<T>(fn: () => Promise<T>): Promise<T> {
     const task = this.opChain.then(async () => {
+      this.touch()
       await this.waitReconnect() // 断线重连中：等待恢复结果
       if (this.closed) throw new Error('浏览器会话已关闭')
       await this.waitForAgentTurn()
@@ -1143,6 +1232,7 @@ export class BrowserSession {
   }
 
   private async evaluateRaw<T = unknown>(expression: string): Promise<T> {
+    this.touch()
     await this.waitReconnect() // 断线重连中：等待恢复结果
     await this.settlePages() // 评估前先对齐管理页（切换待执行时在此清结）
     const cdp = this.requireCdp()
@@ -1259,6 +1349,7 @@ export class BrowserSession {
     detail?: string
     screenshotPath?: string
   }): void {
+    this.touch()
     this.stepSeq += 1
     const step: BrowserStepRecord = {
       seq: this.stepSeq,

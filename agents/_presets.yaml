@@ -264,3 +264,73 @@ presets:
     prompt: |-
       组织一次星盘全解（本命 → 行运 → 合盘三段递进）：@司辰 先出本命盘结构与关键格局（相位 orb 口径注明），@星移 叠加当期行运重点时间窗（倾向描述不断言事件），@合璧 做合盘互动模式参考（双方知情前提）；收尾由 @合璧 将三段串成一份参考解读，挑战相位表述为课题与成长点。
     order: 260
+
+  - id: startup-launch
+    name: 创业启动
+    description: 想法到第一版计划：战略 / 财务 / 合规 / 获客 / 产品五方会审
+    icon: rocket
+    theme: ["#6366f1", "#34d399"]
+    members: [chief, finance, legal, growth, pm]
+    prompt: |-
+      组织一次创业启动会审：@柏川 先收敛商业模式与优先级（做什么 / 不做什么），@周正 给出启动资金与三个月现金流口径，@卢明 提示主体与合规红线，@高扬 制定冷启动获客动作，@费利 把第一版产品范围与验收清单定下来；收尾汇总为「启动路线图与首月行动计划」。
+    order: 320
+
+  - id: career-pivot
+    name: 职业转型
+    description: 定位 → 财务承受力 → 谈薪彩排：换赛道前的全链推演
+    icon: compass
+    theme: ["#0f766e", "#f59e0b"]
+    members: [career-advisor, wealth, tactician, interview-coach]
+    prompt: |-
+      组织一次职业转型推演：@程途 先做定位与路径规划（目标 / 差距 / 路线），@钱程 评估转型期的财务承受力（现金流断点与安全线），@苏纵 准备 offer 谈判策略与底线，@问达 做一轮模拟面试并逐轮复盘；收尾汇总为「转型路线图与风险预案」。
+    order: 330
+
+  - id: annual-review
+    name: 年度复盘
+    description: 经营 / 个人 / 财务 / 健康四维复盘：把一年变成下一年的基线
+    icon: calendar-clock
+    theme: ["#6366f1", "#f43f5e"]
+    members: [chief, coach, finance, fitness]
+    prompt: |-
+      主持年度复盘（四维并进）：@柏川 复盘经营面的关键决策与得失，@周正 给出财务三口径年度账（收入 / 成本 / 现金），@于清 梳理个人状态与精力曲线，@马骁 复盘健康执行与下一年基线；收尾汇总为「年度复盘报告与下一年三件大事」。
+    order: 340
+
+  - id: ecommerce-growth
+    name: 电商增长
+    description: 选品 → 店铺运营 → 取数 → 投流：一条链把盘口做起来
+    icon: package
+    theme: ["#ea580c", "#ec4899"]
+    members: [category-scout, store-operator, bi, growth]
+    prompt: |-
+      启动一轮电商增长：@探市 先做选品评估与保本测算，@守铺 排店铺节奏与定价区间（保本线硬约束），@沈析 建经营看板与取数口径（转化 / 退货 / 净利），@高扬 设计投流实验（指标 / 预算 / 止损线）；收尾汇总为「增长方案与本月动作表」。
+    order: 350
+
+  - id: content-monetize
+    name: 内容商业化
+    description: 定位 → 脚本 → 变现设计 → 财务口径：创作者拿到第一笔收入
+    icon: megaphone
+    theme: ["#86198f", "#22c55e"]
+    members: [account-strategist, script-writer, monetizer, finance]
+    prompt: |-
+      启动内容商业化：@立帜 先校准账号定位与商业化适配性，@先声 产出三类变现内容的脚本（广告 / 带货 / 付费），@点金 设计变现路径与报价区间（含红线自查），@周正 给个人经营的财务口径与税务提示；收尾汇总为「商业化方案与首发动作」。
+    order: 360
+
+  - id: home-makeover
+    name: 家装全案设计
+    description: 需求 → 布局 → 效果图全案：主案定风格、规划出布局、可视化出图
+    icon: armchair
+    theme: ["#0d9488", "#5eead4"]
+    members: [interior-designer, space-planner, visualizer]
+    prompt: |-
+      做一套家装全案设计（逐棒推进）：@成竹 先做需求研判与风格定位（情绪板方向 + 色材基调，走 styleboard），@规方 按方案口径出空间规划与布局数据（尺度校验 + scene 文件，走 layout），@塑光 搭 3D 场景并出核心视角效果图（先快照再图生图，走 render）；收尾由 @塑光 汇总方案总览与建议的下一步。
+    order: 270
+
+  - id: move-in-check
+    name: 入宅联审
+    description: 户型解析 → 堪舆点评 → 装修避让：入宅前的格局复核闭环
+    icon: compass
+    theme: ["#991b1b", "#fbbf24"]
+    members: [plan-surveyor, yangzhai-master, reno-designer]
+    prompt: |-
+      组织一次入宅前格局复核（先盘后论）：@察隅 先做户型解析与坐向采集（含数据等级与存疑项），@司南 排盘做分维度点评与改善参考（盘面走 `::: pan luopan` 整卡），@筑居 按点评结论做装修避让与预算校核（涉结构拆改标注需现场核实）。
+    order: 370

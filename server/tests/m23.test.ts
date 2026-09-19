@@ -7,6 +7,7 @@
  * - SSH 连接器：注入 FakeSshClient（EventEmitter 替身）——认证解析 / 连接建立 / 命令收集与截断 / PTY 窗口；
  * - SSH 管理器：allowExec 护栏 / 句柄缓存指纹重建 / 测试探测 / 终端独立连接 / 审计（成功与失败）；
  * - /ws/ssh 终端通道：真实 WS 客户端 —— token 一次性 / 二进制回显 / resize / ping-pong / exit；
+ * - SSH「本地」预置：探测（用户名 / Agent / 默认私钥 / 22 端口；依赖注入零触网）+ 路由形状；
  * - ssh_exec 工具：会话绑定 → 管理器 → notify:op 全链路。
  */
 import { EventEmitter } from 'node:events'
@@ -14,10 +15,13 @@ import fs from 'node:fs'
 import http from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { createRequire } from 'node:module'
+import os from 'node:os'
 import path from 'node:path'
+import express from 'express'
 import { describe, expect, it } from 'vitest'
 import type { Client, ClientChannel, ConnectConfig } from 'ssh2'
 import { WebSocket as WsClient, type RawData } from 'ws'
+import type { SshLocalPreset } from '@multi-agent/shared'
 import { StreamTokenService } from '../src/browser/stream-token.js'
 import type { AppConfig } from '../src/config.js'
 import { loadConfig } from '../src/config.js'
@@ -33,6 +37,9 @@ import {
   type SshClientFactory,
 } from '../src/connections/ssh/connector.js'
 import { SshConnectionManager } from '../src/connections/ssh/manager.js'
+import { detectSshLocalPreset } from '../src/connections/ssh/local-preset.js'
+import { createConnectionsRouter } from '../src/routes/connections.js'
+import type { ApiDeps } from '../src/routes/index.js'
 import { SshTerminalHub } from '../src/ssh-terminal.js'
 import { ArtifactStore } from '../src/store/artifacts.js'
 import { AuditStore } from '../src/store/audit.js'
@@ -725,8 +732,7 @@ describe('M23：ssh_exec 工具', () => {
       allowRunCommand: false,
       allowedCommands: [],
       allowSensitive: false,
-      webFetchAllowedDomains: [],
-      webSearch: { enabled: false, apiKey: '', apiUrl: '', htmlUrl: '' },
+      webSearch: { apiKey: '', apiUrl: '', htmlUrl: '' },
       httpUserAgent: '',
       httpMinIntervalMs: 0,
       httpTimeoutMs: 15_000,
@@ -819,5 +825,124 @@ describe('M23：ssh_exec 工具', () => {
     expect(ops).toHaveLength(0)
     await ssh.closeAll()
     await env.manager.closeAll()
+  })
+})
+
+// ---------- SSH「本地」预置（探测 / 路由） ----------
+
+describe('M23：SSH「本地」预置（探测）', () => {
+  /** 临时 home：按需造 ~/.ssh 默认私钥（零触网） */
+  function makeHome(keys: string[] = []): string {
+    const home = makeTmpDir('ma-m23-home-')
+    fs.mkdirSync(path.join(home, '.ssh'), { recursive: true })
+    for (const key of keys) fs.writeFileSync(path.join(home, '.ssh', key), 'KEY')
+    return home
+  }
+  const offline = async (): Promise<boolean> => false
+
+  it('默认键：名称「本地」/ 主机 127.0.0.1 / 端口 22 / 用户名透传', async () => {
+    const preset = await detectSshLocalPreset({ homeDir: makeHome(), env: {}, username: 'ann', probePort: offline })
+    expect(preset).toMatchObject({ name: '本地', host: '127.0.0.1', port: 22, username: 'ann' })
+    expect(preset.agentAvailable).toBe(false)
+    expect(preset.sshdReachable).toBe(false)
+  })
+
+  it('认证优先级：agent（SSH_AUTH_SOCK）> key（默认私钥）> password；私钥序 ed25519 → rsa', async () => {
+    // 无 agent 无私钥 → password（不带 privateKeyPath）
+    const pwd = await detectSshLocalPreset({ homeDir: makeHome(), env: {}, username: 'ann', probePort: offline })
+    expect(pwd.authMethod).toBe('password')
+    expect(pwd.privateKeyPath).toBeUndefined()
+    // 仅 id_rsa → key + ~/.ssh/id_rsa
+    const rsa = await detectSshLocalPreset({ homeDir: makeHome(['id_rsa']), env: {}, username: 'ann', probePort: offline })
+    expect(rsa.authMethod).toBe('key')
+    expect(rsa.privateKeyPath).toBe('~/.ssh/id_rsa')
+    // ed25519 + rsa → 取 ed25519（候选优先级）
+    const both = await detectSshLocalPreset({
+      homeDir: makeHome(['id_ed25519', 'id_rsa']),
+      env: {},
+      username: 'ann',
+      probePort: offline,
+    })
+    expect(both.privateKeyPath).toBe('~/.ssh/id_ed25519')
+    // agent 在场 → 优先 agent（即使默认私钥存在也不带 privateKeyPath）
+    const agent = await detectSshLocalPreset({
+      homeDir: makeHome(['id_ed25519']),
+      env: { SSH_AUTH_SOCK: '/tmp/agent.sock' },
+      username: 'ann',
+      probePort: offline,
+    })
+    expect(agent.authMethod).toBe('agent')
+    expect(agent.agentAvailable).toBe(true)
+    expect(agent.privateKeyPath).toBeUndefined()
+  })
+
+  it('22 端口探测：可达 / 不可达两态透传；探测参数为本机 127.0.0.1:22', async () => {
+    const reachable = await detectSshLocalPreset({
+      homeDir: makeHome(),
+      env: {},
+      username: 'ann',
+      probePort: async () => true,
+    })
+    expect(reachable.sshdReachable).toBe(true)
+    const calls: Array<[string, number]> = []
+    const unreachable = await detectSshLocalPreset({
+      homeDir: makeHome(),
+      env: {},
+      username: 'ann',
+      probePort: async (host, port) => {
+        calls.push([host, port])
+        return false
+      },
+    })
+    expect(unreachable.sshdReachable).toBe(false)
+    expect(calls).toEqual([['127.0.0.1', 22]])
+  })
+})
+
+/** 最小路由夹具（单用户模式：管理面守卫直通；本文件仅访问 ssh-preset） */
+async function startConnApi(partial: Record<string, unknown>): Promise<{ url: string; close: () => Promise<void> }> {
+  const app = express()
+  app.use(express.json())
+  app.use('/api', createConnectionsRouter({ access: { multiUser: false }, ...partial } as unknown as ApiDeps))
+  const server = app.listen(0, '127.0.0.1')
+  await new Promise<void>((resolve) => server.once('listening', resolve))
+  const { port } = server.address() as AddressInfo
+  return {
+    url: `http://127.0.0.1:${port}`,
+    close: () => new Promise<void>((resolve) => server.close(() => resolve())),
+  }
+}
+
+describe('M23：SSH「本地」预置（路由）', () => {
+  it('GET /api/connections/ssh-preset：真实环境探测的有界形状（不受本机 sshd / 私钥存在与否影响）', async () => {
+    const env = makeEnv()
+    const api = await startConnApi({ connections: env.connections, audit: env.audit })
+    try {
+      const res = await fetch(`${api.url}/api/connections/ssh-preset`)
+      expect(res.status).toBe(200)
+      const { preset } = (await res.json()) as { preset: SshLocalPreset }
+      expect(preset.name).toBe('本地')
+      expect(preset.host).toBe('127.0.0.1')
+      expect(preset.port).toBe(22)
+      expect(preset.username).toBe(os.userInfo().username)
+      expect(['agent', 'key', 'password']).toContain(preset.authMethod)
+      expect(typeof preset.agentAvailable).toBe('boolean')
+      expect(typeof preset.sshdReachable).toBe('boolean')
+    } finally {
+      await api.close()
+    }
+  })
+
+  it('路由优先于 /connections/:id（不得被 id 参数吞没为 404）', async () => {
+    const env = makeEnv()
+    const api = await startConnApi({ connections: env.connections, audit: env.audit })
+    try {
+      // 无连接时 /connections/ssh-preset 仍为巡检面而非「连接不存在」
+      const res = await fetch(`${api.url}/api/connections/ssh-preset`)
+      expect(res.status).toBe(200)
+      expect((await res.json()) as { preset?: unknown }).toHaveProperty('preset')
+    } finally {
+      await api.close()
+    }
   })
 })

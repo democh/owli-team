@@ -181,7 +181,7 @@ const finSearchTool: AgentTool = {
   tier: 'deferred',
   readOnly: true,
   description:
-    '金融标的搜索：按代码 / 名称 / 拼音首字母检索 A 股股票、ETF、场外基金与指数，返回归一化 symbol（如 sh600519）供 fin_quote / fin_kline 等工具使用。用户只给了名称或不确定代码时先用本工具。',
+    '金融标的搜索：按代码 / 名称 / 拼音首字母检索 A 股股票、ETF、场外基金与指数，返回归一化 symbol（如 sh600519）供 fin_quote / fin_kline 等工具使用。用户只给了名称或不确定代码时先用本工具。仅匹配标的本身；概念、主题、财务指标等语义检索（如「业绩增长」「高股息」）请改用 web_search 或 fin_news。',
   parameters: {
     type: 'object',
     properties: {
@@ -202,8 +202,12 @@ const finSearchTool: AgentTool = {
       if (rows.length === 0) {
         return {
           ok: false,
-          summary: `未找到匹配「${args.query}」的标的（可换关键词，或直接用 6 位代码 / sh600519 形式）`,
-          ...(res.degraded ? { detail: `检索降级：${res.degraded}` } : {}),
+          summary: `未找到匹配「${args.query}」的标的：本工具仅检索标的名称 / 代码 / 拼音首字母，不检索概念与主题`,
+          detail: [
+            '若目标为概念 / 主题 / 资讯（如「业绩增长」「新能源政策」），请改用 web_search（联网检索）或 fin_news（财经资讯 / 公告）。',
+            '若确为标的检索：可换关键词（全称 / 简称 / 拼音首字母），或直接使用 6 位代码 / sh600519 形式。',
+            ...(res.degraded ? [`检索降级：${res.degraded}`] : []),
+          ].join('\n'),
         }
       }
       const lines = rows.map((row) => `${TYPE_LABELS[row.type]}｜${row.name}（${row.exchange ?? ''}${row.code}）`)
@@ -649,7 +653,7 @@ const finFundTool: AgentTool = {
   tier: 'deferred',
   readOnly: true,
   description:
-    '基金 / ETF 档案：规模、管理费率、跟踪指数、前十大持仓、分红与近 1/3/6/12 月收益。kind=etf 查场内 ETF（代码如 510300），kind=fund 查场外基金（6 位代码如 005827）。',
+    '基金 / ETF 档案：规模、管理费率、跟踪指数、前十大持仓、分红与近 1/3/6/12 月收益。kind=etf 查场内 ETF（代码如 510300），kind=fund 查场外基金（6 位代码如 005827）。档案字段随基金类型可缺（如货币基金无持仓），缺省属正常。',
   parameters: {
     type: 'object',
     properties: {

@@ -1,8 +1,9 @@
 /**
- * 指标接口（M5 / M9）：
- * - GET /metrics/tools   —— 工具执行观测（次数 / 失败率 / 平均耗时）
- * - GET /metrics/summary —— 全局汇总（回合数 / token / 费用 / 压缩次数 / 平均回合耗时 / 好评率）
- * 数据源：run_events（回合与压缩统计）+ usage（token/费用）+ tool_metrics（工具）+ feedback（反馈）。
+ * 指标接口（M5 / M9 / M61）：
+ * - GET /metrics/tools      —— 工具执行观测（次数 / 失败率 / 平均耗时）
+ * - GET /metrics/summary    —— 全局汇总（回合数 / token / 费用 / 压缩次数 / 平均回合耗时 / 好评率）
+ * - GET /metrics/scheduling —— 调度健康聚合（M61-D6：路由 / 波次 / 抑制 / 冲突 / 接单）
+ * 数据源：run_events（回合与压缩统计 / 调度轨迹）+ usage（token/费用）+ tool_metrics（工具）+ feedback（反馈）。
  */
 import { Router } from 'express'
 import type { MetricsSummary } from '@multi-agent/shared'
@@ -39,6 +40,13 @@ export function createMetricsRouter(deps: ApiDeps): Router {
       avgTurnMs: events.avgTurnMs,
     }
     res.json({ summary, byKind: usage.byKind, tools, feedback: deps.feedback.stats(window) })
+  })
+
+  // GET /api/metrics/scheduling?sinceMs= → 调度健康聚合（M61-D6）
+  router.get('/metrics/scheduling', (req, res) => {
+    const sinceMs = Number(req.query.sinceMs)
+    const window = Number.isFinite(sinceMs) && sinceMs > 0 ? sinceMs : undefined
+    res.json({ scheduling: deps.events.schedulingStats(window) })
   })
 
   return router

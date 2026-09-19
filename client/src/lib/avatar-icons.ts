@@ -4,10 +4,12 @@
 import {
   Activity,
   Apple,
+  Armchair,
   Baby,
   Banknote,
   Binoculars,
   BookOpen,
+  Box,
   Brain,
   Briefcase,
   Bug,
@@ -43,6 +45,7 @@ import {
   Package,
   Palette,
   PawPrint,
+  PencilRuler,
   PenTool,
   PieChart,
   PiggyBank,
@@ -50,6 +53,7 @@ import {
   Presentation,
   Receipt,
   Rocket,
+  Ruler,
   Scale,
   Search,
   Server,
@@ -151,6 +155,11 @@ export const ICON_REGISTRY: Record<string, LucideIcon> = {
   newspaper: Newspaper,
   // M48：路由 / 协作节点图标
   waypoints: Waypoints,
+  // M65-A：家装设计工作室（场景 / 角色图标）
+  armchair: Armchair,
+  'pencil-ruler': PencilRuler,
+  ruler: Ruler,
+  box: Box,
 }
 
 export function resolveIcon(name?: string): LucideIcon {

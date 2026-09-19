@@ -14,13 +14,14 @@ import {
   Palette,
   PencilLine,
   Quote,
+  RefreshCw,
   Trash2,
   Wand2,
   Waypoints,
   type LucideIcon,
 } from 'lucide-react'
 import { toast } from 'sonner'
-import type { CanvasImageData, CanvasNodeData } from '@multi-agent/shared'
+import type { CanvasGenerationParams, CanvasImageData, CanvasVideoData, CanvasNodeData } from '@multi-agent/shared'
 import { quoteForComposer } from '../../lib/canvas'
 import { indexMind, mindSubtreeIds } from '../../lib/mind'
 import { cn } from '../../lib/utils'
@@ -28,6 +29,7 @@ import { useCanvasStore } from '../../stores/canvas-store'
 import { useMediaStore } from '../../stores/media-store'
 import { useUiStore } from '../../stores/ui-store'
 import { nextAccent } from './nodes/accents'
+import { useMediaCapabilities } from './useMediaCapabilities'
 
 function MenuItem({
   icon: Icon,
@@ -69,6 +71,8 @@ export interface NodeContextMenuProps {
 
 export function NodeContextMenu({ nodeId, x, y, onClose, onBeginEdit }: NodeContextMenuProps): React.JSX.Element | null {
   const node = useCanvasStore((s) => s.doc?.nodes.find((n) => n.id === nodeId))
+  // 能力门控（M31 修订）：未配置生图 / 生视频时整段生成入口不渲染（含分隔线）
+  const { canImage, canVideo, canGenerate } = useMediaCapabilities()
   const menuRef = React.useRef<HTMLDivElement>(null)
 
   React.useEffect(() => {
@@ -92,9 +96,44 @@ export function NodeContextMenu({ nodeId, x, y, onClose, onBeginEdit }: NodeCont
   const accentable = node.type === 'note' || node.type === 'mind'
   const imageArtifact = node.type === 'image' ? (node.data as CanvasImageData).artifact : undefined
   const imagePrompt = node.type === 'image' ? (node.data as CanvasImageData).prompt : undefined
+  /** M31 修订：失败/中断的生成节点（无 artifact、非 pending、有 error）→ 「重新生成」入口 */
+  const genData = node.data as CanvasImageData & CanvasVideoData & { pending?: boolean; error?: string }
+  const failedGen =
+    (node.type === 'image' || node.type === 'video') && Boolean(genData.error) && genData.pending !== true
   const run = (fn: () => void): void => {
     fn()
     onClose()
+  }
+  /** M31 修订：按节点存的谱系参数重新生成（输入不齐——如图生图未随节点落存输入图——则回填面板引导补齐） */
+  const retryFailedGen = (): void => {
+    const params: CanvasGenerationParams | undefined = genData.params
+    const capability = params?.capability ?? (node.type === 'video' ? 'text2video' : 'text2image')
+    const prompt = genData.prompt?.trim()
+    const needsImage = capability === 'image2image' || capability === 'image2video'
+    const needsFirstLast = capability === 'firstlast2video'
+    const firstFrame = genData.firstFrame
+    const lastFrame = genData.lastFrame
+    if (!prompt || needsImage || (needsFirstLast && (!firstFrame || !lastFrame))) {
+      useMediaStore.getState().openPanel({ prompt: prompt ?? '', params })
+      toast('已在生成面板回填原参数：请补齐输入后重试')
+      return
+    }
+    void useMediaStore.getState().createJob({
+      capability,
+      prompt,
+      negative: params?.negative,
+      model: params?.model,
+      inputs: needsFirstLast ? { firstFrame, lastFrame } : undefined,
+      params: {
+        width: params?.width,
+        height: params?.height,
+        steps: params?.steps,
+        seed: params?.seed,
+        duration: params?.duration,
+        workflowId: params?.workflowId,
+      },
+    })
+    toast('已按原参数重新生成')
   }
   /** 删除：脑图节点删除整棵分支（包含后代）；其余节点删除自身 */
   const removeNode = (): void => {
@@ -168,14 +207,14 @@ export function NodeContextMenu({ nodeId, x, y, onClose, onBeginEdit }: NodeCont
         />
       )}
       <MenuSep />
-      {imageArtifact && (
+      {imageArtifact && (canImage || canVideo) && (
         <>
           <MenuItem
             icon={ImagePlus}
             label="用作生成输入"
             onClick={() => run(() => useMediaStore.getState().openPanel({ images: [imageArtifact] }))}
           />
-          {imagePrompt && (
+          {canImage && imagePrompt && (
             <MenuItem
               icon={Wand2}
               label="生成变体"
@@ -184,19 +223,24 @@ export function NodeContextMenu({ nodeId, x, y, onClose, onBeginEdit }: NodeCont
               }
             />
           )}
-          <MenuItem
-            icon={Frame}
-            label="设为首帧（视频）"
-            onClick={() => run(() => useMediaStore.getState().openPanel({ firstFrame: imageArtifact }))}
-          />
-          <MenuItem
-            icon={Frame}
-            label="设为尾帧（视频）"
-            onClick={() => run(() => useMediaStore.getState().openPanel({ lastFrame: imageArtifact }))}
-          />
+          {canVideo && (
+            <>
+              <MenuItem
+                icon={Frame}
+                label="设为首帧（视频）"
+                onClick={() => run(() => useMediaStore.getState().openPanel({ firstFrame: imageArtifact }))}
+              />
+              <MenuItem
+                icon={Frame}
+                label="设为尾帧（视频）"
+                onClick={() => run(() => useMediaStore.getState().openPanel({ lastFrame: imageArtifact }))}
+              />
+            </>
+          )}
           <MenuSep />
         </>
       )}
+      {failedGen && canGenerate && <MenuItem icon={RefreshCw} label="重新生成" onClick={() => run(retryFailedGen)} />}
       <MenuItem
         icon={Quote}
         label="引用到对话"

@@ -5,7 +5,7 @@
  * - 轻结构容器流式期间直接渲染（与 verdict 同档）。
  */
 import { beforeEach, describe, expect, it } from 'vitest'
-import { render } from '@testing-library/react'
+import { fireEvent, render } from '@testing-library/react'
 import { Markdown } from '../src/components/chat/Markdown'
 import { clearMarkdownCaches } from '../src/lib/md-cache'
 
@@ -54,6 +54,14 @@ const GUA = [
 // ---------- 四类型基础渲染 ----------
 
 describe('::: pan 盘面卡（Markdown 路由）', () => {
+  it('M63-F 印章：卡头右端 .pn-seal（2 字口径缩写 · aria-hidden）；未知 kind 无印章', () => {
+    const { container } = render(<Markdown content={BAZI} />)
+    const seal = container.querySelector('.md-pan-headright .pn-seal')
+    expect(seal).not.toBeNull()
+    expect(seal!.textContent).toBe('四柱')
+    expect(seal!.getAttribute('aria-hidden')).toBe('true')
+  })
+
   it('八字：类型类 + 徽标，字段行结构化（四柱 / 十神 / 五行 / 大运）', () => {
     const { container } = render(<Markdown content={BAZI} />)
     const pan = container.querySelector('.md-pan.md-pan-bazi')
@@ -103,13 +111,31 @@ describe('::: pan 盘面卡（Markdown 路由）', () => {
 
 describe('::: pan 降级链', () => {
   it('未知类型词：降级通用「盘面」徽标（保留标题）', () => {
-    const { container } = render(<Markdown content={'::: pan qimen 奇门局示例\n门：开门\n:::'} />)
+    const { container } = render(<Markdown content={'::: pan taixuan 太玄局示例\n门：开门\n:::'} />)
     const pan = container.querySelector('.md-pan')
     expect(pan).not.toBeNull()
-    expect(pan!.classList.contains('md-pan-qimen')).toBe(false)
+    expect(pan!.classList.contains('md-pan-taixuan')).toBe(false)
     expect(container.querySelector('.md-pan-badge')?.textContent).toBe('盘面')
-    expect(container.querySelector('.md-pan-title')?.textContent).toBe('奇门局示例')
+    expect(container.querySelector('.md-pan-title')?.textContent).toBe('太玄局示例')
     expect(container.querySelector('.md-pan-value')?.textContent).toBe('开门')
+  })
+
+  it('M63-F 回归：列表末条 + 紧邻尾段（lazy continuation）——末条值无尾段、尾段独立渲染', () => {
+    // CommonMark lazy continuation：列表后紧邻段落行会被并进末条 item——须拆回
+    const { container } = render(
+      <Markdown
+        content={'::: pan transit 行运 X\n- 行运太阳 | 天蝎 12.9°（222.85°）｜ 2 宫\n- 行运土星-本命金星 | 合相 | 精确 2026-11-04 12:00 ｜ 影响窗 ±14 天\n口径：测试尾段\n:::'}
+      />,
+    )
+    const viewBtns = Array.from(container.querySelectorAll('.md-pan-viewbtn')) as HTMLButtonElement[]
+    const tableBtn = viewBtns.find((b) => b.textContent === '表格')
+    if (tableBtn) fireEvent.click(tableBtn)
+    const rows = container.querySelectorAll('.md-pan-item')
+    expect(rows).toHaveLength(2)
+    expect(rows[1]!.textContent).toContain('合相 | 精确 2026-11-04 12:00 ｜ 影响窗 ±14 天')
+    expect(rows[1]!.textContent).not.toContain('口径')
+    // 尾段字段行回收进字段区（渲染为「口径 测试尾段」）
+    expect(container.textContent).toContain('测试尾段')
   })
 
   it('解析失败 = 原文：无结构化行（含普通文本）时仍可读，不丢内容', () => {

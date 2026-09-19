@@ -10,6 +10,8 @@
     { "type": "artifact_exists", "path": "docs/交叉分析-权限.md" },
     { "type": "artifact_exists", "path": "docs/核查记录-权限.md" },
     { "type": "artifact_contains", "path": "docs/研究报告-权限.md", "text": "置信度" },
+    { "type": "min_sections", "path": "docs/研究报告-权限.md", "value": 4 },
+    { "type": "min_chars", "path": "docs/研究报告-权限.md", "value": 130 },
     { "type": "artifact_contains", "path": "docs/核查记录-权限.md", "text": "反面证据" },
     { "type": "handoff_targets", "values": ["scout", "analyst", "verifier"] },
     { "type": "turns_lte", "value": 5 },

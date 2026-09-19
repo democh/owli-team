@@ -27,7 +27,7 @@ export function SeatCard({
       title={`${agent.name} · ${agent.role}`}
       onClick={() => onSelect?.(agent.id)}
     >
-      <AgentAvatar agent={agent} size={26} animated={speaking} className="rounded-full shrink-0" />
+      <AgentAvatar agent={agent} size={26} animated={speaking} className="shrink-0" />
       <span className="scene-seat-meta">
         <span className="scene-seat-name">{agent.name}</span>
         <span className="scene-seat-role">{agent.role}</span>

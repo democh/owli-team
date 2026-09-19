@@ -3,6 +3,7 @@
  * 未配置或加载失败时回退「渐变 + lucide 图标」方案；
  * 状态角标：thinking 省略号 / done 星星 / error 闪电（animated=false 时全关，供列表小尺寸场景）。
  * 用户（人类主角）不设头像：界面中不渲染用户形象。
+ * 圆角：组件内置 25% 等比圆角（所有头像展示统一，任意尺寸圆润度一致；调用方 className 可覆盖）。
  */
 import * as React from 'react'
 import { Sparkles, Zap } from 'lucide-react'
@@ -38,7 +39,7 @@ export const AgentAvatar = React.memo(function AgentAvatar({
 
   return (
     <div
-      className={cn('relative shrink-0 select-none', className)}
+      className={cn('relative shrink-0 select-none rounded-[25%]', className)}
       style={{ width: size, height: size }}
       title={title ?? agent?.name}
     >

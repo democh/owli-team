@@ -1,6 +1,6 @@
 /**
  * M7 测试：审批链路（risky / all / off、批准 / 拒绝回灌 / 超时 / 停止取消）、
- * request_approval 工具、鉴权 / CORS / 限流中间件、config 前置校验与 zod schema。
+ * request_approval 工具、鉴权 / CORS / Origin 校验 / 限流中间件、config 前置校验与 zod schema。
  *
  * 验收对照（计划 M7）：git_commit / 覆盖写触发审批；拒绝后模型收到反馈并改方案；
  * 超时自动拒绝；BIND_ALL=true 时未带 token 的请求 401。
@@ -15,13 +15,34 @@ import type { Request, Response } from 'express'
 import { WebSocket as WsClient } from 'ws'
 import { describe, expect, it } from 'vitest'
 import { ApprovalService } from '../src/approval.js'
+import { AuthService } from '../src/auth/service.js'
 import { loadConfig, type AppConfig } from '../src/config.js'
 import { textOfContent } from '../src/llm/content.js'
 import { abortError, type ChatRequest, type LlmChunk } from '../src/llm/provider.js'
-import { createAuthMiddleware, createCorsOptions, createMessageLimiter, createTokenEntryMiddleware } from '../src/middleware.js'
+import {
+  createAuthMiddleware,
+  createCorsOptions,
+  createMessageLimiter,
+  createOriginGuard,
+  createTokenEntryMiddleware,
+} from '../src/middleware.js'
 import { approvalDecisionSchema, sendMessageSchema } from '../src/routes/schemas.js'
+import { ApiKeyStore, AuthSessionStore } from '../src/store/auth-sessions.js'
+import { openDatabase } from '../src/store/db.js'
+import { UserStore } from '../src/store/users.js'
 import { NotifyHub } from '../src/ws.js'
 import { makeEnv, makeTmpDir, routePassThrough, waitRunFinished } from './helpers.js'
+
+/** M57：测试用认证服务（内存库；无账号 → 单用户兼容模式） */
+function makeAuthService(cfg: AppConfig): AuthService {
+  const db = openDatabase(':memory:', { memory: true, noExtensions: true })
+  return new AuthService({
+    cfg,
+    users: new UserStore(db),
+    authSessions: new AuthSessionStore(db),
+    apiKeys: new ApiKeyStore(db),
+  })
+}
 
 type Env = ReturnType<typeof makeEnv>
 
@@ -140,10 +161,12 @@ describe('M7：ApprovalService', () => {
     expect(pendingRow?.decided_at).toBeNull()
 
     svc.decide('r1', a1.id, 'approve', '可以')
-    const approvedRow = env.db.get<{ status: string; decision: string; feedback: string; decided_at: string | null }>(
-      'SELECT status, decision, feedback, decided_at FROM approvals WHERE id = ?',
-      a1.id,
-    )
+    const approvedRow = env.db.get<{
+      status: string
+      decision: string
+      feedback: string
+      decided_at: string | null
+    }>('SELECT status, decision, feedback, decided_at FROM approvals WHERE id = ?', a1.id)
     expect(approvedRow?.status).toBe('approved')
     expect(approvedRow?.decision).toBe('approve')
     expect(approvedRow?.feedback).toBe('可以')
@@ -454,9 +477,63 @@ describe('M7：git_commit 强制审批（验收）', () => {
   })
 })
 
+// ---------- git_restore 强制审批（验收） ----------
+
+describe('M7：git_restore 强制审批（验收）', () => {
+  it('risky：git_restore 触发审批；批准后未提交改动被还原', async () => {
+    const repoDir = initRepo()
+    const env = makeEnv({ allowedRoots: [repoDir] })
+    const project = env.projects.create({ name: 'M7 仓库', rootPath: repoDir, workspaceMode: 'worktree' })
+    const session = env.sessions.create(['backend'], 'M7 restore 会话', { projectId: project.id })
+    await env.workspace.prepare(session)
+    const root = session.workspaceDir!
+    // 弄脏一个 tracked 文件（git_restore 只对已跟踪文件生效）
+    fs.writeFileSync(path.join(root, 'README.md'), '# M7 仓库（未提交改动）\n')
+    scriptProvider(env, (_req, round) =>
+      round === 0 ? [toolCall('git_restore', { path: 'README.md' }), done] : [handoffUser, done],
+    )
+
+    const runId = sendMessage(env, session.id, '丢弃 README 的未提交改动')
+    const pending = await waitApproval(env, runId)
+    expect(pending.action).toContain('还原文件')
+    // 挂起期间改动仍在（未执行）
+    expect(fs.readFileSync(path.join(root, 'README.md'), 'utf8')).toContain('未提交改动')
+
+    env.approvals.decide(runId, pending.id, 'approve')
+    await waitRunFinished(env.engine, runId)
+
+    // 批准后已还原到最近提交状态
+    expect(fs.readFileSync(path.join(root, 'README.md'), 'utf8')).toBe('# M7 仓库\n')
+  })
+
+  it('拒绝：还原不执行（未提交改动保留）', async () => {
+    const repoDir = initRepo()
+    const env = makeEnv({ allowedRoots: [repoDir] })
+    const project = env.projects.create({ name: 'M7 仓库', rootPath: repoDir, workspaceMode: 'worktree' })
+    const session = env.sessions.create(['backend'], 'M7 restore 拒绝', { projectId: project.id })
+    await env.workspace.prepare(session)
+    const root = session.workspaceDir!
+    fs.writeFileSync(path.join(root, 'README.md'), '# M7 仓库（保留我）\n')
+    scriptProvider(env, (_req, round) =>
+      round === 0 ? [toolCall('git_restore', { path: 'README.md' }), done] : [handoffUser, done],
+    )
+
+    const runId = sendMessage(env, session.id, '丢弃 README 的未提交改动')
+    const pending = await waitApproval(env, runId)
+    env.approvals.decide(runId, pending.id, 'reject', '改动还要用，不要还原')
+    await waitRunFinished(env.engine, runId)
+    expect(fs.readFileSync(path.join(root, 'README.md'), 'utf8')).toContain('保留我')
+  })
+})
+
 // ---------- 安全中间件与配置 ----------
 
-function mockRes(): { statusCode: number; body: unknown; status(code: number): unknown; json(b: unknown): void } {
+function mockRes(): {
+  statusCode: number
+  body: unknown
+  status(code: number): unknown
+  json(b: unknown): void
+} {
   return {
     statusCode: 0,
     body: undefined,
@@ -473,7 +550,7 @@ function mockRes(): { statusCode: number; body: unknown; status(code: number): u
 describe('M7：安全中间件', () => {
   it('鉴权：无 / 错 token → 401；Bearer 与 cookie 正确 → 放行；未配置 token → 放行', () => {
     const cfg: AppConfig = { ...loadConfig(), authToken: 's3cret' }
-    const auth = createAuthMiddleware(cfg)
+    const auth = createAuthMiddleware(cfg, makeAuthService(cfg))
     const run = (headers: Record<string, string>): { statusCode: number; next: boolean } => {
       const res = mockRes()
       let next = false
@@ -488,7 +565,8 @@ describe('M7：安全中间件', () => {
     expect(run({ cookie: 'auth_token=s3cret' }).next).toBe(true)
     expect(run({ cookie: 'other=1; auth_token=s3cret' }).next).toBe(true)
 
-    const open = createAuthMiddleware({ ...loadConfig(), authToken: '' })
+    const openCfg: AppConfig = { ...loadConfig(), authToken: '' }
+    const open = createAuthMiddleware(openCfg, makeAuthService(openCfg))
     const res = mockRes()
     let next = false
     open({ headers: {} } as unknown as Request, res as unknown as Response, () => {
@@ -514,6 +592,39 @@ describe('M7：安全中间件', () => {
     expect(await decide(local, 'http://127.0.0.1:8787')).toBe(true)
     expect(await decide(local, 'http://evil.com')).toBe(false)
     expect(await decide(local, undefined)).toBe(true)
+  })
+
+  it('Origin 校验：同源 / 本机来源 / 白名单放行；跨站写请求 → 403', () => {
+    const run = (cfg: AppConfig, method: string, headers: Record<string, string>) => {
+      const guard = createOriginGuard(cfg)
+      const res = mockRes()
+      let next = false
+      guard({ method, headers } as unknown as Request, res as unknown as Response, () => {
+        next = true
+      })
+      return { res, next }
+    }
+
+    const open: AppConfig = { ...loadConfig(), allowedOrigins: [] }
+    // 无 Origin 的 CLI / 测试请求与 GET 读请求放行
+    expect(run(open, 'POST', { host: 'localhost:8787' }).next).toBe(true)
+    expect(run(open, 'GET', { origin: 'http://evil.com', host: 'localhost:8787' }).next).toBe(true)
+    // 同源（生产单端口 / nginx 反代域名）
+    expect(run(open, 'POST', { origin: 'http://localhost:8787', host: 'localhost:8787' }).next).toBe(true)
+    // 开发模式：Vite 代理 changeOrigin 改写 Host 为 8787，浏览器 Origin 仍为 5173
+    expect(run(open, 'POST', { origin: 'http://localhost:5173', host: 'localhost:8787' }).next).toBe(true)
+    // 跨站写请求拒绝（403 + 文案）
+    const denied = run(open, 'POST', { origin: 'http://evil.com', host: 'localhost:8787' })
+    expect(denied.next).toBe(false)
+    expect(denied.res.statusCode).toBe(403)
+
+    // 白名单：跨域按名单放行；同源不因白名单配置而被拒；名单外本机来源不放行（收紧语义与 CORS 一致）
+    const listed: AppConfig = { ...loadConfig(), allowedOrigins: ['https://team.example.com'] }
+    expect(run(listed, 'POST', { origin: 'https://team.example.com', host: 'localhost:8787' }).next).toBe(
+      true,
+    )
+    expect(run(listed, 'POST', { origin: 'http://localhost:8787', host: 'localhost:8787' }).next).toBe(true)
+    expect(run(listed, 'POST', { origin: 'http://localhost:5173', host: 'localhost:8787' }).next).toBe(false)
   })
 
   it('限流：超过 MESSAGE_RATE_LIMIT 条/分钟 → 429', async () => {

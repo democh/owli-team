@@ -16,6 +16,11 @@ export interface ConnectionCreateInput {
   config: Record<string, unknown>
   secret?: Record<string, unknown> | null
   enabled?: boolean
+  /** M57 P3：作用域（缺省 system；personal 需同时给 ownerId） */
+  scope?: 'system' | 'personal'
+  ownerId?: string
+  /** M57 P3：成员可用开关（仅 system 有意义；缺省 true 保持旧行为） */
+  memberUse?: boolean
 }
 
 export interface ConnectionUpdatePatch {
@@ -24,6 +29,8 @@ export interface ConnectionUpdatePatch {
   /** 缺省 = 不改动；null = 清空；对象 = 覆盖 */
   secret?: Record<string, unknown> | null
   enabled?: boolean
+  /** M57 P3：成员可用开关（admin 对 system 连接） */
+  memberUse?: boolean
 }
 
 interface ConnectionRow {
@@ -36,6 +43,10 @@ interface ConnectionRow {
   last_checked_at: string | null
   last_error: string | null
   enabled: number
+  /** M57 P3：作用域 / 属主 / 成员可用（v14 列；旧库可能为 NULL） */
+  scope: string | null
+  owner_id: string | null
+  member_use: number | null
   created_at: string
   updated_at: string
 }
@@ -65,6 +76,10 @@ function toDefinition(row: ConnectionRow): ConnectionDefinition {
     lastError: row.last_error ?? undefined,
     enabled: row.enabled === 1,
     secretSet: Boolean(row.secret_enc),
+    // M57 P3：旧库 NULL → system / 成员可用（与迁移默认一致）
+    scope: (row.scope as 'system' | 'personal') ?? 'system',
+    ownerId: row.owner_id ?? undefined,
+    memberUse: row.member_use === null ? true : row.member_use === 1,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }
@@ -81,6 +96,62 @@ export class ConnectionStore {
   list(): ConnectionDefinition[] {
     const rows = this.db.all<ConnectionRow>('SELECT * FROM connections ORDER BY created_at ASC')
     return rows.map(toDefinition)
+  }
+
+  /** M57：成员可用清单（system + enabled + member_use=1；config 脱敏由路由层处理） */
+  listUsable(): ConnectionDefinition[] {
+    const rows = this.db.all<ConnectionRow>(
+      `SELECT * FROM connections WHERE scope = 'system' AND enabled = 1 AND member_use = 1 ORDER BY created_at ASC`,
+    )
+    return rows.map(toDefinition)
+  }
+
+  /** M57：成员可用判定（会话绑定校验：admin 可绑定任意；成员仅可用 member_use=1 的 system 连接） */
+  memberUsable(id: string): boolean {
+    const row = this.db.get<{ n: number }>(
+      `SELECT COUNT(*) AS n FROM connections WHERE id = ? AND scope = 'system' AND enabled = 1 AND member_use = 1`,
+      id,
+    )
+    return Number(row?.n ?? 0) > 0
+  }
+
+  /**
+   * M57 P3：用户可见清单 = 可用的 system 连接（enabled + member_use=1）∪ 本人 personal 连接（含禁用，便于管理）。
+   * 路由层对非本人 personal / system 条目做 config 脱敏。
+   */
+  listForUser(userId: string): ConnectionDefinition[] {
+    const rows = this.db.all<ConnectionRow>(
+      `SELECT * FROM connections
+       WHERE (scope = 'system' AND enabled = 1 AND member_use = 1) OR (scope = 'personal' AND owner_id = ?)
+       ORDER BY created_at ASC`,
+      userId,
+    )
+    return rows.map(toDefinition)
+  }
+
+  /** M57 P3：personal 属主判定（成员绑定 / 工具执行 / 资源级守卫共用） */
+  ownsPersonal(userId: string, id: string): boolean {
+    const row = this.db.get<{ n: number }>(
+      `SELECT COUNT(*) AS n FROM connections WHERE id = ? AND scope = 'personal' AND owner_id = ?`,
+      id,
+      userId,
+    )
+    return Number(row?.n ?? 0) > 0
+  }
+
+  /** M57 P3：连接属主（system 返回 undefined；浏览器 runtime 复用判定用） */
+  ownerOf(id: string): string | undefined {
+    const row = this.db.get<{ owner_id: string | null }>(
+      `SELECT owner_id FROM connections WHERE id = ? AND scope = 'personal'`,
+      id,
+    )
+    return row?.owner_id ?? undefined
+  }
+
+  /** M57 P3：删除某用户的全部 personal 连接（账号删除级联；绑定行由 FK CASCADE 自动清理），返回删除数 */
+  removePersonalOf(userId: string): number {
+    const result = this.db.run(`DELETE FROM connections WHERE scope = 'personal' AND owner_id = ?`, userId)
+    return result.changes
   }
 
   get(id: string): ConnectionDefinition | undefined {
@@ -105,15 +176,19 @@ export class ConnectionStore {
     if (this.findByName(input.name)) throw new Error(`连接名「${input.name}」已存在`)
     const id = `conn_${randomUUID().slice(0, 8)}`
     const ts = nowIso()
+    const scope = input.scope === 'personal' ? 'personal' : 'system'
     this.db.run(
-      `INSERT INTO connections (id, name, kind, config, secret_enc, status, enabled, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, 'idle', ?, ?, ?)`,
+      `INSERT INTO connections (id, name, kind, config, secret_enc, status, enabled, scope, owner_id, member_use, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, 'idle', ?, ?, ?, ?, ?, ?)`,
       id,
       input.name,
       input.kind,
       JSON.stringify(input.config ?? {}),
       input.secret && Object.keys(input.secret).length > 0 ? this.vault.encrypt(input.secret) : null,
       input.enabled === false ? 0 : 1,
+      scope,
+      scope === 'personal' ? (input.ownerId ?? null) : null,
+      input.memberUse === false ? 0 : 1,
       ts,
       ts,
     )
@@ -139,6 +214,11 @@ export class ConnectionStore {
     if (patch.enabled !== undefined) {
       sets.push('enabled = ?')
       params.push(patch.enabled ? 1 : 0)
+    }
+    // M57 P3：成员可用开关（仅 system 连接有意义；personal 传参忽略）
+    if (patch.memberUse !== undefined && (current.scope ?? 'system') === 'system') {
+      sets.push('member_use = ?')
+      params.push(patch.memberUse ? 1 : 0)
     }
     if (patch.secret !== undefined) {
       sets.push('secret_enc = ?')

@@ -312,6 +312,13 @@ export class CdpClient {
     return sessionId
   }
 
+  /** M62：新建页面 target 并 flat attach（复用实例的后续会话自建管理页，避免与既有会话抢页） */
+  async createTargetAttach(url = 'about:blank'): Promise<{ sessionId: string; targetId: string }> {
+    const created = await this.send<{ targetId: string }>('Target.createTarget', { url }, { sessionId: null })
+    const sessionId = await this.attachToTarget(created.targetId)
+    return { sessionId, targetId: created.targetId }
+  }
+
   /** detach 指定 session（该页面停止事件投递；页面本身不关闭） */
   async detachSession(sessionId: string): Promise<void> {
     await this.send('Target.detachFromTarget', { sessionId }, { sessionId: null, timeoutMs: 5_000 })

@@ -1,13 +1,23 @@
 /**
  * M52-A：场景元件库汇总（§7.6 12 件）——注册表与面板按名引用。
+ * M63（批一）：交锋看板 / 报价折线与让步刻度 / 终局结论条 / 对抗参与条 / 四路观点卡 / 博弈走子板。
  */
 export { RoundTrack } from './RoundTrack'
 export { Scoreboard } from './Scoreboard'
+export type { ScoreSide } from './Scoreboard'
 export { SeatCard } from './SeatCard'
 export { SeatRing } from './SeatRing'
 export { MomentumBar } from './MomentumBar'
 export { ClaimTree } from './ClaimTree'
 export type { ClaimNode, ClaimReason } from './ClaimTree'
+export { CrossFire } from './CrossFire'
+export type { CrossFireLane } from './CrossFire'
+export { OfferChart, OfferConcessions } from './OfferChart'
+export { ConclusionBar } from './ConclusionBar'
+export { ArenaActions } from './ArenaActions'
+export { ViewCards } from './ViewCards'
+export type { ViewCardData } from './ViewCards'
+export { MoveBoard } from './MoveBoard'
 export { AgendaTrack } from './AgendaTrack'
 export type { AgendaStep } from './AgendaTrack'
 export { KanbanBoard } from './KanbanBoard'
@@ -18,4 +28,6 @@ export { DeliveryPanel } from './DeliveryPanel'
 export type { DeliveryItem } from './DeliveryPanel'
 export { VerdictPart } from './VerdictPart'
 export { PanBoard } from './PanBoard'
+// M69：牌阵台（chartboard cards 区布局渲染——chartboard 面板用）
+export { CardsBoard } from './CardsBoard'
 export type { PanChart } from './PanBoard'

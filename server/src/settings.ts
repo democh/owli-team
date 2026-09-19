@@ -17,6 +17,8 @@ export const RuntimeSettingsSchema = z.object({
   summaryModel: z.string(),
   judgeModel: z.string(),
   temperature: z.number().min(0).max(2),
+  /** 统一温度：开启后忽略角色级配置，全部角色使用上述温度（热切换；角色资产保持差异化不受影响） */
+  temperatureOverride: z.boolean(),
   maxTurnsPerRun: z.number().int().min(1).max(100),
   contextBudgetTokens: z.number().int().min(1_000).max(2_000_000),
   keepRecentTurns: z.number().int().min(1).max(50),

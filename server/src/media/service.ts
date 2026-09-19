@@ -13,6 +13,11 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 import type {
+  CanvasImageData,
+  CanvasNode,
+  CanvasNodeData,
+  CanvasOp,
+  CanvasVideoData,
   ConnectionDefinition,
   MediaCapability,
   MediaConnectionConfig,
@@ -20,6 +25,7 @@ import type {
   MediaJobInput,
   MediaProviderInfo,
 } from '@multi-agent/shared'
+import type { CanvasStore } from '../canvas/store.js'
 import type { ArtifactStore } from '../store/artifacts.js'
 import type { ConnectionStore } from '../store/connections.js'
 import type { NotifyHub } from '../ws.js'
@@ -35,6 +41,9 @@ const DEFAULT_CONCURRENCY = 2
 /** 图像 / 视频默认超时（连接 config.timeoutMs 可覆盖） */
 const IMAGE_TIMEOUT_MS = 5 * 60_000
 const VIDEO_TIMEOUT_MS = 10 * 60_000
+/** 画布占位节点尺寸（M31 修订：与前端 NODE_SIZE 对齐；多产物横向排开间距 +24） */
+const OUT_NODE_SIZE = { image: { width: 280, height: 200 }, video: { width: 320, height: 212 } } as const
+const OUT_GAP = 24
 
 export interface MediaServiceOptions {
   connections: ConnectionStore
@@ -42,6 +51,8 @@ export interface MediaServiceOptions {
   notify: NotifyHub
   /** 并发上限（测试可调） */
   concurrency?: number
+  /** M31 修订：画布存储（任务创建落占位 / 终态结算；未装配时全部落位静默降级） */
+  canvas?: CanvasStore
 }
 
 export class MediaService {
@@ -164,11 +175,133 @@ export class MediaService {
       createdAt: now,
     }
     this.jobs.set(job.id, job)
+    // M31 修订：创建即落占位（服务端为真相——用户不必开着画布；完成原地替换 / 失败保留 / 取消移除）
+    this.placePlaceholder(job, input)
     this.queue.push(job.id)
     this.trimHistory(sessionId)
     this.publish(job)
     this.pump()
     return { job }
+  }
+
+  // ---------- M31 修订：画布全周期落位（占位 → 结算） ----------
+
+  /** 输出节点 data 构造（占位 / 产物共用；谱系字段与前端旧落位口径一致） */
+  private outputNodeData(job: MediaJob, artifact?: string): CanvasImageData | CanvasVideoData {
+    const base = {
+      source: 'generate' as const,
+      jobId: job.id,
+      prompt: job.prompt,
+      params: {
+        capability: job.capability,
+        model: job.model,
+        negative: job.negative,
+        width: job.params.width,
+        height: job.params.height,
+        steps: job.params.steps,
+        seed: job.params.seed,
+        duration: job.params.duration,
+        workflowId: job.params.workflowId,
+      },
+    }
+    if (artifact) return { ...base, artifact, pending: false }
+    return { ...base, pending: true }
+  }
+
+  /** 画布写入的 by（用户自建任务不记作者；agent 任务记其 id） */
+  private byOf(job: MediaJob): string | undefined {
+    return job.actor === 'user' ? undefined : job.actor
+  }
+
+  /** 创建任务时落占位节点（无画布存储 / place_on_canvas=false 时跳过；placedCanvas 记录落位结果） */
+  private placePlaceholder(job: MediaJob, input: MediaJobInput): void {
+    const canvas = this.opts.canvas
+    if (!canvas || input.placeOnCanvas === false) return
+    const kind = job.capability.endsWith('image') ? 'image' : 'video'
+    const size = OUT_NODE_SIZE[kind]
+    const data = this.outputNodeData(job)
+    if (kind === 'video') {
+      ;(data as CanvasVideoData).firstFrame = job.inputs.firstFrame
+      ;(data as CanvasVideoData).lastFrame = job.inputs.lastFrame
+    }
+    try {
+      const { applied } = canvas.applyOps(
+        job.sessionId,
+        [
+          {
+            op: 'add_node',
+            node: {
+              type: kind,
+              position: job.canvasTarget,
+              width: size.width,
+              height: size.height,
+              data: data as CanvasNodeData,
+            },
+          },
+        ],
+        { by: this.byOf(job), reason: 'media' },
+      )
+      job.canvasNodeId = applied[0]?.id
+      job.placedCanvas = Boolean(job.canvasNodeId)
+    } catch {
+      job.placedCanvas = false
+    }
+  }
+
+  /** 终态结算：成功原地替换（多产物排开）/ 失败保留带 error / 取消移除（仅状态首次转终态时调用） */
+  private settleJob(job: MediaJob): void {
+    const canvas = this.opts.canvas
+    const nodeId = job.canvasNodeId
+    if (!canvas || !nodeId || !job.placedCanvas) return
+    const opts = { by: this.byOf(job), reason: 'media' as const }
+    try {
+      if (job.status === 'succeeded' && job.outputs.length > 0) {
+        const ops: CanvasOp[] = [
+          {
+            op: 'update_node',
+            id: nodeId,
+            data: { artifact: job.outputs[0], pending: false } as Partial<CanvasNodeData>,
+          },
+        ]
+        // 附加产物排开（基准 = 占位节点当前位置；尺寸与创建口径一致）
+        if (job.outputs.length > 1) {
+          const kind = job.capability.endsWith('image') ? 'image' : 'video'
+          const size = OUT_NODE_SIZE[kind]
+          const base = canvas.get(job.sessionId).nodes.find((n) => n.id === nodeId)
+          if (base) {
+            for (let i = 1; i < job.outputs.length; i += 1) {
+              const data = this.outputNodeData(job, job.outputs[i])
+              if (kind === 'video') {
+                ;(data as CanvasVideoData).firstFrame = job.inputs.firstFrame
+                ;(data as CanvasVideoData).lastFrame = job.inputs.lastFrame
+              }
+              ops.push({
+                op: 'add_node',
+                node: {
+                  type: kind,
+                  position: { x: Math.round(base.position.x + i * (size.width + OUT_GAP)), y: Math.round(base.position.y) },
+                  width: size.width,
+                  height: size.height,
+                  data: data as CanvasNodeData,
+                },
+              })
+            }
+          }
+        }
+        canvas.applyOps(job.sessionId, ops, opts)
+      } else if (job.status === 'failed') {
+        canvas.applyOps(
+          job.sessionId,
+          [{ op: 'update_node', id: nodeId, data: { pending: false, error: job.error ?? '生成失败' } as Partial<CanvasNodeData> }],
+          opts,
+        )
+      } else {
+        // canceled：用户主动取消 → 干净移除占位
+        canvas.applyOps(job.sessionId, [{ op: 'remove_node', id: nodeId }], opts)
+      }
+    } catch {
+      /* 落位异常不影响任务终态（产物仍在交付件；下次打开画布仅缺席该节点） */
+    }
   }
 
   cancel(jobId: string): { job: MediaJob } | { error: string } {
@@ -342,6 +475,8 @@ export class MediaService {
     } else {
       job.progressText = '失败'
     }
+    // M31 修订：画布结算（占位替换 / 保留 / 移除；先于任务广播，前端先合流节点再收提示）
+    this.settleJob(job)
     this.publish(job)
   }
 

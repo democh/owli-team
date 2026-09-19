@@ -12,6 +12,12 @@ const MD_VENDOR_RE =
 const SHIKI_CORE_RE =
   /node_modules\/(?:shiki\/dist\/(?:core\.mjs|wasm\.mjs|themes\/)|@shikijs\/(?:core|engine-oniguruma|vscode-textmate|types|themes)\/)/
 
+/** M65-B0：three 栈独立 chunk（three + R3F + drei 及其传递件）——全部在 React.lazy 边界内被引用
+ * （§6.2 红线：首屏零增量）；归并 three-stdlib / three-mesh-bvh / camera-controls /
+ * @use-gesture / meshline / troika-* 避免其落入业务 chunk 造成重复。 */
+const THREE_STACK_RE =
+  /node_modules\/(three|three-stdlib|three-mesh-bvh|@react-three|camera-controls|@use-gesture|meshline|troika-[^/]+)\//
+
 export default defineConfig({
   plugins: [react()],
   resolve: {
@@ -36,6 +42,7 @@ export default defineConfig({
           if (id.includes('node_modules/@radix-ui/')) return 'radix-vendor'
           if (MD_VENDOR_RE.test(id)) return 'md-vendor'
           if (SHIKI_CORE_RE.test(id)) return 'shiki-core'
+          if (THREE_STACK_RE.test(id)) return 'three-stack'
           return undefined
         },
       },

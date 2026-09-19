@@ -18,6 +18,8 @@ interface ProjectRow {
   root_path: string
   workspace_mode: string
   base_branch: string | null
+  /** M57：项目属主（users.id；NULL = 单用户兼容模式） */
+  owner_id?: string | null
   created_at: string
   updated_at: string
 }
@@ -31,6 +33,7 @@ function rowToProject(row: ProjectRow): ProjectDefinition {
     rootPath: row.root_path,
     workspaceMode: row.workspace_mode as WorkspaceMode,
     baseBranch: row.base_branch ?? undefined,
+    ownerId: row.owner_id ?? undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }
@@ -41,6 +44,8 @@ export interface ProjectCreateInput {
   rootPath: string
   workspaceMode?: WorkspaceMode
   baseBranch?: string
+  /** M57：项目属主（多用户）；缺省 = 单用户兼容模式 */
+  ownerId?: string
 }
 
 export class ProjectStore {
@@ -88,26 +93,34 @@ export class ProjectStore {
       rootPath: real,
       workspaceMode: input.workspaceMode ?? 'sandbox',
       baseBranch: input.baseBranch?.trim() || undefined,
+      ownerId: input.ownerId,
       createdAt: ts,
       updatedAt: ts,
     }
     this.db.run(
-      `INSERT INTO projects (id, name, root_path, workspace_mode, base_branch, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO projects (id, name, root_path, workspace_mode, base_branch, owner_id, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       project.id,
       project.name,
       project.rootPath,
       project.workspaceMode,
       project.baseBranch ?? null,
+      project.ownerId ?? null,
       ts,
       ts,
     )
     return project
   }
 
-  list(): ProjectDefinition[] {
+  /**
+   * 项目列表（M57：ownerId 必传——用户 id = 仅本人；null = 系统全量（单用户兼容 / 内部用））。
+   * 参数必传是刻意的：编译期强制每个调用点声明隔离意图。
+   */
+  list(ownerId: string | null): ProjectDefinition[] {
+    const ownerFilter = ownerId === null ? '' : 'WHERE owner_id = ?'
+    const params = ownerId === null ? [] : [ownerId]
     return this.db
-      .all<ProjectRow>('SELECT * FROM projects ORDER BY updated_at DESC')
+      .all<ProjectRow>(`SELECT * FROM projects ${ownerFilter} ORDER BY updated_at DESC`, ...params)
       .map(rowToProject)
   }
 

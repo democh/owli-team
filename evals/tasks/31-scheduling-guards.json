@@ -1,0 +1,17 @@
+{
+  "id": "scheduling-guards",
+  "name": "调度守卫：正常多波接力零停滞零写冲突（M61 D3/D5 回归守卫）",
+  "participants": ["pm", "architect", "backend"],
+  "prompt": "做一个评论功能的方案：@费利 出需求文档，接 @艾达 架构设计，最后由 @马克斯 给后端实现说明。",
+  "maxTurns": 6,
+  "assertions": [
+    { "type": "artifact_exists", "path": "docs/需求文档-评论.md" },
+    { "type": "artifact_exists", "path": "docs/架构设计-评论.md" },
+    { "type": "artifact_exists", "path": "docs/接口设计-评论.md" },
+    { "type": "scheduling", "wavesMin": 3, "stallSuppressedMax": 0, "writeConflictsMax": 0 },
+    { "type": "no_stall" },
+    { "type": "no_loop" },
+    { "type": "turns_lte", "value": 6 },
+    { "type": "run_end_reason", "value": "completed" }
+  ]
+}

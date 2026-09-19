@@ -588,4 +588,265 @@ ALTER TABLE messages ADD COLUMN schedule_id TEXT;
 ALTER TABLE sessions ADD COLUMN serial INTEGER NOT NULL DEFAULT 1;
 `,
   },
+  {
+    version: 13,
+    name: 'multi_user_auth',
+    sql: `
+-- ---------- M57（多用户 P1）：账号与认证（users / auth_sessions / api_keys / user_prefs） ----------
+-- 说明：全部新表（认证能力需要持久化主体，确有必要）；无账号时系统处于单用户兼容模式，行为与既有版本一致。
+CREATE TABLE IF NOT EXISTS users (
+  id TEXT PRIMARY KEY,
+  username TEXT NOT NULL UNIQUE,
+  display_name TEXT NOT NULL,
+  password_hash TEXT NOT NULL,
+  role TEXT NOT NULL DEFAULT 'member',
+  status TEXT NOT NULL DEFAULT 'active',
+  must_change_password INTEGER NOT NULL DEFAULT 0,
+  failed_login_count INTEGER NOT NULL DEFAULT 0,
+  locked_until TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  last_login_at TEXT,
+  last_login_ip TEXT
+);
+
+-- 登录会话（不透明令牌只存 SHA-256 哈希；滑动过期 + 绝对过期 + 显式撤销）
+CREATE TABLE IF NOT EXISTS auth_sessions (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  token_hash TEXT NOT NULL UNIQUE,
+  created_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  absolute_expires_at TEXT NOT NULL,
+  last_seen_at TEXT NOT NULL,
+  revoked_at TEXT,
+  user_agent TEXT,
+  ip TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_auth_sessions_user ON auth_sessions(user_id, expires_at);
+
+-- CLI / 脚本访问令牌（明文仅在创建时返回一次）
+CREATE TABLE IF NOT EXISTS api_keys (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  token_hash TEXT NOT NULL UNIQUE,
+  created_at TEXT NOT NULL,
+  expires_at TEXT,
+  last_used_at TEXT,
+  revoked_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_api_keys_user ON api_keys(user_id);
+
+-- 个人偏好（白名单字段由服务端 zod 校验；与系统级 settings.json 分离）
+CREATE TABLE IF NOT EXISTS user_prefs (
+  user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  prefs TEXT NOT NULL DEFAULT '{}',
+  updated_at TEXT NOT NULL
+);
+`,
+  },
+  {
+    version: 14,
+    name: 'multi_user_ownership',
+    sql: `
+-- ---------- M57（多用户 P1）：归属与隔离 ----------
+-- 归属列：旧行 owner_id 为 NULL（单用户兼容）；创建首个管理员（setup）时一次性回填，
+-- 此后新建资源一律落当前用户；无账号期间守卫放行（行为与旧版一致）。
+-- 注意：ADD COLUMN 非幂等；旧库已有该列而缺迁移记录时会报 duplicate column，由迁移器特赦并补记（见 db.ts）
+ALTER TABLE sessions ADD COLUMN owner_id TEXT REFERENCES users(id) ON DELETE CASCADE;
+ALTER TABLE projects ADD COLUMN owner_id TEXT REFERENCES users(id) ON DELETE CASCADE;
+ALTER TABLE runs ADD COLUMN user_id TEXT;
+ALTER TABLE messages ADD COLUMN user_id TEXT;
+ALTER TABLE approvals ADD COLUMN decided_by TEXT;
+ALTER TABLE audit_log ADD COLUMN user_id TEXT;
+ALTER TABLE audit_log ADD COLUMN ip TEXT;
+ALTER TABLE usage ADD COLUMN user_id TEXT;
+ALTER TABLE run_events ADD COLUMN user_id TEXT;
+ALTER TABLE feedback ADD COLUMN user_id TEXT;
+-- 记忆的用户维度（access 归属）：global scope 的 owner_id 改为用户 id，
+-- 其余 scope（session/agent/project）的 owner_id 语义不变（会话/角色/项目 id），用户维度统一由 user_id 承担。
+ALTER TABLE memory ADD COLUMN user_id TEXT;
+
+CREATE INDEX IF NOT EXISTS idx_sessions_owner ON sessions(owner_id, updated_at);
+CREATE INDEX IF NOT EXISTS idx_usage_user ON usage(user_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_audit_user ON audit_log(user_id, ts);
+CREATE INDEX IF NOT EXISTS idx_memory_user ON memory(user_id);
+
+-- ---------- 连接中心：预留 personal 资源维度（P3 开放，P1 管理面仍为 admin-only） ----------
+-- 重建原因：SQLite 不能改 UNIQUE 约束；唯一键由 name → (scope, owner_id, name)（表达式索引处理 NULL）。
+-- session_connections 外键为 ON DELETE CASCADE：DROP 会级联清子表行，故先备份后回填。
+CREATE TABLE connections_v2 (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  config TEXT NOT NULL DEFAULT '{}',
+  secret_enc TEXT,
+  status TEXT NOT NULL DEFAULT 'idle',
+  last_checked_at TEXT,
+  last_error TEXT,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  scope TEXT NOT NULL DEFAULT 'system',
+  owner_id TEXT DEFAULT NULL,
+  member_use INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+INSERT INTO connections_v2 (id, name, kind, config, secret_enc, status, last_checked_at, last_error, enabled, scope, owner_id, member_use, created_at, updated_at)
+  SELECT id, name, kind, config, secret_enc, status, last_checked_at, last_error, enabled, 'system', NULL, 1, created_at, updated_at FROM connections;
+CREATE TABLE _bak_session_connections AS SELECT * FROM session_connections;
+DROP TABLE connections;
+ALTER TABLE connections_v2 RENAME TO connections;
+INSERT INTO session_connections (session_id, connection_id, granted_at) SELECT session_id, connection_id, granted_at FROM _bak_session_connections;
+DROP TABLE _bak_session_connections;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_connections_scope_name ON connections(scope, COALESCE(owner_id, ''), name);
+
+-- ---------- MCP 服务器：同纪律（scope/owner_id 预留；管理面 P1 仍为 admin-only） ----------
+CREATE TABLE mcp_servers_v2 (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  display_name TEXT,
+  transport TEXT NOT NULL,
+  config TEXT NOT NULL DEFAULT '{}',
+  secret_enc TEXT,
+  tools_json TEXT NOT NULL DEFAULT '[]',
+  status TEXT NOT NULL DEFAULT 'idle',
+  last_checked_at TEXT,
+  last_error TEXT,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  source TEXT NOT NULL DEFAULT 'ui',
+  scope TEXT NOT NULL DEFAULT 'system',
+  owner_id TEXT DEFAULT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+INSERT INTO mcp_servers_v2 (id, name, display_name, transport, config, secret_enc, tools_json, status, last_checked_at, last_error, enabled, source, scope, owner_id, created_at, updated_at)
+  SELECT id, name, display_name, transport, config, secret_enc, tools_json, status, last_checked_at, last_error, enabled, source, 'system', NULL, created_at, updated_at FROM mcp_servers;
+CREATE TABLE _bak_session_mcp AS SELECT * FROM session_mcp_servers;
+DROP TABLE mcp_servers;
+ALTER TABLE mcp_servers_v2 RENAME TO mcp_servers;
+INSERT INTO session_mcp_servers (session_id, server_id, granted_at) SELECT session_id, server_id, granted_at FROM _bak_session_mcp;
+DROP TABLE _bak_session_mcp;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_mcp_scope_name ON mcp_servers(scope, COALESCE(owner_id, ''), name);
+
+-- ---------- 金融自选：按用户（唯一键重建：symbol → (user_id, symbol)） ----------
+CREATE TABLE finance_watchlist_v2 (
+  id TEXT PRIMARY KEY,
+  symbol TEXT NOT NULL,
+  type TEXT NOT NULL,
+  name TEXT NOT NULL,
+  note TEXT,
+  sort INTEGER NOT NULL DEFAULT 0,
+  user_id TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL
+);
+INSERT INTO finance_watchlist_v2 (id, symbol, type, name, note, sort, user_id, created_at)
+  SELECT id, symbol, type, name, note, sort, '', created_at FROM finance_watchlist;
+DROP TABLE finance_watchlist;
+ALTER TABLE finance_watchlist_v2 RENAME TO finance_watchlist;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_watchlist_user_symbol ON finance_watchlist(user_id, symbol);
+`,
+  },
+  {
+    version: 15,
+    name: 'browser_multiuser_ownership',
+    sql: `
+-- ---------- M62（多用户浏览器资源治理）：实例归属与关闭原因 ----------
+-- 归属列用于：admin 实例观测 / 成员回放自己的历史 bsid / 用户删除清理 / 启动对账。
+-- 旧行为 NULL（单用户兼容模式遗留）；回填自 sessions.owner_id（M57 setup 已一次性回填存量归属）。
+-- 注意：ADD COLUMN 非幂等；旧库已有该列而缺迁移记录时会报 duplicate column，由迁移器特赦并补记（见 db.ts）
+ALTER TABLE browser_sessions ADD COLUMN user_id TEXT;
+ALTER TABLE browser_sessions ADD COLUMN close_reason TEXT;
+UPDATE browser_sessions SET user_id = (SELECT owner_id FROM sessions s WHERE s.id = browser_sessions.session_id) WHERE user_id IS NULL;
+CREATE INDEX IF NOT EXISTS idx_browser_sessions_user ON browser_sessions(user_id, closed_at);
+`,
+  },
+  {
+    version: 16,
+    name: 'session_sharing_members',
+    sql: `
+-- ---------- M57 P2（会话共享协作）：共享成员表 ----------
+-- 语义：owner 不进此表（由 sessions.owner_id 承载）；role 仅 editor / viewer；
+-- 读取权限 = owner ∪ 成员；写权限 = owner / editor（viewer 只读 + 可自助 /leave）；
+-- 会话删除级联清成员；用户删除级联清其全部共享记录。
+CREATE TABLE IF NOT EXISTS session_members (
+  session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  role TEXT NOT NULL CHECK (role IN ('editor','viewer')),
+  invited_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (session_id, user_id)
+);
+-- 「与我共享」列表 / WS 可见集过滤
+CREATE INDEX IF NOT EXISTS idx_session_members_user ON session_members(user_id, session_id);
+`,
+  },
+  {
+    version: 17,
+    name: 'user_quotas',
+    sql: `
+-- ---------- M57 P3：用户配额（NULL 列 = 不限 / 用系统默认） ----------
+-- 强制点：launch 并发（max_concurrent_runs 覆盖 RUN_MAX_PER_USER）、波次边界用量（daily_tokens /
+-- monthly_cost_usd，基于 usage.user_id 聚合）、会话创建（max_sessions）、上传（max_storage_mb）。
+-- 无行 = 全部不限（兼容模式 / 未配置用户零变化）。
+CREATE TABLE IF NOT EXISTS user_quotas (
+  user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  max_concurrent_runs INTEGER,
+  daily_tokens INTEGER,
+  monthly_cost_usd REAL,
+  max_sessions INTEGER,
+  max_storage_mb INTEGER,
+  updated_at TEXT NOT NULL
+);
+`,
+  },
+  {
+    version: 18,
+    name: 'user_llm_credentials',
+    sql: `
+-- ---------- M57 P3：用户 LLM 凭据（BYOK；SecretVault 加密，密钥永不出库） ----------
+-- 解析：按会话属主命中则用用户凭据（模型 / 地址可覆盖），否则系统默认；
+-- 成本归因：usage.model 记实际生效模型（BYOK 模型单价）；删除账号随 users FK 级联。
+CREATE TABLE IF NOT EXISTS user_llm_credentials (
+  user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  base_url TEXT,
+  model TEXT,
+  secret_enc TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+`,
+  },
+  {
+    version: 19,
+    name: 'materials',
+    sql: `
+-- ---------- M68：用户素材库（per-user 私人素材；owner 服务端定，兼容模式为 'local'） ----------
+-- 文件真相在磁盘（workspace/_library/u_<uid>/<id><ext>），行是索引（删除时调用方负责文件双清）；
+-- owner_id 不设 FK（兼容模式无 users 行）：账号删除由路由显式级联 removeOf。
+CREATE TABLE IF NOT EXISTS materials (
+  id             TEXT PRIMARY KEY,
+  owner_id       TEXT NOT NULL,
+  name           TEXT NOT NULL,
+  kind           TEXT NOT NULL,
+  ext            TEXT NOT NULL,
+  mime           TEXT,
+  size_bytes     INTEGER NOT NULL,
+  rel_path       TEXT NOT NULL UNIQUE,
+  source         TEXT NOT NULL,
+  src_session_id TEXT,
+  created_at     TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_materials_owner ON materials(owner_id, created_at DESC);
+`,
+  },
+  {
+    version: 20,
+    name: 'message_member_key',
+    sql: `
+-- ---------- M77：消息说话成员键（同角多魂/分身：agentId~soulId；NULL = 存量经典消息） ----------
+-- 仅记录用途（气泡作者归属 / 统计 / 图谱）；agent_id 仍为基础角色 id（存量消费端零改动）。
+ALTER TABLE messages ADD COLUMN member_key TEXT;
+`,
+  },
 ]

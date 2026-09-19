@@ -257,6 +257,62 @@ describe('M4：流式重试（仅首增量前）', () => {
     expect(started).toBe(0)
   })
 
+  it('静默中止兜底：父级中断后迭代器不抛错直接结束 → 仍上抛 AbortError', async () => {
+    // 真实 OpenAI SDK 对 abort 为「exit without throwing」：迭代器正常结束，不抛 AbortError
+    const parent = new AbortController()
+    const running = collect(
+      resilientStream(
+        async function* () {
+          yield { type: 'text', text: '前半段' }
+          await new Promise<void>((resolve) => parent.signal.addEventListener('abort', () => resolve(), { once: true }))
+        },
+        baseOpts({ parentSignal: parent.signal, firstTokenTimeoutMs: 5_000, idleTimeoutMs: 5_000 }),
+      ),
+    )
+    setTimeout(() => parent.abort(), 10)
+    const error = await running.catch((err: unknown) => err)
+    expect((error as { name?: string }).name).toBe('AbortError')
+  })
+
+  it('静默中止兜底：流空闲超时（迭代器不抛错）→ LlmTimeoutError 上抛且不重试', async () => {
+    let attempts = 0
+    const error = await collect(
+      resilientStream(
+        async function* (signal) {
+          attempts++
+          yield { type: 'text', text: '开头' }
+          // 模拟 SDK 吞并 abort：单次尝试被中断后正常结束（而非抛 AbortError）
+          await new Promise<void>((resolve) => signal.addEventListener('abort', () => resolve(), { once: true }))
+        },
+        baseOpts({ firstTokenTimeoutMs: 5_000, idleTimeoutMs: 30 }),
+      ),
+    ).catch((err: unknown) => err)
+    expect(error).toBeInstanceOf(LlmTimeoutError)
+    expect((error as LlmTimeoutError).phase).toBe('idle')
+    expect(attempts).toBe(1)
+  })
+
+  it('静默中止兜底：首 token 超时（无增量且迭代器不抛错）→ 重试成功', async () => {
+    let attempts = 0
+    const chunks = await collect(
+      resilientStream(
+        async function* (signal) {
+          attempts++
+          if (attempts === 1) {
+            // 模拟 SDK 吞并 abort：首 token 等待被中断后正常结束（无任何增量）
+            await new Promise<void>((resolve) => signal.addEventListener('abort', () => resolve(), { once: true }))
+            return
+          }
+          yield { type: 'text', text: 'after-timeout' }
+          yield { type: 'done' }
+        },
+        baseOpts({ firstTokenTimeoutMs: 30 }),
+      ),
+    )
+    expect(attempts).toBe(2)
+    expect(chunks[0]).toEqual({ type: 'text', text: 'after-timeout' })
+  })
+
   it('退避抖动确定性开启（jitter=none 时按 2^n 指数）', async () => {
     const delays: number[] = []
     let attempts = 0

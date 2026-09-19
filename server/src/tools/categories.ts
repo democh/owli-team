@@ -53,10 +53,23 @@ export const TOOL_CATEGORIES: Record<string, string> = {
   fin_game: '金融数据',
   fin_watch: '金融数据',
   // M51-E：命理排盘（四柱 / 紫微 / 星盘 / 卦；tier=deferred，经 tool_search 激活）
+  // M63-B：行运 / 合盘；C：大六壬；D：奇门遁甲；E：七政四余（同组；唯一口径）
   bazi_pan: '命理占星',
   ziwei_pan: '命理占星',
   natal_pan: '命理占星',
   gua_pan: '命理占星',
+  transit_pan: '命理占星',
+  synastry_pan: '命理占星',
+  daliuren_pan: '命理占星',
+  qimen_pan: '命理占星',
+  qizheng_pan: '命理占星',
+  // M69：场景玩法（trpg 掷骰 / tarot 抽牌；tier=deferred，经 tool_search 激活）
+  dice_roll: '场景玩法',
+  tarot_draw: '场景玩法',
+  // M66-A：罗盘排盘（fengshui 堪舆阳宅；tier=deferred，经 tool_search 激活）
+  luopan_pan: '命理占星',
+  // M66 续完善：择日排盘（fengshui 堪舆阳宅；tier=deferred，经 tool_search 激活）
+  zeri_pan: '命理占星',
 }
 
 export function toolCategory(name: string): string {

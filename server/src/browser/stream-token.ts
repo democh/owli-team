@@ -15,6 +15,8 @@ interface TokenPayload {
   m: 'watch' | 'takeover'
   exp: number
   n: string
+  /** M57：绑定的用户 id（多用户：握手校验一致性；缺省 = 单用户兼容模式） */
+  u?: string
 }
 
 export class StreamTokenService {
@@ -24,19 +26,26 @@ export class StreamTokenService {
 
   constructor(private readonly ttlMs: number) {}
 
-  issue(topic: string, mode: 'watch' | 'takeover'): StreamTokenResponse {
+  /** 签发（M57：userId 绑定发布方——握手时要求同一用户；单用户兼容模式缺省） */
+  issue(topic: string, mode: 'watch' | 'takeover', userId?: string): StreamTokenResponse {
     const payload: TokenPayload = {
       t: topic,
       m: mode,
       exp: Date.now() + this.ttlMs,
       n: randomBytes(8).toString('hex'),
+      ...(userId ? { u: userId } : {}),
     }
     const encoded = Buffer.from(JSON.stringify(payload)).toString('base64url')
     const sig = createHmac('sha256', this.secret).update(encoded).digest('base64url')
     return { token: `${encoded}.${sig}`, topic, mode, expiresIn: Math.floor(this.ttlMs / 1000) }
   }
 
-  verify(token: string, topic: string, mode: 'watch' | 'takeover'): { ok: true } | { ok: false; reason: string } {
+  verify(
+    token: string,
+    topic: string,
+    mode: 'watch' | 'takeover',
+    userId?: string,
+  ): { ok: true } | { ok: false; reason: string } {
     const [encoded, sig] = token.split('.')
     if (!encoded || !sig) return { ok: false, reason: 'token 格式非法' }
     const expected = createHmac('sha256', this.secret).update(encoded).digest('base64url')
@@ -52,6 +61,8 @@ export class StreamTokenService {
     if (payload.exp < Date.now()) return { ok: false, reason: 'token 已过期' }
     if (payload.t !== topic) return { ok: false, reason: 'token 与频道不匹配' }
     if (payload.m !== mode) return { ok: false, reason: 'token 权限级别不匹配' }
+    // M57：多用户绑定校验（token 带用户且请求用户不一致 → 拒绝；兼容模式不强制）
+    if (payload.u && payload.u !== userId) return { ok: false, reason: 'token 与当前用户不匹配' }
     if (mode === 'takeover') {
       this.pruneConsumed()
       if (this.consumed.has(payload.n)) return { ok: false, reason: 'takeover token 已被使用（一次性）' }

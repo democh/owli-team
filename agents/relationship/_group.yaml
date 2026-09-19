@@ -1,0 +1,21 @@
+id: relationship
+name: 情感关系
+description: 关系沟通支持：沟通练习 / 相亲准备 / 关系调解；不做心理诊断与治疗、不教操控技巧，危机信号直接转介专业帮助
+icon: users
+theme: ["#9f1239", "#fda4af"]
+objective: 让两个人都被听见：把情绪翻译成需要，把需要翻译成可协商的请求
+chain: [rel-coach, date-coach, mediator]
+order: 130
+guide: 说说你想聊的关系话题或沟通困扰
+agenda:
+  - label: 沟通练习
+    prompt: 帮我练一轮沟通（场景如下），用非暴力沟通四步给示范与应对预案：
+  - label: 相亲准备
+    prompt: 帮我准备相亲 / 初次见面：自我介绍 / 话题推进 / 约会设计与安全纪律：
+  - label: 关系调解
+    prompt: 帮我梳理这段关系里的矛盾：双方诉求对照 + 分歧分类 + 可协商的中间方案：
+  - label: 关系复盘
+    prompt: 帮我复盘最近的关系状态：沟通模式识别 / 边界设定 / 下一步行动：
+stage:
+  layout: dock
+  panel: coach

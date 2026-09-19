@@ -10,6 +10,7 @@
  * 约定：ops 新事件在前，滚动上限 200 条；绑定状态按会话隔离（切换竞态守卫）。
  */
 import { create } from 'zustand'
+import { useAuthStore } from './auth-store'
 import type {
   ConnectionDefinition,
   ConnectionInput,
@@ -118,17 +119,24 @@ export const useConnectionsStore = create<ConnectionsState>((set, get) => ({
   loadForSession: async (sessionId) => {
     set({ sessionId, loading: true })
     const guard = (): boolean => get().sessionId === sessionId
-    const [list, binds, audit] = await Promise.allSettled([
+    // M57 P3：members 不访问审计回放（/api/audit 为 adminOnly）——避免 403 噪声
+    const authState = useAuthStore.getState()
+    const isAdmin = !authState.status.multiUser || authState.user?.role === 'admin'
+    const tasks: Array<Promise<unknown>> = [
       apiGet<{ connections: ConnectionDefinition[] }>('/api/connections'),
       apiGet<{ bindings: SessionConnectionInfo[] }>(`/api/sessions/${sessionId}/connections`),
-      apiGet<{ entries: AuditRow[] }>(`/api/audit?sessionId=${encodeURIComponent(sessionId)}&limit=120`),
-    ])
+    ]
+    if (isAdmin) {
+      tasks.push(apiGet<{ entries: AuditRow[] }>(`/api/audit?sessionId=${encodeURIComponent(sessionId)}&limit=120`))
+    }
+    const [list, binds, audit] = await Promise.allSettled(tasks)
     if (!guard()) return
     const patch: Partial<ConnectionsState> = { loading: false }
-    if (list.status === 'fulfilled') patch.connections = list.value.connections
-    if (binds.status === 'fulfilled') patch.bindings = binds.value.bindings
-    if (audit.status === 'fulfilled') {
-      const historical = audit.value.entries
+    // 契约防御：响应缺数组字段时不把 undefined 写入状态（否则渲染侧 .map / .filter 崩溃）
+    if (list.status === 'fulfilled') patch.connections = (list.value as { connections: ConnectionDefinition[] }).connections ?? []
+    if (binds.status === 'fulfilled') patch.bindings = (binds.value as { bindings: SessionConnectionInfo[] }).bindings ?? []
+    if (audit?.status === 'fulfilled') {
+      const historical = ((audit.value as { entries: AuditRow[] }).entries ?? [])
         .filter(
           (row) =>
             row.action.startsWith('connection.') ||
@@ -202,7 +210,7 @@ export const useConnectionsStore = create<ConnectionsState>((set, get) => ({
       const res = await apiPost<{ bindings: SessionConnectionInfo[] }>(`/api/sessions/${sessionId}/connections`, {
         connectionId,
       })
-      set({ bindings: res.bindings })
+      set({ bindings: res.bindings ?? [] })
     } finally {
       set({ busyId: undefined })
     }
@@ -216,7 +224,7 @@ export const useConnectionsStore = create<ConnectionsState>((set, get) => ({
       const res = await apiDelete<{ bindings: SessionConnectionInfo[] }>(
         `/api/sessions/${sessionId}/connections/${connectionId}`,
       )
-      set({ bindings: res.bindings })
+      set({ bindings: res.bindings ?? [] })
     } finally {
       set({ busyId: undefined })
     }

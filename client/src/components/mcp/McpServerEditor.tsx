@@ -176,10 +176,7 @@ export function McpServerEditor({
       <DialogContent className="max-w-xl">
         <DialogHeader>
           <DialogTitle>{isEdit ? `编辑 MCP 服务器「${server?.name}」` : '新建 MCP 服务器'}</DialogTitle>
-          <DialogDescription>
-            工具将以 <span className="font-mono">mcp__&lt;name&gt;__&lt;tool&gt;</span> 注入注册表；凭据（env /
-            headers）加密存储、永不回显。保存后点「测试」连接。
-          </DialogDescription>
+          <DialogDescription>凭据（env / headers）加密存储、永不回显。</DialogDescription>
         </DialogHeader>
         {readOnly && (
           <div className="mt-3 rounded-md border border-amber-300/60 bg-amber-500/10 px-3 py-2 text-[11.5px] text-amber-700">
@@ -266,7 +263,7 @@ export function McpServerEditor({
                   value={form.envText}
                   rows={3}
                   aria-label="环境变量"
-                  placeholder={'API_KEY=xxx\n# 子进程仅获得白名单基座 + 这里配置的变量'}
+                  placeholder={'API_KEY=xxx'}
                   onChange={(e) => patch({ envText: e.target.value, clearSecret: false })}
                   className="block w-full resize-y rounded-md border border-input bg-card px-3 py-2 font-mono text-[12px] leading-5 outline-none placeholder:text-muted-foreground/70 focus-visible:border-primary/40 focus-visible:ring-[3px] focus-visible:ring-primary/15"
                 />

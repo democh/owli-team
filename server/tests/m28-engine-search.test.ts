@@ -18,10 +18,8 @@ import { appendUserMessage, makeEnv, makeTmpDir, routePassThrough, waitRunFinish
 type Env = ReturnType<typeof makeEnv>
 type ToolCallRecordLike = { name: string; status: string; summary?: string }
 
-/** M47：pin 网关门控开启（web_fetch / web_search / run_command 在引擎清单内，计数与环境无关） */
+/** M47：pin 门控开启（联网工具无环境门控，计数与环境无关，ADR 0136） */
 const NET_ENABLED: Parameters<typeof makeEnv>[0] = {
-  webSearch: { enabled: true, apiKey: '', apiUrl: '', htmlUrl: '' },
-  webFetchAllowedDomains: ['example.invalid'],
   allowRunCommand: true,
 }
 
@@ -186,7 +184,7 @@ describe('M28：发现态判定（auto 阈值自适应）', () => {
     expect(tools).not.toContain('tool_search')
   })
 
-  it('TOOL_SEARCH_MODE=off：强制禁用（全量 52 个，仅隐藏 tool_search；git 6 被模式门过滤）', async () => {
+  it('TOOL_SEARCH_MODE=off：强制禁用（全量 61 个，仅隐藏 tool_search；git 6 被模式门过滤）', async () => {
     const agentsDir = path.join(makeTmpDir('ma-m28-engine-'), 'agents')
     seedAgents(agentsDir)
     const env = makeEnv({ agentsDir, ...NET_ENABLED, toolSearchMode: 'off' })
@@ -196,7 +194,7 @@ describe('M28：发现态判定（auto 阈值自适应）', () => {
 
     await runTurn(engine, env, session.id, '打个招呼')
     const tools = toolsLists[0]!
-    expect(tools).toHaveLength(52)
+    expect(tools).toHaveLength(61)
     expect(tools).toContain('web_fetch')
     // M47：sandbox 会话无仓库 → git 工具不进清单（repo / worktree 模式下才可见）
     expect(tools).not.toContain('git_status')
@@ -226,7 +224,7 @@ describe('M28：发现态判定（auto 阈值自适应）', () => {
 
     await runTurn(engine, env, session.id, '打个招呼')
     const tools = toolsLists[0]!
-    expect(tools).toHaveLength(52)
+    expect(tools).toHaveLength(61)
     expect(tools).toContain('web_fetch')
     expect(tools).not.toContain('tool_search')
   })

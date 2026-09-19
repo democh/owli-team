@@ -30,6 +30,9 @@ const BOUND_ROLES: Array<[string, string]> = [
   ['success', 'sales/success'],
   ['scout', 'research/scout'],
   ['life-admin', 'personal/life-admin'],
+  // M69：时间敏感角色增补（习惯提醒 / 证照到期提醒）
+  ['habit-coach', 'personal/habit-coach'],
+  ['license-keeper', 'ops/license-keeper'],
 ]
 
 /** 定时工具三件套（注册名） */
@@ -40,8 +43,8 @@ function realLibrary(): PromptLibrary {
   return new PromptLibrary({ agentsDir: cfg.agentsDir, promptsDir: cfg.promptsDir, onWarn: () => {} })
 }
 
-describe('M35：定时任务白名单可达性（8 个时间敏感角色）', () => {
-  it('8 角色全部持有 schedule_task / list_schedules / manage_schedule', () => {
+describe('M35：定时任务白名单可达性（10 个时间敏感角色）', () => {
+  it('10 角色全部持有 schedule_task / list_schedules / manage_schedule', () => {
     const lib = realLibrary()
     for (const [id] of BOUND_ROLES) {
       const agent = lib.get(id)
@@ -65,7 +68,7 @@ describe('M35：定时任务白名单可达性（8 个时间敏感角色）', ()
 })
 
 describe('M35：白名单边界（能力不扩散）', () => {
-  it('仅这 8 个角色持有：持有者集合精确匹配（未绑定角色无法经 tool_search 发现）', () => {
+  it('仅这 10 个角色持有：持有者集合精确匹配（未绑定角色无法经 tool_search 发现）', () => {
     const lib = realLibrary()
     // M50：空场景通用助手不纳入能力边界约束（单助手场景持全套工具，含定时任务三件套）
     const holders = lib
@@ -106,7 +109,7 @@ describe('M35：渐进披露契约（deferred 加载层级与只读边界）', (
 })
 
 describe('M35：引导在场（角色正文 / 全局协议 / 场景协议）', () => {
-  it('8 角色正文含定时工具引导（先 tool_search 检索「定时」激活）', () => {
+  it('10 角色正文含定时工具引导（先 tool_search 检索「定时」激活）', () => {
     const cfg = loadConfig()
     for (const [id, dir] of BOUND_ROLES) {
       const text = fs.readFileSync(path.join(cfg.agentsDir, dir, 'AGENT.md'), 'utf8')
@@ -150,6 +153,12 @@ describe('M35：运行时绑定（工具名到工具对象的真实解析）与�
       expect(agent).toBeDefined()
       const bound = new Set(registry.forAgent(agent!).map((t) => t.name))
       for (const name of agent?.tools ?? []) {
+        // MCP 通配条目（mcp__<slug>__* / mcp__*）为运行时模式：随服务器连接动态解析，
+        // 不属于本用例的「静态绑定」断言范围（拼写守卫仅针对具体工具名）；此处只做格式守卫
+        if (name.endsWith('*')) {
+          expect(name, `${id} MCP 通配格式非法`).toMatch(/^mcp__\*$|^mcp__[a-z][a-z0-9-]{0,39}__\*$/)
+          continue
+        }
         expect(bound.has(name), `${id} 白名单工具 ${name} 未在运行时绑定（拼写错误 / 未注册）`).toBe(true)
       }
     }

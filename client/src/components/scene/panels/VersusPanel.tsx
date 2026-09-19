@@ -8,14 +8,24 @@
  * M52-F：条目逐条归因分侧（lib/verdict.verdictItemSide）——不再按裁决方向整列倾泻：
  * 翻盘条件归败方（落后方的翻盘路径）、显式阵营词归各方、其余归裁决方向，
  * 消除「空方领先 → 多方列恒空」的信息架构缺陷。
+ * M63（批一 · N1 / G4）：四路观点卡（claim 扩展字段聚合，多空分歧提示）+
+ * 博弈走子板（```game 围栏：轮次 / 模型 / 种子 / 快照 + 推演声明）+「发起多空对弈」回填入口。
  */
 import * as React from 'react'
-import { Scale } from 'lucide-react'
+import { Scale, Swords } from 'lucide-react'
 import { useSceneCtx } from '../context'
 import type { SceneRow, SceneVerdict, SceneVerdictStatus } from '../derive'
+import { gameMovesOf } from '../derive'
 import { verdictConfidenceOf, verdictItemSide, type VerdictConfidence } from '../../../lib/verdict'
-import { MomentumBar, VerdictPart } from '../parts'
-import { useSceneVerdicts } from '../use-scene-data'
+import {
+  claimMetaOf,
+  claimReasonsOfLines,
+  DUEL_PROMPT,
+  stanceToneOf,
+  TEMPLATES,
+} from '../../../lib/pk'
+import { MomentumBar, MoveBoard, VerdictPart, ViewCards, type ViewCardData } from '../parts'
+import { useSceneContainers, useSceneMessages, useSceneVerdicts } from '../use-scene-data'
 import { PanelEmpty, PanelShell } from './PanelShell'
 
 /** 局面头文案（状态词派生；none 走裁决标题兜底） */
@@ -24,6 +34,9 @@ const HEADLINE: Record<Exclude<SceneVerdictStatus, 'none'>, string> = {
   short: '空方领先',
   draw: '僵持',
 }
+
+/** 四路视角注册表序（未知视角按出现序追加在后） */
+const VIEW_ORDER = ['基本面', '技术面', '舆情', '量化']
 
 interface VersusHead {
   status: SceneVerdictStatus
@@ -75,12 +88,46 @@ function buildModel(verdicts: SceneVerdict[]): VersusModel {
 export function VersusPanel(): React.JSX.Element {
   const ctx = useSceneCtx()
   const verdicts = useSceneVerdicts()
+  const containers = useSceneContainers()
+  const messages = useSceneMessages()
   const model = React.useMemo(() => buildModel(verdicts), [verdicts])
 
-  if (verdicts.length === 0) {
+  // M63 N1：四路观点（带「视角」字段的 claim；同视角取最新一条；注册表序优先）
+  const views = React.useMemo<ViewCardData[]>(() => {
+    const map = new Map<string, ViewCardData>()
+    for (const c of containers) {
+      if (c.name !== 'claim' || c.arg === '') continue
+      const meta = claimMetaOf(c.lines)
+      if (meta.perspective === undefined) continue
+      const agent = c.messageAgentId ? ctx?.agentOf(c.messageAgentId) : undefined
+      map.set(meta.perspective, {
+        perspective: meta.perspective,
+        ...(meta.stance !== undefined ? { stance: meta.stance } : {}),
+        ...(meta.confidence !== undefined ? { confidence: meta.confidence } : {}),
+        claim: c.arg,
+        reasons: claimReasonsOfLines(c.lines).length,
+        messageId: c.messageId,
+        ...(agent ? { agent } : {}),
+      })
+    }
+    const rank = (p: string): number => {
+      const i = VIEW_ORDER.indexOf(p)
+      return i < 0 ? VIEW_ORDER.length : i
+    }
+    return [...map.values()].sort((a, b) => rank(a.perspective) - rank(b.perspective))
+  }, [containers, ctx])
+  const divergent = React.useMemo(() => {
+    const tones = views.map((v) => stanceToneOf(v.stance ?? ''))
+    return tones.includes('long') && tones.includes('short')
+  }, [views])
+
+  // M63 G4：博弈走子（```game 围栏扫描）
+  const moves = React.useMemo(() => gameMovesOf(messages), [messages])
+
+  if (verdicts.length === 0 && views.length === 0 && moves.length === 0) {
     return (
       <PanelShell title="局势面板" icon={Scale}>
-        <PanelEmpty icon={Scale} text="多空信号与局势将在这里显示" hint="研判产生的多方 / 空方信号会随对弈轮次实时汇入" />
+        <PanelEmpty icon={Scale} text="多空信号与局势将在这里显示" />
       </PanelShell>
     )
   }
@@ -126,10 +173,18 @@ export function VersusPanel(): React.JSX.Element {
           </div>
         ) : null}
         <MomentumBar value={model.momentum} />
+        <ViewCards
+          views={views}
+          divergent={divergent}
+          onAsk={(v) => ctx?.insert(TEMPLATES.viewAsk(v.perspective, v.claim))}
+          onFocus={(id) => ctx?.focus(id)}
+          onAdjudicate={() => ctx?.insert(TEMPLATES.splitAdjudicate())}
+        />
         <div className="scene-vs-cols">
           {col('long', '多方', model.longs)}
           {col('short', '空方', model.shorts)}
         </div>
+        <MoveBoard moves={moves} onFocus={(id) => ctx?.focus(id)} />
         {model.draws.length > 0 ? (
           <div className="scene-vs-draw">
             {model.draws.map((r, i) => (
@@ -142,6 +197,17 @@ export function VersusPanel(): React.JSX.Element {
         ) : null}
         {model.latest ? (
           <VerdictPart status={model.latest.status} title={model.latest.title} items={model.latest.items} />
+        ) : null}
+        {verdicts.length === 0 ? (
+          <button
+            type="button"
+            className="scene-vs-initiate"
+            title="预填多空对弈开场指令（可编辑后发送）"
+            onClick={() => ctx?.insert(DUEL_PROMPT)}
+          >
+            <Swords className="size-3" aria-hidden />
+            发起多空对弈
+          </button>
         ) : null}
       </div>
     </PanelShell>

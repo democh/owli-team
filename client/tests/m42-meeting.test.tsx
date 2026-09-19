@@ -8,7 +8,8 @@
  * - 散会胶囊（RT-5）：尾条派生（纪要容器 + 非运行中）+ 指纹隔离（非纪要 / 流式不闪现）。
  */
 import { beforeEach, describe, expect, it } from 'vitest'
-import { act, fireEvent, render } from '@testing-library/react'
+import { act, fireEvent, render, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import type * as React from 'react'
 import type { AgentDefinition, ChatMessage } from '@multi-agent/shared'
 import { AdjournPill, adjournOfTail } from '../src/components/chat/AdjournPill'
@@ -315,6 +316,22 @@ describe('纪要卡（::: minutes）', () => {
     const { container } = render(<Markdown content={MINUTES} />)
     fireEvent.click(container.querySelector('.md-minutes-todo')!)
     expect(useUiStore.getState().composerInsert?.text).toBe('@周正 ')
+  })
+
+  it('复制纪要：markdown 分栏文本（标题 + 三栏）写入剪贴板', async () => {
+    const user = userEvent.setup()
+    const { container } = render(<Markdown content={MINUTES} />)
+    await user.click(container.querySelector('.md-minutes-head .md-block-btn')!)
+    await waitFor(async () => {
+      expect(await navigator.clipboard.readText()).toContain('## 本周经营例会纪要')
+    })
+    const text = await navigator.clipboard.readText()
+    expect(text).toContain('### 决议')
+    expect(text).toContain('### 待办')
+    expect(text).toContain('### 风险')
+    expect(text).toContain('- @周正 按本周结论更新执行排期并同步工作区')
+    // 未识别键（备注）归入决议栏（与渲染同口径）
+    expect(text).toContain('- 待下次例会复核')
   })
 
   it('负责人无头像资产 → 首字回退；流式期间派活行禁用', () => {

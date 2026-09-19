@@ -28,7 +28,7 @@ npm run dev        # 一键启动：服务端 8787 + 客户端 5173
 1. 新建会话（勾选成员）→ 发送「帮我设计一个登录功能」，观察接力链实时推进：产品经理拆解需求 → `@架构师` → `@设计师` → `@前端` / `@后端` → `@QA` → `@DevOps` → `@用户` 汇总收尾；
 2. 主区切到「交付件」Tab：各角色产出的 Markdown 交付件随写随现，可预览 / 查看版本 Diff；
 3. 运行中再发一条消息 = **插话**（当前回合结束后注入上下文）；点「停止」可随时中断，「继续生成」可续写；
-4. 高风险动作（`git_commit` / `run_command` / 覆盖写等）在 `APPROVAL_MODE=risky`（默认）下弹出审批卡：批准 / 拒绝 / 自定义反馈；
+4. 高风险动作（`git_commit` / `git_restore` / `run_command` / 覆盖写等）在 `APPROVAL_MODE=risky`（默认）下弹出审批卡：批准 / 拒绝 / 自定义反馈；
 5. 关闭页面任务照常推进，完成 / 交还 / 出错经 WebSocket 通知（未读角标 + 系统通知），刷新可经 `/api/runs/:runId/stream` 重附着运行流。
 
 ### 6.3 事件时序示例
@@ -63,6 +63,7 @@ type LlmChunk =
   | { type: 'reasoning'; text: string }          // 思考增量（V4：独立通道，不进正文）
   | { type: 'tool_calls'; calls: LlmToolCall[] } // 聚合后的工具调用（§21.2）
   | { type: 'usage'; usage: LlmUsage }           // 用量（M4：include_usage 流末产出，写 usage 表）
+  | { type: 'truncated' }                        // 输出截断（finish_reason=length：引擎落系统条提示，ADR 0186）
   | { type: 'done' }
 
 interface LlmProvider {
@@ -78,6 +79,8 @@ interface LlmProvider {
 ### 7.2 openai-compatible 实现
 
 基于官方 openai SDK + 自定义 `baseURL` 发起流式请求（`stream: true`），逐段产出增量文本。任何 OpenAI 兼容端点均可接入（DeepSeek / OpenAI / Ollama / 自建网关），只需配置 `LLM_BASE_URL` / `LLM_API_KEY` / `LLM_MODEL`。模型选择优先级：角色 front-matter 的 `model` > 全局 `LLM_MODEL`；`temperature` 同理。
+
+**输出完整性治理**（ADR 0186）：请求显式下发 `max_tokens`（`LLM_MAX_OUTPUT_TOKENS`，`0` = 交给服务商默认）；流末 `finish_reason=length` → 产出 `truncated` chunk，引擎落系统事件条提示（末轮截断才提示；正文保留、可续写 / 重新生成）；**全程无收尾标记**（finish_reason / usage 双缺）且非主动中止 → `LlmStreamInterruptedError`（可重试分类，首增量前可安全重放）；OpenAI SDK 对 abort 为「静默结束迭代器」（不抛错）——韧性层（§7.4）循环退出前复核父级信号与超时相位，中断 / 超时不得被误判为「正常完成」。
 
 ### 7.3 测试替身（确定性驱动）
 
@@ -152,7 +155,7 @@ Run            { id, sessionId, state, queue, turnIndex, pendingUserMessages, ha
 三栏布局（react-resizable-panels 拖拽分栏，小屏可折叠右栏；宽屏左右栏均可整体收起 / 展开——显隐钮收敛于主区头部「对话 / 画布」页签两侧（常驻双态：展开态 = 隐藏 / 收起态 = 显示），见 §58.3）：
 
 - **会话侧栏**：会话列表（标题 / 消息数 / 最后一条摘要）、新建（NewSessionDialog：轻量三人组 / 完整团队预置）、重命名、删除、会话导出；
-- **聊天区**：消息流 → 成员消息（头像 + 名字 + 角色徽标 + Markdown 正文 + @chip）、用户消息、居中事件条（SystemEvent：转交 / 交还用户）；底部 Composer（@ 自动补全、运行中发送 = 插话、运行中显示停止）；
+- **聊天区**：消息流 → 成员消息（头像 + 名字 + 角色徽标 + Markdown 正文 + @chip）、用户消息、居中事件条（SystemEvent：转交 / 交还用户）；底部 Composer（@ 自动补全、运行中发送 = 插话、运行中显示停止；底栏右侧上下文电池格条：分段水位 + 点击开上下文抽屉，见 §88）；
 - **右栏团队面板**（分段视图：成员 / 接力 / 战绩 / 任务，见 §20）：参与者职责卡（形象照 / 状态灯 / 名字 / 角色 / 能力标签 / 迷你战绩、@ 召唤与拍一拍）、发言中高亮与状态角标、转交纸飞机动画、接力链进度；右栏顶部仅保留分段视图控件（安静模式开关与实时连接状态指示位于全局顶栏，见 §42.1；面板显隐钮收敛于主区头部，见 §58.3）。
 
 ### 10.2 状态管理（zustand，六 store 各司其职）
@@ -201,7 +204,7 @@ handleEvent → message:delta 写入 deltaBuffer（不直接 setState）
 
 ### 10.6 头像系统
 
-主方案为**AI 生图卡通形象照**（详见 §19，v2 全量重设计为风格化 3D 卡通）：每个角色一张 1:1 风格化 3D 卡通（动画电影质感）纯白底半身像（存于 Agent 包内 `agents/<场景>/<id>/avatar.png`，512px，经 `/api/agents/:id/avatar` 直出），front-matter `avatar.image` 引用（同目录存在 avatar.png 时自动发现）；多级尺寸（16–96px）统一 `object-cover` + 调用方圆角裁切；状态通过角标表达（thinking 省略号 / done 星星 / error 闪电，`animated=false` 时关闭）。未配置图片或加载失败（onError）自动回退「渐变 + lucide 图标」（`ICON_REGISTRY` 未命中回退 `User`）。
+主方案为**AI 生图卡通形象照**（详见 §19，v2 全量重设计为风格化 3D 卡通）：每个角色一张 1:1 风格化 3D 卡通（动画电影质感）纯白底半身像（存于 Agent 包内 `agents/<场景>/<id>/avatar.png`，512px，经 `/api/agents/:id/avatar` 直出），front-matter `avatar.image` 引用（同目录存在 avatar.png 时自动发现）；多级尺寸（16–96px）统一 `object-cover` + **组件内置 25% 等比圆角**（全站头像统一口径，ADR 0132；任意尺寸圆润度一致，调用方 className 可覆盖）；状态通过角标表达（thinking 省略号 / done 星星 / error 闪电，`animated=false` 时关闭）。未配置图片或加载失败（onError）自动回退「渐变 + lucide 图标」（`ICON_REGISTRY` 未命中回退 `User`）。
 
 ### 10.7 会话导出
 
@@ -224,7 +227,7 @@ handleEvent → message:delta 写入 deltaBuffer（不直接 setState）
 
 ## 11. 关键设计决策（ADR 汇总）
 
-ADR 已拆分为独立文件（[`docs/adr/`](docs/adr/README.md)），每条含完整背景、结论理由与替代方案；下表为索引（状态：**Accepted** 生效 / **Amended** 修订 / **Superseded** 被取代）：
+ADR 已拆分为独立文件（[`docs/adr/`](docs/adr/README.md)），每条含完整背景、结论理由与替代方案；**完整索引与状态汇总以 [docs/adr/README.md](docs/adr/README.md) 表格为准**（含 0097 起新增条目）；下表为至 0096 的历史快照（状态：**Accepted** 生效 / **Amended** 修订 / **Superseded** 被取代）：
 
 | #   | 决策 | 状态 | 文件 |
 | --- | ---- | ---- | ---- |
@@ -316,10 +319,10 @@ ADR 已拆分为独立文件（[`docs/adr/`](docs/adr/README.md)），每条含�
 
 ### 12.1 自动化测试
 
-- **服务端 1031 例 / 75 套件**（vitest）：parser / scheduler / prompts（agents 加载器：分组 / 灵魂 / 头像发现 / prompts 回退）、engine（集成）、context（装配 / 压缩 / 水位 / 降级 / soul 段 / 压缩并发幂等）、store（迁移 / JSON 导入 / FTS / 路径安全）、resilience（错误分类 / 退避 / 超时分层 / 压缩重试）、tools（沙箱 / 步数 / abort 无遗留副作用 / 并行 / 幂等缓存 / apply_patch / 敏感文件）、reasoning，以及 m3–m10 与 m15/m16 各里程碑回归套件（互斥插话 / handoff / 运行恢复 / usage / git worktree / 审批 / 鉴权限流与 ws 握手 / mock 开关 / members API / 波次 planWave 与 mergeWaveSchedule）与 m21（OPC 资产加载 / presets 校验 / 业务工具四件套）与 m22（连接中心全链路 / SQL 护栏 / 凭据加密 / 流 token / 浏览器帧流 / db 工具实时事件）与 m23（quoteIdent 引用转义 / tableData 分页与注入拦截 / SQL 面板 dryRun / SSH fake client 全链路 / ssh_exec 审计与审批）与 m27（MCP 接入：命名规范化 / 存储与会话绑定 / 运行时生命周期 / 引擎通配与会话过滤 / 管理 API 与审计广播）与 m28（工具按需发现：BM25+嵌入融合检索 / tier 与阈值自适应激活 / 执行门与 discovery 区块 / MCP JSON 直配解析与文件权威同步 / 管理 API 三端点）与 m29（可达性基线：handoff / remember · 编码代理能力：执行验证 / 版本控制 · 数据与环境分权）与 m30（BI 场景与角色资产 · 取数只读边界 · 方法论文档在场）与 m31（画布文档：读写与 applyOps · 媒体服务：状态机 / 队列 / 取消与超时 · 脑图生成 · 创作工具：读取摘要 / 批量写入 / 任务创建）与 m32（SRE 场景与角色资产 · SSH 诊断可达性 · 运行时绑定与 plan 收敛）与 m33（附件上传：白名单 / 文件名安全化 / 元数据可信化 · 消息持久化与防伪造路径 · 装配护栏与文档提取分流）与 m34（金融投研：三源网关 / 12 工具 / 行情 API / 博弈四模型，9 套件）与 m35（定时任务：cron 内核 / 服务 / 存储 / 工具 / 绑定 / API，6 套件）与 m48（调度平台化：平台路由步契约与降级 / 空编制与增援语义，2 套件）与 m50（空场景：资产与 M28 分层 / 直通路由 / 三层隔离 / 真 Mock 剧本全链，9 例）；
-- **客户端 659 例 / 56 套件**：session-store 归约（byId+order / 增删成员 / 换灵魂）、run-store 事件归约与 SSE 解析（含 wave:start）、消息渲染（chip / 流式 / 中断 / reasoning / system 事件条）、Composer 键盘交互、审批卡、Diff 渲染、快捷键帮助（M12）、命令面板命令（M13/M16）、shiki 白名单（M13）、指挥台排队调序（M14）、AgentPicker / 灵魂选择器 / 场景创建器 / 并行协作组 / 协作图谱（M16 / M22 深化：悬停预览 · 接力链追踪 · 时间轴回放）、Markdown 扩展（M19：容器语法 / 代码块工具条 / mermaid / chart / 灯箱 / TurnCard；M21 业务卡：kpi / timeline / mail / option）、快速组队与草稿预填（M21）、虚拟列表、WorktreeBar、ui-store、连接 / 浏览器面板与操作直播窗（M22：LiveDock 20 例）、数据库工作台与 SSH 终端（M23：工作台 store / 对象树纯函数 / 终端协议状态机 / SSH 表单与卡片入口，14 例）、操作直播 SSH 三合一（M23+：镜像纯函数 / busy 推导 / ssh 映射与审计回放 / 镜像广播 / DockSshView 交互 / 胶囊与窄卡，18 例）、MCP 管理台（M27：mcp-store 三路加载与会话绑定 / 服务器卡与授权矩阵 / 编辑器校验与凭据只写不读 / Rail 导航，15 例）、工具按需发现与 JSON 直配（M28：jsonConfig 加载与同步回写 / JSON 配置卡片与粘贴导入 / 来源徽章与只读保护 / eagerLoad 开关 / 工具「常驻·按需」列，13 例）、画布文档与媒体快照（M31：canConnect 连线矩阵 / 尺寸与剪贴板 / 节点交互与模板空态 / media-store 任务快照与完成落画布 / 脑图树操作与快捷编辑，78 例）、附件与多模态（M33：托盘三态与上传流 / 消息内图片网格与 Lightbox / 视频封面与音频条 / 文档卡跳转，11 例）、定时任务面板（M35：面板渲染 / 新建表单 / 双通道归约 / 徽章，8 例）、画布指令条与设置主区页（M36：26 项全量渲染与保存 / 资源概览直达 / 指令条键盘与范式 chip / 直达编辑消费，9 例）、场景化对话基座（M37：波次派生与分隔行 / 悬浮条与导航条窗口 / checklist·choice 回填与 fail-safe / 收尾交付清单派生与快照回填，25 例）、调度平台化（M48：空编制建会话与平台组队 / CommandPalette 快捷新建 / trace 三形状渲染，5 例）、建会话组队台（M50：来源搜索 / 来源切换重置编制与 souls / 编制行移出与清空 / 窄屏三页签，5 例）、空场景入口（M50：独立卡与预选 / 列表过滤 / 搜索与空态与提交 body / 命令面板同源，5 例）；
-- **E2E 43 条**（42 条主链路 + 1 条审批专项；Playwright，`LLM_MOCK=true` + 生产单端口托管）：完整接力 / 插话 / 停止 / 刷新重附着 / 审批拒绝与批准 / 交付件 Diff / 交付件多格式预览（html / csv / docx / mermaid 分派）/ M12 微交互 / M14 窄屏响应式（抽屉壳 + 主链路，390×844）/ M16 运行中邀请接力 / 换灵魂风格变化 / 头脑风暴并行圆桌 / 协作图谱状态实时更新 / @ 两人并行双流 / 会话级串行双态（默认串行逐位 / 关闭后并行成波）/ M19 Markdown 扩展真实渲染（mermaid / echarts 懒加载 + 分栏 + TurnCard 徽章 / 裁决卡容器）/ M21 协作图谱游戏化 / M22 图谱深化（悬停预览卡 · 边固定 · 接力链追踪 · 时间轴回放）/ M21 OPC 业务链路双任务（周经营例会：preset 建会 → 并行汇报 → KPI / option 卡 → 交付件；内容营销战役：内容日历 timeline 卡 → 交付件）/ M24 计划审批（提交挂起 → 批准收口 / 驳回修订 v2）/ M25 向量记忆（嵌入连接 → L1.5 分层快照 / 记忆面板语义搜索）/ M26 资产控制台（Skill / Agent 新建 → 编辑 → 软删除 → 校验）/ M27 MCP 接入（新建 stdio 服务器 → 连接注入 → 会话绑定 → 通配授权 → 禁用/删除级联）/ M28 MCP JSON 直配（写文件 → 轮询自动同步 → 工具快照 → 会话绑定 → 变更 / 坏文件防误删 / 空清单删除）/ M31 画布交互（微移点击选中 / 双击编辑 / 拖动后选中保持 / 图表区 nodrag 手势，ADR 93）/ M33 附件上传与多模态渲染（双图托盘 → 纯附件发送 → 消息内图片 → Lightbox 切换 → 交付件面板）/ M34 投研链路三任务（两路 / 三路并行 → 主管收口 → 交付件；多空对弈 → 终局裁决）/ M37 场景化对话基座（议程 chips 预填 → 波次分隔行与悬浮阶段条 / checklist 点选回填闭环）/ M48 调度平台化（零选择开场 → 平台自动组队与派发 → 被召集成员开工；组队台预选 7 位研发链）/ M49 面板显隐（收敛于主区头部页签两侧的常驻显隐钮 / 刷新持久化 / ⌘B · ⌘⇧B 与命令面板同源 / 原位宽度恢复）/ M50 空场景（独立卡 → 单助手直聊 → 反向断言无平台召集 → 收尾与交付件）（`npm run e2e`，CI 已接入）；
-- **评测 22 个 golden 任务**（含 M18 的 brainstorm / research、M21 的 OPC 业务链路、M25 的语义召回、M34 投研双任务、M48 平台路由委托任务、M50 空场景单助手直聊与 M51-A 辩论 / 谈判任务）：`npm run eval` 在隔离临时 DATA_DIR 下串行执行，与 `evals/baseline.json` 对比做回归门禁（改坏 prompt 即非零退出）。
+- **服务端 1249 例 / 97 套件**（vitest；M68 批窗口实测，含 M38/M39 批与并发批次增量；2 例 m42 圆桌例会属并发 M69 资产扩容中间态——非本批）：parser / scheduler / prompts（agents 加载器：分组 / 灵魂 / 头像发现 / prompts 回退）、engine（集成）、context（装配 / 压缩 / 水位 / 降级 / soul 段 / 压缩并发幂等）、store（迁移 / JSON 导入 / FTS / 路径安全）、resilience（错误分类 / 退避 / 超时分层 / 压缩重试）、tools（沙箱 / 步数 / abort 无遗留副作用 / 并行 / 幂等缓存 / apply_patch / 敏感文件）、reasoning，以及 m3–m10 与 m15/m16 各里程碑回归套件（互斥插话 / handoff / 运行恢复 / usage / git worktree / 审批 / 鉴权限流与 ws 握手 / mock 开关 / members API / 波次 planWave 与 mergeWaveSchedule）与 m21（OPC 资产加载 / presets 校验 / 业务工具四件套）与 m22（连接中心全链路 / SQL 护栏 / 凭据加密 / 流 token / 浏览器帧流 / db 工具实时事件）与 m23（quoteIdent 引用转义 / tableData 分页与注入拦截 / SQL 面板 dryRun / SSH fake client 全链路 / ssh_exec 审计与审批）与 m27（MCP 接入：命名规范化 / 存储与会话绑定 / 运行时生命周期 / 引擎通配与会话过滤 / 管理 API 与审计广播）与 m28（工具按需发现：BM25+嵌入融合检索 / tier 与阈值自适应激活 / 执行门与 discovery 区块 / MCP JSON 直配解析与文件权威同步 / 管理 API 三端点）与 m29（可达性基线：handoff / remember · 编码代理能力：执行验证 / 版本控制 · 数据与环境分权）与 m30（BI 场景与角色资产 · 取数只读边界 · 方法论文档在场）与 m31（画布文档：读写与 applyOps · 媒体服务：状态机 / 队列 / 取消与超时 · 脑图生成 · 创作工具：读取摘要 / 批量写入 / 任务创建）与 m32（SRE 场景与角色资产 · SSH 诊断可达性 · 运行时绑定与 plan 收敛）与 m33（附件上传：白名单 / 文件名安全化 / 元数据可信化 · 消息持久化与防伪造路径 · 装配护栏与文档提取分流）与 m34（金融投研：三源网关 / 12 工具 / 行情 API / 博弈四模型，9 套件）与 m35（定时任务：cron 内核 / 服务 / 存储 / 工具 / 绑定 / API，6 套件）与 m48（调度平台化：平台路由步契约与降级 / 空编制与增援语义，2 套件）与 m50（空场景：资产与 M28 分层 / 直通路由 / 三层隔离 / 真 Mock 剧本全链，9 例）；
+- **客户端 1107 例 / 95 套件**（M68 批窗口实测**全绿**；含 M38 批 21 例 `m38-cards.test.tsx` 与 M39 批 21 例 `m39-production.test.tsx` 与 M68 批 7 例 `m68-materials.test.tsx`）：session-store 归约（byId+order / 增删成员 / 换灵魂）、run-store 事件归约与 SSE 解析（含 wave:start）、消息渲染（chip / 流式 / 中断 / reasoning / system 事件条）、Composer 键盘交互、审批卡、Diff 渲染、快捷键帮助（M12）、命令面板命令（M13/M16）、shiki 白名单（M13）、指挥台排队调序（M14）、AgentPicker / 灵魂选择器 / 场景创建器 / 并行协作组 / 协作图谱（M16 / M22 深化：悬停预览 · 接力链追踪 · 时间轴回放）、Markdown 扩展（M19：容器语法 / 代码块工具条 / mermaid / chart / 灯箱 / TurnCard；M21 业务卡：kpi / timeline / mail / option）、快速组队与草稿预填（M21）、虚拟列表、WorktreeBar、ui-store、连接 / 浏览器面板与操作直播窗（M22：LiveDock 20 例）、数据库工作台与 SSH 终端（M23：工作台 store / 对象树纯函数 / 终端协议状态机 / SSH 表单与卡片入口，14 例）、操作直播 SSH 三合一（M23+：镜像纯函数 / busy 推导 / ssh 映射与审计回放 / 镜像广播 / DockSshView 交互 / 胶囊与窄卡，18 例）、MCP 管理台（M27：mcp-store 三路加载与会话绑定 / 服务器卡与授权矩阵 / 编辑器校验与凭据只写不读 / Rail 导航，15 例）、工具按需发现与 JSON 直配（M28：jsonConfig 加载与同步回写 / JSON 配置卡片与粘贴导入 / 来源徽章与只读保护 / eagerLoad 开关 / 工具「常驻·按需」列，13 例）、画布文档与媒体快照（M31：canConnect 连线矩阵 / 尺寸与剪贴板 / 节点交互与模板空态 / media-store 任务快照与完成落画布 / 脑图树操作与快捷编辑，78 例）、附件与多模态（M33：托盘三态与上传流 / 消息内图片网格与 Lightbox / 视频封面与音频条 / 文档卡跳转，11 例）、定时任务面板（M35：面板渲染 / 新建表单 / 双通道归约 / 徽章，8 例）、画布指令条与设置主区页（M36：26 项全量渲染与保存 / 资源概览直达 / 指令条键盘与范式 chip / 直达编辑消费，9 例）、场景化对话基座（M37：波次派生与分隔行 / 悬浮条与导航条窗口 / checklist·choice 回填与 fail-safe / 收尾交付清单派生与快照回填，25 例）、调度平台化（M48：空编制建会话与平台组队 / CommandPalette 快捷新建 / trace 三形状渲染，5 例）、建会话组队台（M50：来源搜索 / 来源切换重置编制与 souls / 编制行移出与清空 / 窄屏三页签，5 例）、空场景入口（M50：独立卡与预选 / 列表过滤 / 搜索与空态与提交 body / 命令面板同源，5 例）；
+- **E2E 100 条用例 / 41 个 spec**（Playwright，`LLM_MOCK=true` + 生产单端口托管；v73 窗口实测 90 ✅——7 红甄别：1 例本批已修（m37 阶段条换显示）+ 3 例隔离复跑绿（环境抖动）+ 3 例并发批次域（M63 报价折线 / m34 新块 / M57 P3 配额）；**M68 批新增 `m68-library` 2 条（管理页上传→筛选→删除双清 / 放入画布 copy-on-use 入仓断言）隔离环境就地全绿**；含 M38 容器 2 条与 M39 生产包 3 条）：完整接力 / 插话 / 停止 / 刷新重附着 / 审批拒绝与批准 / 交付件 Diff / 交付件多格式预览（html / csv / docx / mermaid 分派）/ M12 微交互 / M14 窄屏响应式（抽屉壳 + 主链路，390×844）/ M16 运行中邀请接力 / 换灵魂风格变化 / 头脑风暴并行圆桌 / 协作图谱状态实时更新 / @ 两人并行双流 / 会话级串行双态（默认串行逐位 / 关闭后并行成波）/ M19 Markdown 扩展真实渲染（mermaid / echarts 懒加载 + 分栏 + TurnCard 徽章 / 裁决卡容器）/ M21 协作图谱游戏化 / M22 图谱深化（悬停预览卡 · 边固定 · 接力链追踪 · 时间轴回放）/ M21 OPC 业务链路双任务（周经营例会：preset 建会 → 并行汇报 → KPI / option 卡 → 交付件；内容营销战役：内容日历 timeline 卡 → 交付件）/ M24 计划审批（提交挂起 → 批准收口 / 驳回修订 v2）/ M25 向量记忆（嵌入连接 → L1.5 分层快照 / 记忆面板语义搜索）/ M26 资产控制台（Skill / Agent 新建 → 编辑 → 软删除 → 校验）/ M27 MCP 接入（新建 stdio 服务器 → 连接注入 → 会话绑定 → 通配授权 → 禁用/删除级联）/ M28 MCP JSON 直配（写文件 → 轮询自动同步 → 工具快照 → 会话绑定 → 变更 / 坏文件防误删 / 空清单删除）/ M31 画布交互（微移点击选中 / 双击编辑 / 拖动后选中保持 / 图表区 nodrag 手势，ADR 93）/ M33 附件上传与多模态渲染（双图托盘 → 纯附件发送 → 消息内图片 → Lightbox 切换 → 交付件面板）/ M34 投研链路三任务（两路 / 三路并行 → 主管收口 → 交付件；多空对弈 → 终局裁决）/ M37 场景化对话基座（议程 chips 预填 → 波次分隔行与悬浮阶段条 / checklist 点选回填闭环）/ M48 调度平台化（零选择开场 → 平台自动组队与派发 → 被召集成员开工；组队台预选 7 位研发链）/ M49 面板显隐（收敛于主区头部页签两侧的常驻显隐钮 / 刷新持久化 / ⌘B · ⌘⇧B 与命令面板同源 / 原位宽度恢复）/ M50 空场景（独立卡 → 单助手直聊 → 反向断言无平台召集 → 收尾与交付件）（`npm run e2e`，CI 已接入）；
+- **评测 32 个 golden 任务**（含 M18 的 brainstorm / research、M21 的 OPC 业务链路、M25 的语义召回、M34 投研双任务、M48 平台路由委托任务、M50 空场景单助手直聊与 M51-A 辩论 / 谈判任务；v65 增调度专项四任务 routing-finance / handoff-receipts / scheduling-guards / parallel-guard 与 scheduling / no_stall 断言）：`npm run eval` 在隔离临时 DATA_DIR 下串行执行，与 `evals/baseline.json` 对比做回归门禁（改坏 prompt 即非零退出）；
 
 ### 12.2 手工验收清单
 
@@ -511,11 +514,11 @@ LLM_MODEL=qwen2.5:14b
 | `npm run dev`             | 并行启动 server（tsx watch）+ client（vite）                       |
 | `npm run build`           | 全量构建：server（tsup → dist）+ client（tsc + vite build → dist） |
 | `npm start`               | 单端口生产托管（8787，API + 静态资源）                             |
-| `npm run test`            | 全量测试（服务端 469 例 + 客户端 330 例，vitest）                   |
+| `npm run test`            | 全量测试（服务端 1174 例 + 客户端 993 例，vitest）                   |
 | `npm run typecheck`       | 全仓类型检查（含 e2e tsconfig）                                    |
 | `npm run lint`            | ESLint 全仓检查                                                    |
-| `npm run eval`            | 评测 15 个 golden 任务 + 与 baseline 对比（回归门禁）              |
-| `npm run e2e`             | Playwright 28 条主链路（`LLM_MOCK` 模式）                         |
+| `npm run eval`            | 评测 32 个 golden 任务 + 与 baseline 对比（回归门禁）              |
+| `npm run e2e`             | Playwright 97 条用例 / 42 个 spec（`LLM_MOCK` 模式）                         |
 | `npm run migrate:json`    | 旧 JSON 会话一次性导入 SQLite                                      |
 | `npm run migrate:agents`  | `prompts/` + `client/public/avatars/` 迁移到 `agents/` 包结构（幂等）|
 | `npm run memory:reindex`  | 记忆向量重建：模型 / 维度切换后补账（`-- --force` 丢弃 vec0 镜像重灌、`-- --timeout 秒` 消费上限；断点续跑，M25）|
@@ -533,7 +536,7 @@ LLM_MODEL=qwen2.5:14b
 - 断线不丢任务：Run 与连接解耦（§18.2）——断线后后台继续执行，结果经 WS / 轮询补发，并可用 `/api/runs/:runId/stream` 重新附着；刷新恢复历史（进行中消息保留半截内容并可「继续生成」）；
 - 通知中心仅驻内存：服务重启丢「未读提醒」但不丢数据（消息已落盘，§8）；
 - 角色形象为内置 AI 生图资产，暂不提供界面内上传自定义形象（§19）；
-- 内建研发向工具集与 Skill 加载（§21 / §23）：文件工具限定会话工作区；`run_command` 默认关闭；`web_fetch` 域名白名单为空即不可用；不含 RAG / 向量检索；
+- 内建研发向工具集与 Skill 加载（§21 / §23）：文件工具限定会话工作区；`run_command` 默认关闭；联网工具（`web_search` / `web_fetch`）不设访问限制（无启用开关与域名白名单，ADR 0136）；不含 RAG / 向量检索；
 - 界面仅浅色主题（M11 起移除深色，ADR 27）与固定紧凑布局（§22.5）；不含多租户 / 配额体系与移动端专属布局；
 - `model` / `temperature` 已按角色预留覆盖位。
 
@@ -614,7 +617,7 @@ http.Server ──▶ WsHub（单例，挂载 /ws）
 
 ### 19.1 设计目标
 
-- **一眼辨人（v2 强化）**：19 场景 74 个角色配备专属卡通形象照，靠「年龄 + 性别 + 脸型 + 发色发型 + 眼镜 / 胡须 + 肤色 + 职业道具」七维设定逐一区分（设定表见 §19.3），而非仅靠配色；统一纯白背景，可无缝嵌入任意底色容器；
+- **一眼辨人（v2 强化）**：全部业务角色配备专属卡通形象照（v2 批 74 张起、后续批次逐批增补；M69 批 46 张 2026-09-19 落盘——见 §19.3 表尾；`interior` 三角色暂缺、回退渐变占位），靠「年龄 + 性别 + 脸型 + 发色发型 + 眼镜 / 胡须 + 肤色 + 职业道具」七维设定逐一区分（设定表见 §19.3），而非仅靠配色；统一纯白背景，可无缝嵌入任意底色容器；
 - **卡通化（v2）**：风格化 3D 卡通（动画电影式渲染）——成人比例（约 1:4 头身，非 Q 版 / 幼态）、五官圆润简化、眼神略夸张、哑光黏土质感、色彩明快；头部占画面高度约 55%，保障 16–96px 小尺寸下的可辨识性；
 - **成年团队感**：成年比例半身像，统一构图与柔和棚拍光，人物好看且专业；
 - **面孔与命名一致**：西式命名角色（Felix / Ada / Iris / Leo / Max / Nova / Otto…）为欧美面孔，中文命名角色为东亚面孔；肤色、年龄带（24–52 岁）与发色错开；
@@ -626,7 +629,7 @@ http.Server ──▶ WsHub（单例，挂载 /ws）
 agent 包内 avatar.png 自动发现 ──> avatar.image = /api/agents/<id>/avatar（服务端直出 + ETag 缓存）
         │ 命中
         ▼
-   <AgentAvatar> 渲染 <img>（object-cover + 调用方圆角裁切，16–96px 任意尺寸）
+   <AgentAvatar> 渲染 <img>（object-cover + 内置 25% 等比圆角，16–96px 任意尺寸；ADR 0132）
         │ 未配置 / 加载失败（onError）
         ▼
    回退：gradient 渐变 + lucide icon（ICON_REGISTRY 未命中 → User）
@@ -715,6 +718,54 @@ agent 包内 avatar.png 自动发现 ──> avatar.image = /api/agents/<id>/ava
 | strategy · strategist | 顾远 · 商业分析师 | 41 · 东亚男 · 远见深思 | 黑色后梳短发 + 修剪全须 | 驼色大衣 + 深色高领 | 黑棋骑士 + 市场地图 |
 | travel · travel | 牧野 · 行程规划师 | 32 · 东亚男 · 阳光冒险（古铜肤） | 黑色微卷中发 + 淡胡渣 | 橄榄绿工装衬衫 + 相机带 | 地图 + 行李箱 + 罗盘 |
 | wealth · wealth | 钱程 · 理财顾问 | 35 · 东亚男 · 诚实稳健 | 黑色侧分短发（柔和） | 藏青西装 + 白衬衫 | 存钱罐 + 金币堆 |
+| ecommerce · category-scout | 探市 · 选品参谋 | 31 · 东亚女 · 精明利落 | 黑色齐肩直发掖耳 + 细金框眼镜 | 米白针织衫 + 卡其马甲 | 数据图表平板 |
+| ecommerce · listing-optimizer | 炼词 · Listing 优化师 | 27 · 东亚女 · 灵巧敏锐 | 深棕蓬松波波头 + 亮橙发夹 | 白 T + 橙色工装围裙 | 大号马克笔 + 词卡 |
+| ecommerce · store-operator | 守铺 · 店铺运营 | 35 · 东亚男 · 圆脸和善 | 黑色短碎发 | 深青格纹衬衫 | 卷边排期表 + 对讲机 |
+| ecommerce · shop-support | 暖客 · 客服专员 | 24 · 东亚女 · 温暖亲切 | 栗色马尾 + 客服耳麦 | 薄荷绿开衫 + 白衬衫 | 客服耳麦（戴） |
+| creator · account-strategist | 立帜 · 账号定位师 | 29 · 东亚女 · 明亮自信 | 黑高马尾 + 品红挑染 | 品红西装外套 + 白上衣 | 小旗子道具 |
+| creator · script-writer | 先声 · 脚本写手 | 26 · 东亚男 · 灵动幽默 | 深棕微卷短发 + 圆框眼镜 | 亮黄卫衣 | 场记板 |
+| creator · growth-editor | 借风 · 增长编辑 | 30 · 东亚女 · 干练敏锐 | 黑长直侧分 | 深紫衬衫 | 上扬折线图平板 |
+| creator · monetizer | 点金 · 商业化顾问 | 33 · 东亚男 · 沉稳精明 | 黑背头 + 无框眼镜 | 深灰西装 + 白衬衫 | 金币小道具 |
+| legal-personal · rights-advisor | 持正 · 维权顾问 | 37 · 东亚男 · 方正严肃 | 短寸头 | 深蓝西装 + 白衬衫 | 小天平模型 |
+| legal-personal · labor-advisor | 守薪 · 劳动争议顾问 | 32 · 东亚女 · 冷静缜密 | 及肩直发掖耳 | 炭灰职业套装 | 工资条 + 计算器 |
+| legal-personal · contract-checker | 审微 · 合同审查 | 34 · 东亚女 · 细腻严谨 | 低马尾 + 细框眼镜 | 米色西装 | 放大镜 + 合同 |
+| academic · lit-reviewer | 索隐 · 文献综述员 | 35 · 东亚女 · 学者气质 | 黑长微卷 + 细金属眼镜 | 深青针织衫 | 厚重典籍 |
+| academic · methodologist | 定矩 · 研究方法顾问 | 40 · 东亚男 · 严谨沉稳 | 灰白鬓角短发 | 深灰高领 + 西装外套 | 尺规 + 实验记录本 |
+| academic · paper-editor | 琢稿 · 学术编辑 | 33 · 东亚女 · 文雅专注 | 棕栗低髻 + 笔簪 | 墨绿衬衫 | 红笔批注稿 |
+| academic · submit-advisor | 叩门 · 投稿顾问 | 38 · 东亚男 · 世故热情 | 侧分短发 + 半框眼镜 | 深蓝三件套 | 封蜡信封 |
+| relationship · rel-coach | 知言 · 情感顾问 | 31 · 东亚女 · 温和坚定 | 中长直发 + 软围巾 | 暖橘针织连衣裙 | 双手捧心手势 |
+| relationship · date-coach | 初见 · 相亲陪练 | 27 · 东亚女 · 甜美清爽 | 齐刘海波波头 | 樱粉针织衫 | 一束小花 |
+| relationship · mediator | 居间 · 关系调解 | 36 · 东亚男 · 平和深沉 | 短发文雅 + 笑纹 | 灰蓝衬衫 | 双手平衡手势 |
+| trpg · gm-host | 开卷 · GM 主持 | 30 · 东亚男 · 戏剧感强 | 黑发后梳整齐 | 酒红织锦马甲 + 黑衬衫 | 复古话筒 + 骰子 |
+| trpg · scenario-writer | 构幕 · 剧本作者 | 29 · 东亚女 · 想象家气质 | 紫黑挑染马尾 | 深紫卫衣 | 剧本卷轴 |
+| trpg · npc-player | 入戏 · NPC 扮演 | 33 · 东亚男 · 百变戏骨 | 中分长发束起 | 复古戏服外套 | 戏剧面具 |
+| trpg · rule-keeper | 执规 · 规则裁判 | 41 · 东亚男 · 一丝不苟 | 短平头 + 银边眼镜 | 深绿马甲 + 衬衫 | 厚规则书 |
+| tarot · tarot-reader | 观照 · 牌阵解读 | 30 · 东亚女 · 神秘沉静 | 黑长发 + 月亮耳饰 | 深紫长袍式上衣 | 塔罗牌扇形 |
+| tarot · symbol-narrator | 释象 · 意象叙事 | 28 · 东亚女 · 艺术梦幻 | 卷发 + 星星发饰 | 靛蓝图腾开衫 | 星月挂饰 |
+| tarot · tarot-historian | 考源 · 塔罗考据 | 44 · 东亚男 · 学术老练 | 灰发背头 + 圆框眼镜 | 深棕粗花呢西装 | 古籍 + 放大镜 |
+| moot-court · plaintiff-counsel | 申言 · 原告代理 | 36 · 东亚男 · 锐利进取 | 短背头 + 无框眼镜 | 深蓝律师袍式西装 | 起诉状卷宗 |
+| moot-court · defense-counsel | 析辩 · 被告代理 | 39 · 东亚女 · 沉着机敏 | 低盘发 + 珍珠耳钉 | 炭灰西装裙 | 质证清单 |
+| moot-court · presiding-judge | 端衡 · 审判长 | 48 · 东亚男 · 威严公正 | 花白短发 + 浓眉 | 黑色法袍 | 法槌 |
+| business-sim · sim-host | 掌局 · 推演主持 | 34 · 东亚男 · 精干操盘 | 黑色短发 | 深蓝商务衬衫 + 领带夹 | 沙盘小城市模型 |
+| business-sim · market-referee | 市衡 · 市场裁判 | 37 · 东亚女 · 冷静中立 | 齐肩直发 + 细框眼镜 | 砖红西装 | 行情屏平板 |
+| business-sim · review-coach | 温故 · 复盘教练 | 42 · 东亚男 · 长者智慧 | 灰发 + 温和皱纹 | 驼色开衫 | 翻开的复盘笔记 |
+| philosophy · socratic-host | 叩问 · 追问主持 | 45 · 东亚男 · 智者诘问 | 银灰卷发 | 深绿粗针织衫 | 茶杯（双手端） |
+| philosophy · thought-experimenter | 设境 · 思想实验 | 32 · 东亚女 · 诡思灵动 | 不对称短发 | 石板蓝衬衫 | 水晶球小摆件 |
+| philosophy · ethics-moderator | 议善 · 伦理研讨 | 38 · 东亚女 · 端庄理性 | 低马尾 + 丝巾 | 米白西装 | 小天平 |
+| travel · visa-advisor | 通境 · 签证顾问 | 35 · 东亚女 · 效率干练 | 短发 | 藏青马甲 + 白衬衫 | 护照 + 印章 |
+| travel · local-curator | 寻巷 · 在地体验策划 | 29 · 东亚男 · 探路者活力 | 微卷黑发 | 军绿工装外套 | 地图 + 指南针 |
+| wealth · insurance-planner | 保宁 · 保险规划师 | 40 · 东亚男 · 稳健可信 | 短寸 + 方正脸 | 深绿西装 | 盾牌徽章 + 保单 |
+| wealth · big-ticket-advisor | 慎衡 · 大额决策顾问 | 43 · 东亚男 · 审慎持重 | 灰发侧分 | 深棕西装 | 计算器 + 购车卡片 |
+| funding · valuation-modeler | 衡价 · 估值建模师 | 34 · 东亚女 · 精密冷静 | 直发掖耳 + 无框眼镜 | 深蓝西装 | 估值折线图板 |
+| funding · datroom-keeper | 理卷 · 数据室管家 | 31 · 东亚女 · 井井有条 | 低马尾 | 浅灰衬衫 + 工作围裙 | 档案盒阵列 |
+| bi · metric-governor | 正尺 · 指标治理官 | 37 · 东亚女 · 严谨校准 | 齐耳短发 + 金丝眼镜 | 墨绿衬衫 | 直尺 + 指标卡 |
+| bi · viz-designer | 绘数 · 可视化设计师 | 28 · 东亚女 · 色彩敏锐 | 挑染卷发 + 耳饰 | 玫瑰粉上衣 | 色卡扇 + 图表板 |
+| sre · capacity-planner | 度峰 · 容量规划师 | 36 · 东亚男 · 沉稳测算 | 黑色短发 + 无框眼镜 | 深灰工装衬衫 | 容量仪表盘 |
+| sre · chaos-officer | 试雷 · 混沌演练官 | 33 · 东亚男 · 冒险气质 | 蓬乱黑发 | 防护马甲 | 故障指示灯 + 扳手 |
+| personal · habit-coach | 立习 · 习惯教练 | 30 · 东亚女 · 清朗亲和 | 利落马尾 | 湖蓝卫衣 | 打卡日历卡 |
+| ops · license-keeper | 执证 · 证照管家 | 45 · 东亚男 · 老成持重 | 银发整齐 | 深蓝工装夹克 | 证照文件袋 + 印章 |
+
+> 注（2026-09-19 M69 头像批）：上述 46 行按成品观测回溯补录（统一风格前缀 v3：半写实 3D 卡通 / 成人比例约 1:4.5 / 纯白背景 / 哑光质感；同批生成 512×512 落盘）；M51 批 40 角色与 interior 批的形象以成品为准（未入表）。
 
 用户（人类主角）不设头像：界面中不渲染用户形象（消息流、交接条、接力视图均不出现用户头像）。
 
@@ -744,6 +795,7 @@ agent 包内 avatar.png 自动发现 ──> avatar.image = /api/agents/<id>/ava
 ```
 
 - 消息流 / 会话列表 / 职责卡 / 交付件作者标识使用该组件；顶栏品牌区仅文字标题，不带头像；
+- 圆角：组件内置 25% 等比圆角（全站统一口径，ADR 0132）——所有头像展示（含 CSS 场景席位 `.scene-sr-avatar` / `.scene-rt-mini-seat`）同一比例；特例形态由调用方 className 覆盖；
 - 预览工具 `npm run avatar:preview`：本地页展示「全部角色 × 尺寸 × 状态角标」+ 回退方案演示，改图后刷新即见；
 - 旧「程序化像素头像」方案已废弃（辨识度不足），相关代码、测试与 CSS 动画已移除。
 
@@ -782,7 +834,7 @@ agent 包内 avatar.png 自动发现 ──> avatar.image = /api/agents/<id>/ava
 | 一键接棒（M11） | 交接条点击接手者头像 → 插入 `@名字 `；团队面板成员卡「@ 召唤」同通道 | 复用 ui-store.insertToComposer |
 | 回到底部（M12） | 上滑离开底部后浮现「↓ N 条新消息 / 回到最新」浮标，点击瞬时回底 | ChatArea 滚动监听 + 消息数基线        |
 | 审批快捷键（M12） | 首张挂起卡：`⌘/Ctrl+Enter` 批准（反馈框打开时提交反馈）、`⌘/Ctrl+Backspace` 拒绝；按钮带 kbd 提示 | capture 阶段拦截，避免触发 Composer 的 Enter 发送 |
-| 快捷键帮助（M12） | `?` 键 / HeaderBar 键盘按钮 / ⌘K 命令面板打开：通用 / 输入 / 审批分组 + 指派语义说明 | ui-store.helpOpen + Radix Dialog       |
+| 快捷键帮助（M12；Tab 化重设计见 ADR 0143） | `?` 键 / HeaderBar 键盘按钮 / ⌘K 命令面板打开：通用 / 输入框 / 审批卡 / 画布四组页签（一次一组；组内说明块 + 行内适用小字）；指派语义随「输入框」页签 | ui-store.helpOpen + Radix Tabs（ADR 0143） |
 | 指挥台排队（M14） | 运行中「指挥台」区显示未出手棒次（序号 + 下一棒高亮），`↑`/`↓` 立即调序（乐观更新，SSE `queue:updated` 对齐） | run-store.reorderQueue + `POST /runs/:runId/queue` |
 | 窄屏抽屉（M14） | ≤900px 左右栏折叠为抽屉；底部成员条点成员 chip 插入 `@名字 `（title 提示插入行为），团队开关打开团队抽屉 | AppLayout narrow 分支 + DialogContent.hideClose（避免右上角遮挡列表/面板按钮） |
 
@@ -1613,7 +1665,7 @@ M23 把技能库从 9 个扩展到 38 个，并把「预载技能」从 M21 的�
 ### 40.5 上下文与提示词
 
 - `buildSystemPrompt` 增 `<active_plans>` 块（L3：executing 计划的目标 / 步骤 / 负责人，全员可见）；
-- `buildTurnInstruction(..., mode, extra)` 三模板：plan（只读、必须 write_plan、步骤需含 owner 与验收、提交后会挂起等待批准）+ review（注入评审目标与判定要求）+ execute（保持现文本，仅派发时追加派发步骤、仅有 expected_output 时追加「上一棒期望」行——既有回合指令文本不变）；
+- `buildTurnInstruction(..., mode, extra)` 三模板：plan（只读、必须 write_plan、步骤需含 owner 与验收、提交后会挂起等待批准）+ review（注入评审目标与判定要求）+ execute（仅派发时追加派发步骤、仅有 expected_output 时追加「上一棒期望」行）；三模板统一在首行后追加语言纪律行（全程使用简体中文输出，含工具调用前的说明句；v97 语言批）；
 - `pendingHandoffs` 条目化 `{from, reason, expected_output}` 注入接收方回合指令（指派闭环）；`agents/_protocol.md` 增 `<paradigm_modes>` 协议段；mock（`server/src/llm/mock.ts`）按回合 `mode` 输出 write_plan / submit_review / 派发时 update_plan_step。
 
 ### 40.6 API 与事件
@@ -1828,7 +1880,7 @@ M5 预留的 MCP 空壳（`tools/mcp.ts`）在 M27 升级为完整体系：服�
 ### 45.6 引擎与安全（零工具代码改动）
 
 - 工具实现零改动：全部为白名单授权补齐与资产更新；`forAgent` / 延迟披露 / 审批门语义不变；
-- 能力绑定 ≠ 能力启用：`run_command` 仍受 `ALLOW_RUN_COMMAND` 开关与审批门双重约束；`git_commit` / `db_execute` / 覆盖写仍走审批；
+- 能力绑定 ≠ 能力启用：`run_command` 仍受 `ALLOW_RUN_COMMAND` 开关与审批门双重约束；`git_commit` / `git_restore` / `db_execute` / 覆盖写仍走审批；
 - 命令白名单不扩展：项目侧以 package.json scripts（test / lint / typecheck）经 `npm run` 暴露验证入口（扩展 `npx <任意包>` 前缀被否决，供应链风险）。
 
 ### 45.7 验证
@@ -2073,16 +2125,26 @@ M31 把「创作」从对话消息流中解放出来：主区新增「画布」T
 - **`GenerationPanel.tsx`**（右侧浮动）：能力切换（文生 / 图生）/ prompt 与负面词（自动取上游 prompt 节点）/ 模型（连接声明）/ 尺寸步数种子数量 / 工作流模板选择 / 生成（⌘Enter）/ 进度与取消 / 会话历史（再生成 / 变体）；
 - **`EmptyCanvas.tsx`** 四模板卡片（创作台 / 脑图工坊 / 分镜台 / 素材墙）+ 模板落位动画；**动效**（index.css `canvas-*` 段，全部响应 `.quiet-mode`）：节点入场 pop、生成骨架呼吸、完成 burst 光环、连线能量流动、拖拽上传边缘光效、对齐参考线。
 
+> **M31 修订（ADR 0138，2026-09-19）**：画布交互深化与效果优化（对标专业无限画布；完整设计见 [docs/canvas-ux-design.md](docs/canvas-ux-design.md)）——① **能力门控**：未配置生图 / 生视频时，工具栏「媒体生成」、节点右键生成段、空画布「创作台 / 分镜台」模板、图片 / 视频节点空态生成话术全部不出现（`useMediaCapabilities` 按 canImage / canVideo 拆分；`media-store` 增 `providersLoaded` + `ensureProviders` 幂等源，画布挂载即拉取；「设置 → 媒体生成」保存 / 启停 / 删除后 `refreshProviders` 即时同步；生成面板与 Agent 工具兜底引导不变）；② **导航手感**（Figma / tldraw / Excalidraw 范式）：滚轮 / 双指 = 平移（`panOnScroll`）+ ⌘/Ctrl 滚轮 = 缩放、H / V 工具切换（hand 态左键拖拽平移 + grab 光标）、Space 临时平移、右下**缩放指示器**（实时百分比 + 步进 + 缩放到 100% / 适应视野 / 缩放到选区）、**⇧0 · ⇧1 · ⇧2** 快捷键（浏览器保留键 ⌘0 / ⌘1 避让，按 `e.code` 判定）、「对齐网格 10px」吸附开关（与智能参考线互斥，`snapToGrid`）；③ **反馈层次**：选中节点**关联边高亮**（受控边 data.related 视图层派生，不落文档）、拖拽节点**抬升**（独立 `scale` 属性避让入场动画 transform 填充）、框选框与 Controls 主题化（`--xy-selection-*` / `--xy-controls-*` 变量 + `.canvas-stage` 容器）、快捷键帮助新增「画布」分组；验证：client `m31-canvas-ux`（11，门控四组件 + 工具开关 + 生成入口注入）、`m31-canvas`（+3 门控口径）、E2E `m31-canvas-ux`（4：未配置隐藏 / 配置后出现并自清理 / 缩放指示器与快捷键 / 滚轮·手型手感）。
+
 ### 49.5 脑图工坊
 
 - **纯函数层** `client/src/lib/mind.ts`：树操作（加子 / 加兄弟 / 删除子树 / 重挂 / 折叠 / 扁平化）、dagre 树布局、markdown 大纲解析与导出；
 - **`MindDialog.tsx`**：来源选择（对话 / 计划 / 任务 / 记忆 / 主题）+ 生成中骨架 → 树落位展开动画；画布上 Xmind 式快捷编辑（Tab 子节点 / Enter 兄弟 / 折叠 / 一键整理）+ 导出 Markdown；mind 节点 / 边与 flow 语义分离（层级曲线）。
+
+> **M31 修订（ADR 0180，2026-09-19）：脑图节点长文本折行**——渲染去 `whitespace-nowrap` + `break-words`（长文本在文本区 208px 内折行、不再溢出胶囊）、圆角 `rounded-2xl`（单行仍近胶囊 / 多行层次更稳）、编辑态 input 限宽；`estimateMindSize` 高度按折行行数展开（`34 + 20×(lines-1)`；token 贪心折行模拟：CJK 逐字 / 拉丁按词 / 超宽词硬拆），宽度公式不变——dagre 布局 / 加子落位 / 重挂命中 / 拖拽重挂检测全链随多行尺寸自动受益；同源常量（MIND_TEXT_MAX_W / MIND_LINE_H / MIND_BOX_BASE_H）与渲染样式成对维护。验证：client `m31-mind` 26 例（含折行断言），E2E `m31-canvas-ux`（7）+ `m31-canvas-interactions` 回归绿。
 
 ### 49.6 Agent 闭环与联动
 
 - **四工具**（`server/src/tools/canvas.ts` / `media.ts`，全部 `tier='deferred'` 渐进披露）：`canvas_read`（只读；节点 / 边摘要 + 单节点 JSON）/ `canvas_write`（ops 批量：add_node / update_node / remove_node / connect / remove_edge；缺省 id 与服务端自动排布；写入广播 `by='agent'`）/ `media_generate`（text2image / image2image）/ `media_video`（text2video / image2video / firstlast2video）——「创建即返回」：同步入队后回灌 job id + 异步提示（规避工具执行窗口护栏），`canvasTarget` 由前端 media-store 在完成时自动放置；
 - **白名单**：4 工具补入全部 68 角色 `tools` 字段（协作与创作能力为场景无关），`npm run check:agents` 守护注册表与白名单一致；
 - **联动双入口**：消息交付件 chip hover「送上画布」与交付件面板「画布」按钮共用 `sendArtifact`（扩展名分类 → 图片 / 视频直出节点、其余 artifact 引用；落位与 server `autoPosition` 同语义）；画布节点右键「引用到对话」走既有 `insertToComposer` 通道；命令面板「画布」组（打开 / 新建便签 / 生成脑图 / 适应视野）；`ArtifactsView` 视频直出预览（Range）+「在画布打开」。
+
+> **M31 修订（ADR 0146，2026-09-19）**：Agent 与画布联动深化（完整设计见 [docs/canvas-agent-linkage-design.md](docs/canvas-agent-linkage-design.md)）——① **任务全周期绑定**（服务端为真相）：`MediaService` 注入画布存储，**create 即落占位节点**（`data.pending=true / jobId / prompt / params`；位置 = `canvasTarget ?? autoPosition`，取消工具侧预计算使并发任务天然错开）→ 完成 **update_node 原地替换**（多余产物横向排开）/ 失败保留（error 可重试）/ 取消移除；`job.canvasNodeId / placedCanvas` 记录落位结果，前端 `placeOutputs` 删除防双写（toast 按 `placedCanvas` 分流）；不再要求「用户开着该会话画布」——未打开也可靠落位；② **写入可感知**：`applyOps(opts.by)` 注入节点作者（`CanvasNode.by`）；广播 meta 携 `touched/actor/reason` → 前端**页签未读角标**（同会话且非画布页时按 touched 计数，进画布清零）· 合流后 **ViewportPortal 写入闪环**（touched 过滤仍存在节点，一次性 1.8s，不碰节点数据）· 节点左下 **作者徽标**（NodeShell 内查 store，零侵入子组件）；③ **消息/输入侧入口**：ToolCard 画布四工具 TOOL_META（读取画布 / 画布写入 / 生成图片 / 生成视频）+ 完成态「在画布查看」；CanvasComposer「引用选中 N」chip（逐行 `quoteForComposer`）；④ **P3 遗留接线**：pending 占位的 `canvas-breath` 呼吸 + 实时进度（media-job 节流广播）、指向占位的 flow 边能量流动（`FlowEdge.flowing` 视图层派生）；验证：server m31-media（+7）/ m31-canvas-store（+3）/ m31-tools（口径更新），client m31-canvas-agent（7）/ m31-media·m36（口径），E2E m31-canvas-agent（2，含闪环/角标/徽标/pending/能量边）。
+
+> **M31 修订（ADR 0152，2026-09-19）：画布深度完善批**——① 缺陷自愈：**僵尸 pending 占位**（服务端重启后任务丢失仍在呼吸）→ 打开画布时以 `jobsLoaded` 成功门槛拉 取任务快照，`reconcileStalePending` 把不在快照的 pending 节点转中断态（可「重新 生成」）；失败节点右键新增**「重新生成」**（按谱系参数直建，输入不齐降级回填面板）；② 内核交互补全：**画布内查找**（`searchNodes` 纯函数 + `/` 快捷键 + 定位居中/选中/闪环）、工具态记忆（手型 / 网格吸附 sessionStorage）、⌘拖拽复制（⌥ 起手 → 副本留原位）、**边重连**（合法性矩阵复用 + 保持 edge id）；③ 联动互链：`ToolCallRecord.meta` 通用结构化字段（engine 持久化；`canvas_write` / `media_*` 回灌 `canvasNodes`）→ 消息侧「在画布查看」升级为 **focus 精确定位**；生成面板任务行 hover → 节点闪环（`pulseNodes` 通道）、节点选中 → 面板行高亮；他会话 agent 写入 → 会话列表小点（切到该会话清零）；**等距吸附**（两侧夹击等距 → 吸附中点 + 玫瑰色双标记线）；④ 大画布性能档：>150 节点自动视口裁剪（<120 回差；裁剪下关闭入场动画）；⑤ 测试账本重核（§12.1：服务端 1169 例 × 客户端 990 例 × E2E 96 条 / 40 spec）。E2E 黑孔挂起任务模式（本机 socket 服务接受连接不响应）成为「任务进行中」视觉验收 的标准手法。
+
+> **M68（ADR 0158，2026-09-19）：用户素材库**（承接 §49 预留「全局素材库扩展位」；评估与详设见 [docs/material-library-design.md](docs/material-library-design.md)）——**per-user 私人素材** + **独立菜单管理页面**（ActivityRail「素材库」全员入口 + MaterialsConsole：网格缩略图 / 预览灯箱 / 搜索筛选 / 容量条 / 拖拽上传 / hover 操作）；**归属** owner 服务端取（兼容模式 'local'；非属主 404；admin 不浏览他人素材）；**存储** `workspace/_library/u_<uid>/`（迁移 v19；配额统计增计一处 + `assertUserStorageAllowed` 用户级闸门）；**上传** 独立路径（raw ≤200MB + 图片/视频白名单）/ sendFile Range 内容流；**copy-on-use**（「放入画布」→ 入仓会话工作区 `library/ref-*` → `sendArtifact` 落节点；素材删除不回收已入仓副本）；账号删除级联（行 + 属主目录双清）；产物审批流评估结论 = 不新建（`APPROVAL_TOOLS` 配置即覆盖生成前审批）。验证：server `m68-library`（8）/ client `m68-materials`（7）/ E2E `m68-library`（2，隔离环境 8795 全绿）。
 
 ### 49.7 验证
 
@@ -2401,9 +2463,11 @@ M47 是「工具调用失败」专项修复批次：以生产库 `tool_metrics` 
 
 ### 56.2 环境门控与引擎清单过滤
 
-- **单一事实来源**（新模块 `server/src/tools/availability.ts`）：`toolUnavailableReason(name, cfg)` 集中判定三类环境门——web_search（`WEB_SEARCH_ENABLED`）/ web_fetch（`WEB_FETCH_ALLOWED_DOMAINS` 非空）/ run_command（`ALLOW_RUN_COMMAND`）；未启用返回统一 `DISABLED_SUMMARY` 文案（含「改哪个配置后重启」指引）；`GIT_TOOL_NAMES` + `isGitToolName` 供会话模式门复用；
+- **单一事实来源**（新模块 `server/src/tools/availability.ts`）：`toolUnavailableReason(name, cfg)` 集中判定环境门——run_command（`ALLOW_RUN_COMMAND`）；未启用返回统一 `DISABLED_SUMMARY` 文案（含「改哪个配置后重启」指引）；`GIT_TOOL_NAMES` + `isGitToolName` 供会话模式门复用；联网工具不设环境门控（见下方修订注记）；
 - **清单过滤（治本）**：引擎 `availableTools` 构建时按 `toolUnavailableReason` 过滤——未启用工具**不进模型 schema、不进 `tool_search` 可发现范围**（发现区块与激活池同源）；执行期守卫**保留**（双保险：防旧会话快照 / 幻觉调用，命中仍得精确文案）；
 - **行为对齐**：新增「环境门控类」工具时必须同步在 `availability.ts` 注册门控与文案，否则回退为清单盲区（模型可见但必然失败）。
+
+> **联网工具去限制（ADR 0136）**：web_fetch 域名白名单机制与 web_search 启用开关整体移除——两工具无环境门控（始终可用）、无域名白名单（web_fetch 任意 http/https 地址可抓取，含重定向目标）；`WEB_FETCH_ALLOWED_DOMAINS` / `WEB_SEARCH_ENABLED` 配置项与 `WEB_FETCH_DISABLED_SUMMARY` / `WEB_SEARCH_DISABLED_SUMMARY` 文案一并删除（§56.1 表中两工具为 M47 历史取证口径）；保留反爬保护（限速 / 退避 / 风控冷却 / 体积上限 / 超时）。
 
 ### 56.3 会话模式门控（git 工具）
 
@@ -2795,6 +2859,7 @@ M52（[docs/scene-expansion-design.md §7](docs/scene-expansion-design.md)）第
 
 - 六面板（注册表 `STAGE_PANEL_COMPONENTS`，element 注入容器切断循环导入）：pool 汇聚板（容器条目卡墙 + 深入回填）/ versus 局势面板（多空信号 + MomentumBar + 裁决卡）/ board 工序面板（标题目录树 + 版本线 + 交付件）/ console 看板面板（KanbanBoard + 时间轴）/ coach 陪跑面板（ProgressRing + CheckGrid 勾选）/ chartboard 盘面板（多盘 tabs + PanBoard）；
 - 12 元件（`PART_NAMES`，kebab-case；`parts` 空声明 = 全启用）：MomentumBar / Scoreboard / RoundTrack / SeatRing / SeatCard / AgendaTrack / KanbanBoard / ClaimTree / ProgressRing / CheckGrid / VerdictPart / DeliveryPanel——空态一律 PanelEmpty（「不空白、不报错」）；
+  > **v68 修订（2026-09-19）**：parts 可裁剪面收敛为实际受控的 arena 五件套（round-track / scoreboard / verdicts / claim-tree / offers）——「12 元件」中其余元件为容器 / 面板内部固定组成，不参与 parts 裁剪；debate / negotiation 首批声明落地，详见 §87。
 - 纯前端派生（`derive.ts`）：parseContainers（行级 `::: name arg` 块扫描，未闭合忽略）/ panRowsOf / verdictsOf（多空·正反·僵持 → long / short / draw）/ checklistItemsOf / headingsOf（跳过围栏）/ wavesOf · speakingIdOf——工作区数据 = 消息流 + artifacts 的投影，零新增数据通道。
 
 ### 66.4 交互、持久化与性能
@@ -3165,6 +3230,8 @@ M37–M45 专项（[docs/scene-chat-design.md §11](docs/scene-chat-design.md)�
 
 用户实测截图（谈判 arena 场景）红框标注两处成员表达并追问「是不是重复了，且输入框中的有必要展示吗」：① ChatArea 标题栏右侧头像组（`participants.slice(0, 7)` 纯装饰，无交互 / 无状态）；② 输入条上方成员条（M11 指挥台 chips：点击 @ 召唤 / 发言状态点 / 排队角标 / 新成员高亮）。叠加场景工作区体系（§66 / ADR 0112）落地后的 arena 席位卡 / roundtable 席位环（同样承载「点击 @ 召唤 + speaking/waiting 状态」），同一会话内成员被三处重复表达。**纯前端批次**（零服务端 / 零资产 / 零协议改动），决策见 ADR 0126。
 
+> **成员条统一批修订（ADR 0135 / §86）**：本节的「输入条成员条席位让位」判定已撤销——成员条全场景统一常驻（arena 全员入席 / roundtable 不再让位，与席位同屏并存）；标题栏头像组移除维持不变。
+
 ### 78.1 展示矩阵与收口口径
 
 - 成员展示面盘点：标题栏头像组（纯装饰）↔ 输入条成员条（交互：@ 召唤 / 状态点 / 排队角标 / 新成员高亮）↔ 场景席位（arena 席位卡 / roundtable 席位环 / 席位横条——交互 + 状态）↔ 窄屏 BottomMemberBar ↔ 右栏 TeamPanel；
@@ -3204,6 +3271,7 @@ M37–M45 专项（[docs/scene-chat-design.md §11](docs/scene-chat-design.md)�
 ### 79.3 dock 宽度与拖拽交互增强
 
 - 宽度：默认 340 → 360px、clamp 260–520 → 280–640px（persist.ts `DOCK_DEFAULT` / `DOCK_MIN_W` / `DOCK_MAX_W`）；上限覆盖盘面 / 看板阅读，640 在 1280 桌面宽度下对话区仍保 ≥640px；
+  > **批九修订（2026-09-19）**：固定宽度口径整体被取代——默认改容器 1/3（clamp 380–600）、上限改容器一半（左区恒保 ≥50%）、双击复位回自适应（存储 `width: number | null`，旧 360 迁移 null）；详见 §111 / ADR 0183。
 - 拖拽零 React 渲染：pointerdown 记录起始宽 → pointermove 只改 `widthRef` + `asideRef.current.style.width`（不经 state）；抬手一次 commit（落态 + localStorage `ma:sc:dock`）；pointercancel 回滚起始宽度（不落盘）；组件卸载清理 body 光标 / 选择态；
 - 三入口共用 commit：拖拽抬手 / 双击把手复位默认宽 / 键盘 ← →（16px 步进、Shift 48px 加速）；把手可聚焦（`role=separator` / `aria-orientation` / `aria-valuenow·min·max` / aria-label）；
 - 拖拽态视觉：`.scene-dock-resizing`——全域 col-resize 光标 + 把手高亮 + body user-select none；grip 常态 transition + focus-visible 描边。
@@ -3252,11 +3320,15 @@ M37–M45 专项（[docs/scene-chat-design.md §11](docs/scene-chat-design.md)�
 ### 81.2 侧栏宽度自适应
 
 - `.scene-arena-side` 固定 `164px` → `width: clamp(164px, 20%, 280px)`：窄宿保底 164px（原值不变），宽宿（含全屏 / 大屏）随宿主按比例放宽、280px 封顶；不新增断点，窄屏（<900px）仍走 §7.3-4 降级（侧栏不渲染）。
+- **续修订（同日二轮实测反馈）**：`20% / 280px` → `24% / 360px`（用户原话「可以在宽一点」）——窄宿保底 164px 与窄屏降级口径不变；原 280px 上限即 ADR 0129 注明的「4K 重估点」，本次按实测提前重估。
+- **续修订二轮（滚动条占位一致性）**：`.scene-arena-side` 追加 `scrollbar-gutter: stable`——两侧恒预留滚动条槽位：经典滚动条（鼠标模式）只占溢出的一侧，曾令左右内容区标尺差 ~15px（用户实测「两边宽度不一致」的观感来源；外框实测本就亚像素相等）；stable 后两侧内容宽度严格一致，overlay 模式无副作用。
+- **续修订三轮（中轴让渡 + 条带瘦身）**：`24% / 360px` → `22% / 340px`（用户原话「中间内容有点小，看不完整一个消息」）——两侧仍同值严格一致；同批中轴顶部条带瘦身：`.scene-arena-center` / `.scene-arena-track` padding 0.4rem → 0.25rem、`.scene-arena-insights` max-height 190 → 150px（面板可内部滚动），为消息区让渡纵向空间（约 45px）；`WaveStrip` 悬浮条 top-2 → top-3.5（缓和与上方固定条带的贴近观感）。
+- **续修订四轮（悬浮阶段条重塑为顶部方位条 + 贴顶边上移，同日）**：用户实测截图红框「重新优化」——药丸与消息头部同排交错（药丸「第 1 波 · 谭成」与消息头「13:25 你」并列）→ 顶部渐隐遮罩（`data-wave-scrim`）+ 药丸轻量化 + 「共 N 波」读数（≥2 波才显示）；二次实测红框「需要上移」→ 药丸偏移 `top-3.5` → `top-1`（贴顶边：不再下探到首条消息，呈渐隐区内的边缘读数——覆盖三轮的 14px 判定）。E2E 锚点 `data-wave-strip` 零改动。详见 ADR 0065 决策 4 续修订、`docs/scene-chat-design.md` §5.3 / §5.4 ⑧。
 
 ### 81.3 测试
 
 - 组件测 `client/tests/m60-arena-live.test.tsx` 新建 3：流式消息即时入侧栏（`data-streaming` + 增量 500ms 节流刷新 + 收束去标记保持）/ 空正文流式 → 「发言中…」占位 / 冻结面边界（流式 `::: claim` 不进论断树、收束后出现——实时与冻结两通道互不越界）；
-- E2E `e2e/m52-stage.spec.ts` arena 用例 +2 断言：run 收束前侧栏 `data-streaming` 条目可见（live 通道）；侧栏宽度 = clamp(164px, 宿主 20%, 280px)（误差 <2px）+ 视口放宽后随宿主变宽。
+- E2E `e2e/m52-stage.spec.ts` arena 用例 +2 断言：run 收束前侧栏 `data-streaming` 条目可见（live 通道）；侧栏宽度 = clamp(164px, 宿主 24%, 360px)（误差 <2px，续修订同步）+ 视口放宽后随宿主变宽；续修订追加「左右两栏等宽」一致性核验（同一 clamp 公式 + 同一包含块，断言带数值消息输出；1280 / 1728 两档视口实测左右亚像素相等）；续修订二轮追加「滚动条占位一致性」核验（两侧 `scrollbar-gutter` computed = stable + `clientWidth` 严格一致——经典滚动条只占溢出一侧曾令内容区差 ~15px）。
 
 ### 81.4 门禁
 
@@ -3367,3 +3439,939 @@ M37–M45 专项（[docs/scene-chat-design.md §11](docs/scene-chat-design.md)�
 - **焦点约束（轻量 trap）**：`TsToss` 打开期挂 document 级 `keydown`（捕获）+ `focusin`——Tab 在台内首尾环回弹（尾 → 首 / 首 → 尾；焦点在台外时拉入首 / 尾元素）。面板为 portal 挂 body 末尾元素，浏览器无自然环回，须显式环回；配合遮罩点击 / Escape 关闭；
 - **面板入口补齐（§5.1）**：`ChartboardPanel` 头部「亲手摇卦」（空态 / 有盘态恒渲染，与「合参」toggle 同排右对齐；`.pn-toss-enter` 独立类名——免与 `.pn-alm-toggle` 单元素定位冲突）；对照基线 = 会话内首个可派生卦盘（`derivePan('gua')`），无卦盘 → `compare = null` 仍可摇；
 - 复验：探针复跑 **逃逸 12/14 → 0/14**、滚动 1800 前后与滚回 `.pn-toss` 恒为 1（小视口 900×560 / 窄屏 375 存续可测：弹窗 400×482 含内滚 / 353 宽零溢出；截图 `data/m54w-small-done.png` / `m54w-small-bottom.png` / `m54w-narrow-done.png`）；`m54c-pan-toss` 8 → 9（Tab 首尾环回 + 逃逸拉回）+ 新建 `m54d-pan-toss-host` 3 例（请求驱动开合 / 请解草稿 + 请教足迹 / 对照快照 + 摇卦足迹 + 无会话静默降级）→ client 69 文件 / 870 全绿；E2E `m54-pan-interactive` 8/8（面板摇卦入口新增断言：点入 → 弹窗 → Escape 关闭）+ 相邻回归 28/28；全仓 typecheck / ESLint 0 错误；client build 通过。
+
+## 84. 多 Agent 调度增强——路由简报 · 停滞抑制 · 写冲突防护 · 接单回执 · 调度指标（M61）
+
+- 决策依据：[ADR 0133](docs/adr/0133-dispatch-excellence.md)；证据：`server/tests/m61-dispatch.test.ts`（13 例）、`server/tests/scheduler.test.ts`、`server/tests/run-events` 断言链。
+
+### 84.1 路由简报（D1/D2）
+
+- PRS 输入新增 `<session_state>` 段（**空段不注入**，旧输入字节级不变）：阶段（opening = 尚无成员发言 / ongoing）+ 最近接手者（最近 3 条 agent 消息去重）+ 已有交付件清单（工作区浅扫 ≤30 条 / 600 字符，防重复创建）；
+- ROUTE_SYSTEM 增三纪律：复杂度分级（简单直答 1 人 / 多面 2-4 人 / 跨阶段只派第一阶段）、去重（不重复派给最近接手且已交付的角色）、阶段（开场派上游 / 进行中接续不重头）；
+- 输出 schema 增 `assignments[].mode`（execute/plan/review）——**软建议**：注入任务便条（「平台建议：先 write_plan 提交规划再动手」）与 trace，**不强制切换范式**（范式仍显式 opt-in）；白名单容错（非法值降级缺省）。
+
+### 84.2 实质进展停滞抑制（D3）
+
+- 新 `write-tracking.ts`：从成功写动作提取目标路径（write_file / edit_file 取 `path`；apply_patch 从 `---/+++` 补丁头解析，a/ b/ 剥离、/dev/null 剔除）——**零文件系统 IO**（不扫描工作区）；波内缓冲按成员归集（`record.waveWrites`），波末结算入 `waveWriteCounts`；
+- `detectStall(waveTexts, waveWriteCounts, waveSignatures)`：**同一成员**连续两波零写动作 + 文本相似 >0.9 → 停滞抑制（比内容级循环 4 波更早）；**职责划分**——单人重述 2 波收口，多人轮转重复仍交内容级循环（0.85 / 4 波），两机制不重叠（M3 测试零变化）；有写动作即视为有实质进展（不误伤迭代型协作）；
+- `mergeWaveSchedule` 输入增 `waveWriteCounts?`（缺省不检测——既有调用零差异）、输出增 `stallSuppressed`（与 loopSuppressed 同走抑制路径；turn:end 的抑制标记合并二者，TraceDrawer 分开标注「停滞抑制」）；判定在合并层单一收口（ADR 0094 分层）。
+
+### 84.3 并行写冲突防护（D5）与接单回执（D4）
+
+- 波末对波内成员写路径集合两两求交 → 重叠时 `wave:write-conflict` trace + 系统事件条（「并行写冲突提醒：X 与 Y 均修改了 <path>。请收敛方核对合并」；role:system 不进 LLM 窗口、复用 plan-updated 推送通道即时插入）；单成员波 / 无重叠零开销；跟踪失败静默（绝不阻断主流程）；
+- 接收方消费交接便条即记 `handoff:accepted` trace（from / count / reason）——交接链闭环审计，纯观测不改调度行为。
+
+### 84.4 链路降级升级（D7）
+
+- 路由失败接手从「编制首位」改为「**场景链首**」在场成员（`fallbackOrder`：按所属场景 chain 位置排序，未在 chain 上者靠后，稳定排序）——上游角色优先接手；降级 trace 形状不变（`fallback: true`）；development chain 下 [backend, qa] 顺序与 M48 既有测试断言一致。
+
+### 84.5 调度指标（D6）
+
+- `RunEventStore.schedulingStats()`：从 run_events 聚合（routing:dispatched 的 fallback 分叉 / wave:start 的 parallel / schedule 的 loopSuppressed·stallSuppressed / wave:write-conflict / handoff:accepted）——**零新埋点**（全部消费既有事件）；
+- `GET /api/metrics/scheduling?sinceMs=`（`{ scheduling: SchedulingStats }`）；指标面板新增「调度健康」分区（与 summary 同窗并行拉取，失败静默降级）——路由命中 / 降级、波次与并行、抑制（循环 / 停滞）、写冲突 / 接单四行读数。
+
+### 84.6 验证与口径
+
+- 新增 `m61-dispatch.test.ts` 13 例（写目标提取 / apply_patch 头解析 / 冲突检测 / detectStall 矩阵 7 断言 / merge 集成 3 例 / mode 容错 3 断言 / schedulingStats 聚合 / D5 引擎端到端含系统事件条与 notify）；
+- 夹具适配：context 预算 12k → **13.2k**（随资产扩容上调，与 M23→M29 惯例一致）、m3 场景零变化（停滞不拦多人轮转）；
+- eval 28/28 ✅；client 876/876 ✅（m9 面板窗口断言适配双端点）；server 定向全绿；E2E 定向 **6/6** ✅（`m48-routing` 2 + `m16-parallel` 1 + `m16-serial` 2 + `m42-roundtable` 1；新构建 42.3s）；
+- 编号让位：v58 / ADR 0132 由并发批（头像圆角）占用 → 本批 CHANGELOG **v59** / **ADR 0133** / 本章节。
+
+## 85. 多用户基座——账号认证 · 归属隔离 · 全链路守卫（M57 P1）
+
+本地优先的单信任域架构（共享 `AUTH_TOKEN` / 无归属列 / 全局单例资源 / 无 ACL 通道）扩展为团队可用的多用户体系。设计基线：一体规划 P1/P2/P3；**P1 = 账号 + 硬隔离 + 全链路守卫**（本批落地服务端），决策见 [ADR 0134](docs/adr/0134-multi-user-foundation.md)。
+
+### 85.1 认证与账号
+
+- 数据：迁移 v13 四表 `users`（角色 / 状态 / 首登改密 / 失败计数与锁定）/ `auth_sessions`（令牌哈希 / 双过期 / 撤销）/ `api_keys` / `user_prefs`；
+- 密码 scrypt（Node 内置，参数入库）+ 恒定时间比较；会话令牌为不透明随机串（`sa_`，只存 SHA-256），滑动 30 天 + 绝对 90 天；`sid` HttpOnly cookie（`AUTH_COOKIE_SECURE=true` 加 Secure）；CLI 经 `mk_` API Key；
+- legacy `AUTH_TOKEN` 保留兼容（映射最早管理员 / 无账号时为合成管理员），带弃用告警；
+- 首启：`GET /api/auth/status`（needsSetup）→ `POST /api/auth/setup` 创建首个管理员并**回填存量数据归属**（flushAll → 库内 UPDATE → 清 SessionStore 缓存）；此前为单用户兼容模式（行为与旧版一致）；
+- 防爆破：登录 IP 限流（`LOGIN_RATE_LIMIT`）+ 账号失败锁定（`LOGIN_LOCKOUT_THRESHOLD` / `LOGIN_LOCKOUT_MS`，落库）；未知用户名执行哑哈希（防枚举）；
+- 账号管理（admin）：创建（邀请制，初始密码仅返回一次）/ 禁用（即时吊销会话）/ 改角色 / 重置密码 / 删除；护栏：至少保留一名启用管理员、不能自禁 / 自删 / 自改角色。
+
+### 85.2 归属与守卫
+
+- 迁移 v14：`sessions` / `projects` / `runs` / `messages` / `approvals.decided_by` / `audit_log(user_id,ip)` / `usage` / `run_events` / `feedback` 归属列；`connections` / `mcp_servers` / `finance_watchlist` 唯一键重建（预留 `scope/owner_id`、`member_use`）；`memory.user_id` 用户维度（global 桶 `owner_id = 用户 id`）；
+- `AccessService` 为归属判定唯一事实源；聚合层 `router.use('/sessions/:id')` 一次覆盖全部子资源（消息 / 成员 / 交付件 / 画布 / 媒体 / 日程 / 绑定 / 浏览器），`/runs/:runId` 经 run→session 反查；跨用户一律 404；
+- 通道 ACL：WS 订阅逐会话校验（`__` 全局主题仅 admin）；`/api/notifications` 仅返回可见会话；流 token 载荷绑定用户；浏览器 bsid / 媒体任务 / 定时任务补守卫；
+- 资源分层：管理面（连接 / MCP / 控制台 / 审计 / 指标 / 设置写）admin-only；成员可在自有会话绑定 `member_use=1` 的 system 连接（列表脱敏）；记忆检索（L1 / L1.5）与自选按用户。
+
+### 85.3 公平性与归因
+
+- `runs.user_id` + `RUN_MAX_PER_USER`（活跃 + 排队）上限；消息限流改按用户（未登录回退 IP）；
+- 全量归因：usage / run_events / feedback / messages（人类作者）/ audit_log（user_id + ip）/ approvals.decided_by。
+
+### 85.4 部署基线与后续
+
+- `TRUST_PROXY`（nginx 单跳填 1）使限流 / 审计取真实 IP；TLS 终止在网关（应用不内置 HTTPS），配套 nginx 注意事项见 operations.md；
+- 客户端已落地（AuthGate：首启向导 / 令牌入口 / 登录页 / 首登强制改密 / 401 全局回退；账号弹窗：改密 / 用户管理入口 / 登出；管理面仅 admin、成员设置页 = 个人偏好；`/api/auth/preferences` 可写 notifyPollMs）；P2（会话共享协作）已落地（§90 / ADR 0142：服务端角色矩阵 + `/shares` + 客户端共享弹窗 + E2E）；P3（配额 / 个人资源 / BYOK）为后续迭代；测试：`server/tests/m57-multiuser.test.ts` 7 例 + `client/tests/m57-auth.test.tsx` 10 例 + `e2e/m57-auth.spec.ts`（独立实例 8790：首启 → 登录 → 强制改密 → 跨用户隔离 + P2 共享全链路，幂等可重跑）。
+
+### 85.5 文件与工作区布局（u_<uid> 嵌套）
+
+- **新布局**：sandbox 工作区 `workspace/u_<uid>/<sid>/`、git worktree `WORKTREE_DIR/u_<uid>/<sid>/`、画布 `data/canvas/u_<uid>/<sid>.json`；无属主（单用户兼容模式 / 历史数据）继续用平面旧路径；
+- **统一解析**：`WorkspaceService.resolveDir` / `canvasFileFor` 为唯一事实源（显式 `workspace_dir` 优先 → 无属主旧路径 → 有属主新嵌套；「新未建且旧存在」兼容回退旧路径）；ArtifactStore / 工具沙箱 / 画布存储均经此解析；
+- **搬迁脚本**：`npm run migrate:workspace`（幂等、`-- --dry-run` 预览；仅搬迁有属主会话的 sandbox 目录与画布文件；worktree 不搬迁——既有位置由 `sessions.workspace_dir` 显式记录）；
+- **删除账号级联**：`DELETE /api/users/:id` 顺序 = 关浏览器实例（M62）→ `WorkspaceService.purgeUser`（逐会话解除 worktree 注册 → `u_<uid>` 整树 + 旧平面目录/画布清理，全程「根内」安全校验）→ 删库（外键级联）；清理失败不阻断删除，响应回传 `warnings`；
+- 测试：`server/tests/m57-workspace.test.ts` 5 例（解析四分支 / 画布回退 / 嵌套存读删与外部根拒删 / purgeUser 不影响他人 / 搬迁幂等 + dry-run）。
+
+## 86. 成员条统一常驻——输入条成员条全场景一致展示 · 撤销席位让位判定（成员条统一批）
+
+用户实测双会话截图对比（谈判 arena 会话 vs 投资研究 dock 会话）红框标注 Composer 上沿成员条区域并追问「为什么有的会话里面有，有的会话里面没有」，随后明确诉求「请统一下 / 所有的对话都需要统一」。本批撤销 M52-G（§78）的「席位覆盖时让位」判定：输入条成员条回归全场景常驻（Composer 常驻操作面），席位维持结构可视化，两者同屏并存。**纯前端批次**（零服务端 / 零资产 / 零协议改动），决策见 [ADR 0135](docs/adr/0135-member-strip-always-visible.md)。
+
+### 86.1 统一口径与展示矩阵
+
+- 口径（用户诉求「所有的对话都需要统一」）：输入条成员条全场景恒展示——arena（含全员入席）/ roundtable / dock / stream / 纯列表一律常驻；§78 的让位判定（`poolHidden`）整体撤销，标题栏头像组移除维持；
+- 分工：席位（arena 席位卡 / roundtable 席位环）=「谁在哪个席」结构可视化（随消息滚动区离场）；成员条 = Composer 常驻操作面（@ 召唤 / 状态点 / 排队序号 / 新成员高亮）——并存是操作面 + 结构面双表达。
+
+### 86.2 实现（Composer）
+
+- 删除 `poolHidden` useMemo 与 `resolveStage` / `useSceneStore.listMode` 两处依赖引入；渲染条件回归 `{!disabled && poolSorted.length > 0}`；
+- 席位组件零改动；@ 菜单 / 插入链路 / 高亮 / 排队角标逻辑零改动。
+
+### 86.3 测试与门禁
+
+- `client/tests/composer.test.tsx`：原 M52-G describe（4 例）改写为「统一常驻」五态——arena 全员入席（展示且点击插入 @名字）/ arena 部分入席（展示）/ roundtable（新增，展示）/ stream（展示）/ 纯列表（展示）；client 69 文件 / 877 测试全绿（本批窗口值，窗口内含并发批次增量）；全仓 typecheck 0 错误；改动文件 ESLint 0 错误（1 条存量 warning——apiPost 未使用，非本批引入）；client build 通过（本批窗口产物 `index-BqaYPHmG.js` 1,276.21 kB）；check:agents 114/114 达标 / check:skills 51/51；eval 28/28 ✅；
+- E2E：`m52-stage` 21/22（唯一失败 = 融资资本 dock·console 收尾 trace ENOENT 基建抖动——该场景成员条改前改后同为展示，隔离复跑 1/1 通过）+ `m43-pk` 2/2 ✅（arena 辩论场 / 谈判桌——与本批最相关场景全绿）；补跑窗口遭遇并发会话 server 中间态（`ERR_ERL_KEY_GEN_IPV6`，M57 改动域）与 test-results 并发清理，判定非本批回归；
+- 文档：本页 §86、ADR 0135、`docs/adr/README.md` 索引（0126 → Amended）、§78 修订注记、`agents/CHANGELOG.md` v66。
+
+## 87. 场景交互深化——arena parts 精细化与首批场景声明（场景深度优化批）
+
+用户要求「当前所有的场景深度优化（含交互）」：对 29 场景 × 四形态 × 六面板 × 12 元件做全量走查，处理发现的真实缺口。本批聚焦 arena 形态的 **parts 机制名实漂移**与**场景语义瑕疵**（纯前端 + 资产声明，零服务端逻辑改动）。
+
+### 87.1 走查结论与缺口
+
+- 形态面：5 stream / 18 dock / 4 roundtable / 2 arena——dock / roundtable 的交互链（拖宽 / 折叠 / 抽屉 / 席位回填 / 议程定位）与空态链（guide + agenda chips + 成员 chips）经走查完整无缺口；
+- **缺口一（名实漂移）**：`PART_NAMES` 登记 12 个「幽灵」parts 名，实际受 parts 控制的仅 ArenaStage 的四个区块（scoreboard / round-track / verdicts / insights），`partEnabled` 导出零消费；
+- **缺口二（语义失真）**：negotiation 无「胜负计分」语义，但 Scoreboard 恒显（0:0 / 未开赛）；debate 无「报价」语义，insights 一坨耦合导致声明无法裁剪报价流。
+
+### 87.2 实现口径
+
+- insights 拆分为 `claim-tree`（论断树）与 `offers`（报价流）两个独立 parts；`verdicts` 修正单复数（原登记 `verdict`）；
+- `PART_NAMES` 收敛为 arena 五件套（round-track / scoreboard / verdicts / claim-tree / offers）；ArenaStage 的 `on()` 改用 `partEnabled`（单一事实来源）；
+- 数据属性契约不变（`[data-insights]` / `[data-insight="claims"|"offers"]`）——既有组件级测试零改动。
+
+### 87.3 场景声明（首批落地）
+
+- `debate`：`parts: [round-track, scoreboard, verdicts, claim-tree]`（对齐 scene-expansion §7.8 原意；辩论无报价流）；
+- `negotiation`：`parts: [round-track, verdicts, claim-tree, offers]`（**去 scoreboard**——消除恒显 0:0；报价流为谈判核心）；
+- `invest`：不声明（多空对弈全要素默认集）——向后兼容，未声明场景行为不变。
+
+### 87.4 验证
+
+- client 全量 **888/888 ✅**（m52-stage +1：negotiation 无 scoreboard 保报价流 / debate 保 scoreboard 无报价流）；m43-cards（数据属性契约）与 m60-arena-live 零改动通过；
+- 向后兼容：invest / 无 parts 声明夹具全启用等价；E2E（m43-pk / m52-stage）不受影响。
+
+## 88. 上下文电池格条——用量条收编 Composer 底栏（上下文电池批）
+
+用户实测截图（谈判 arena 会话）红框标注主区顶部「上下文 8% 15.7k / 200.0k tokens」横贯用量条，诉求「上下文不在 header 中展示，放到下方使用像电池容量的效果进行展示，优化设计下」；初版「壳体 + 连续填充」实现后，用户以参考图（5 段横条格条）反馈「不是完全按照电池展示，像这种」，同日修订为格条形态。本批为**纯前端批次**（零服务端 / 零资产 / 零协议改动），决策见 [ADR 0137](docs/adr/0137-context-battery-in-composer-footer.md)。
+
+### 88.1 实现口径
+
+- 位置迁移：`AppLayout` 删除主区头部通栏渲染（`mainTab === 'chat' && <ContextBar />` 与 import 一并移除）；`ContextBar` 改挂 `Composer` 底栏提示行右侧（`ml-auto` 右对齐），随输入区常驻；
+- 电池格条（参考图样式）：5 段等宽横条纵向堆叠（每段 `h-[2px] w-5`、间距 `1.5px`、微圆角），`flex-col-reverse` 自下而上逐格点亮，无壳体无触点；点亮段数 = `⌈水位 × 5⌉`（非零水位至少 1 格）；百分比与 token 数值（如 `15.7k / 200.0k`，`sm` 以下隐藏数值仅留百分比）；
+- 颜色分级：点亮段 < 70% emerald / 70–90% amber + 百分比变色 / ≥ 90% rose + 整组 `animate-pulse` 呼吸；未点亮段低对比灰（hover 微提亮）、点亮段 300ms 过渡；点击开上下文抽屉；
+- 入口保留：title = `上下文 {pct}%（{estimated} / {budget} tokens）· 查看上下文分层与摘要`（保留原 E2E 选择器子串）；「本 Run 费用」与「轨迹」按钮同排保留在格条右侧；「已降级」徽标随格条显示；
+- 取数零改动：会话切换 / 运行结束 / 压缩事件 / 点击刷新（`/api/sessions/:id/context` + `/api/runs/:id/usage`）。
+
+### 88.2 验证
+
+- client 全量 **888/888 ✅**（composer / m33 补 fetch 常挂起 stub、m24 `mockApi` 对 context / usage 端点挂起——电池挂载即取数，避免真实网络与 act 警告；m25 抽屉口径断言零改动）；
+- 浏览器实测（DOM 核验）：页签行下无横贯条（`progressbar` 计数 0）；底栏右侧 5 段格条自下而上点亮（低水位 1 格绿色）、百分比 + token 数值右对齐无重叠；
+- E2E：`m25-memory.spec.ts` 标题点击路径不变（子串匹配）；无位置依赖断言。
+
+## 89. 多用户浏览器资源治理——实例隔离 · 页面分治 · 配额回收 · 连接线治理（M62）
+
+M57 P1（§85 / ADR 0134）落地账号与归属守卫后，浏览器子系统仍按「单信任域、单机单用户」假设运行：Profile 全局共享（local 复用可跨用户接管登录态）、同实例多会话抢页、关闭链路断裂（`closeForSession` 无调用方）、无配额 / 无空闲回收 / 无启动对账（僵尸行 + 临时目录 + 无主进程三重残留）；连接线三处失真（remote 无租约 / 重连端点固化 / 健康状态不回写）、最小权限缺口（绑定与 `member_use` 未复核启动）。本批按 M62-A/B/C 一次性落地，全部治理以「owner 存在」为开关（兼容模式零变化）。专项设计见 [docs/browser-multiuser-design.md](docs/browser-multiuser-design.md)，决策见 [ADR 0139](docs/adr/0139-multiuser-browser-instance-governance.md) / [0140](docs/adr/0140-browser-connection-line-governance.md) / [0141](docs/adr/0141-browser-instance-observability.md)（编号让位：ADR 0137 / §88 已被上下文电池批、ADR 0138 已被画布 UX 批占用，原预定 0137–0139 / §88+ 顺延为 0139–0141 / §89）。
+
+### 89.1 归属与 Profile 隔离
+
+- 多用户 Profile 根 = `<dataDir>/browser-profile/u_<userId>/`（admin 同独立）；兼容模式沿用旧布局（零迁移）；`LaunchOptions.profileRoot` 语义不变（runtime 决策传入）；
+- 实例注册表 `.ma-instance.json`（端点就绪写入：`browserSessionId / sessionId / userId / backend / pid / endpoint / headless / startedAt`）：崩溃恢复（pid 归属校验）、观测、复用归属防御（`userId` 不一致 → 拒绝接管并给可操作错误；缺失按既有语义放行）。
+
+### 89.2 页面分治（同实例多会话）
+
+- runtime 占用表 `endpoint → targetId → browserSessionId`；同端点已有其他活跃会话 → 新会话 `Target.createTarget` 自建管理页（`forceFreshTarget`）；
+- `isForeignTarget` 三路径过滤：新页事件 / 空白页观察 / 回退候选——他人管理页永不接管；会话关闭 / 切页 / 管理页销毁均经 `onPageChange` 释放登记；
+- 无隔离需求时保持 `attachToPage` 旧路径（ADR 0051 跟随语义与既有测试零改动）。
+
+### 89.3 配额与空闲回收
+
+- `BROWSER_MAX_PER_USER`（3）/ `BROWSER_MAX_TOTAL`（8）/ `BROWSER_IDLE_CLOSE_MS`（30min）/ `BROWSER_RECLAIM_INTERVAL_MS`（60s），0 = 不限 / 不回收；
+- 超限先回收本用户空闲实例再拒绝（错误含当前值与出路）；检查点 = 新建实例前（复用不拦截）；
+- 回收判定 = `ready` + `agent` + 非 busy + 无帧流订阅者（`subscriberCount`）+ 距最近活动（`lastActiveAt`）超阈值；`awaiting_human` / `human` / 兼容模式三重豁免；回收广播 `closed` 原因（面板提示再调用自动重启）。
+
+### 89.4 生命周期闭环
+
+- 关闭链路：会话删除 → `closeForSession`；用户删除 → `closeForUser`（含 DB 兜底行）；`shutdown` 补 `close_reason`；调用点带 `?.` / catch 容错（最小测试夹具未装配 browser 时跳过）；
+- 启动对账 `reconcileOnStartup`：僵尸行（`closed_at IS NULL`）→ `service_restart`；注册表 pid 存活且 `ps` 命令行含 `--user-data-dir=<dir>` 才终止（SIGTERM → 2s → SIGKILL）；`managed-*` 目录删除、`local` 目录保留（仅清注册表与残留 `DevToolsActivePort`）；
+- 迁移 v15：`browser_sessions` + `user_id` / `close_reason`（回填自 `sessions.owner_id` 并立索引）；`BrowserSessionInfo` 增可选 `ownerId` / `closeReason`。
+
+### 89.5 连接线治理
+
+- remote 独占租约（`conn:<id>` / `endpoint:<ws>`；占用者活跃才拒绝；`config.shareInstance=true` 显式放开）；
+- 重连端点再解析：`resolveEndpoint` 注入（remote http(s) 重探 / local `DevToolsActivePort` 重读），失败回退固定端点；成功换端点更新内存与 DB；不引入进程级自动重启（ADR 0120 承袭）；
+- 连接健康回写：启动 / 解析 / connect / start 失败与重连耗尽 → `error` + `lastError`；成功接入与自动重连成功 → `ok`；正常关闭不回写；30s 节流；
+- 最小权限复核：`enabled` + 会话绑定（未绑定给绑定指引）+ 成员 `member_use`（admin 豁免），与 db / mcp 口径对齐；
+- 帧流线：`StreamHub.subscriberCount` + 同用户 takeover 流转（`takeover_moved` 降级 watch；跨用户 `takeover_busy`；兼容模式沿用单持有者拒绝）。
+
+### 89.6 观测与 UI
+
+- `GET /api/browser/sessions`（admin）：归属 / 后端 / 状态 / URL / 空闲时长 / 订阅数（`listDetailed` 单一数据源）；
+- 连接控制台「实例」页签（admin 可见，成员隐藏且不请求）行内关闭；`BrowserPanel` 复用徽章与空闲关闭文案对齐；
+- 回放归属修复：已关闭 bsid 按库内 `user_id` 判定——成员可回看自己历史步骤 / 截图（此前仅 admin）。
+
+### 89.7 验证
+
+- server 全量 **1134/1134 ✅**（新增 `browser-multiuser` 11 例：归属隔离 / 复用防御 / 配额与回收豁免 / 关闭链路 / 启动对账 / 租约与最小权限 / 健康节流 / 页面分治 / 端点再解析 / 帧流流转；`browser-*` 六文件全绿）；
+- client 全量 **892/892 ✅**（新增 `m62-browser-instances` 2 例：admin 实例页签与关闭 / 成员隐藏且不请求）；
+- 四包 typecheck 0 错 / lint 0 错（既有 warning 基线）/ `npm run build` 通过；
+- 兼容模式零变化：断言进 `browser-multiuser`（旧路径 / 旧语义）与既有 6 套件回归。
+
+## 90. 会话共享协作——共享成员 · 角色矩阵 · 署名与可见性（M57 P2）
+
+P1（§85）之后团队成员仍只能各看各的会话；本批引入会话级共享（owner / editor / viewer），把「同一份会话多人协作」纳入权限模型。决策见 [ADR 0142](docs/adr/0142-session-sharing-collaboration.md)。
+
+### 90.1 数据模型与授权
+
+- 迁移 v16 `session_members(session_id, user_id, role[editor|viewer], invited_by, created_at, updated_at)`（PK = 会话+用户；外键 CASCADE：删会话 / 删账号自动清理）；
+- owner 不进表（仍由 `sessions.owner_id` 承载）；`AccessService` 扩展为角色唯一事实源：`sessionRole`（owner / editor / viewer / undefined）→ `canWriteSession`（owner / editor）→ `assertSessionWrite`（404 / 403）与 `assertSessionOwner`（仅属主）；单用户兼容模式全部放行（行为零差异）；
+- `SessionStore.listForUser`（本人 + 共享，逐行标注 `role`）与 `search` 访问口径同步扩展；WS 可见集 / 通知降级轮询经 `visibleSessionIds` 自动覆盖共享会话。
+
+### 90.2 路由与守卫
+
+- 聚合守卫改为 `createSessionAccessGuard`（`auth/guards.ts`；测试可直接挂载）：读 = owner ∪ 成员（无权限 404）；写（非 GET/HEAD/OPTIONS）= owner / editor（viewer 403），唯一例外 `POST /sessions/:id/leave`（viewer 可自助退出）；`/runs/:runId` 守卫加 `assertRunAccess`（按方法施加写校验：停止 / 审批对 viewer 403）；
+- 新路由 `/sessions/:id/shares`（GET 任何可见者 / POST·PATCH·DELETE 仅属主）与 `POST /sessions/:id/leave`；错误口径：未知账号 404、已在成员 409、邀请自己 / 属主 400、非成员移出 404；`DELETE /sessions/:id` 收紧为属主专属；
+- 副作用：审计 `session.share-add|update|remove|leave` + 广播 `notify:share-changed`（payload `{ sessionId, userId, action, role? }`）。
+
+### 90.3 上下文署名与验证
+
+- 共享会话（成员数 ≥1）的人类消息在上下文装配中署昵称（`【Alice】…`；`ContextService.userLabelResolver` → assembler `userLabel`），独占会话 / 兼容模式沿用 `【用户】`（零差异）；M57 P3 收口：**压缩摘要 / 记忆沉淀输入文本同步署昵称**（`renderForSummary` / `renderForDigest` 接同一 `createUserLabelResolver`，缺省仍「用户」）；
+- 测试：`server/tests/m57-p2-shares.test.ts` 5 例（HTTP 生命周期：邀请→editor 写→viewer 403→leave 404；属主专属与邀请校验；列表 role / 搜索 / WS 可见集 / 审计；署名装配；兼容模式），server 全量 **1139/1139 ✅**（86 文件）；四包 typecheck 0 错；
+- 客户端已落地：会话头部「共享」入口（属主「共享」/ 成员「已共享 · 可协作 / 只读」徽章态）→ 共享弹窗（成员列表 + 角色切换 + 移出 + 邀请表单；成员可自助退出）；会话列表非属主会话带「协作 / 只读」徽章且按角色隐藏重命名（viewer）/ 删除（非 owner）；列表预览署名（他人人类消息显示昵称，`lastMessage.userId/userName` 服务端投影；自己 / 兼容模式仍「你」）；viewer 命中 ChatArea 横幅 + Composer 锁定（服务端 403 的前置提示）；消息气泡人类署名（他人消息显示昵称；`GET /sessions/:id` 响应新增 `humanNames` 投影，兼容模式仍为「你」）；`notify:share-changed` 入 ws-store（刷新列表；当前会话已不可见 → 清空并提示；面板正打开则同步刷新）；测试 `client/tests/m57-shares.test.tsx` 7 例（store 全链路 / 弹窗三视图 / 署名两分支 / ws 分支）全绿；client 全量 76 文件 942 例中 941 通过（唯一失败为并行 M31 媒体改版遗留旧测试，与本批无关）；E2E `e2e/m57-auth.spec.ts` 第二用例（邀请→协作徽章→转只读锁→移除，双上下文，幂等可重跑，本地 2/2 ×2 验证）。
+
+### 90.4 连接最小权限复核（SSH / 数据库，同批收口）
+
+- 缺口：绑定侧闸门（成员仅可绑 `member_use=1` 的 system 连接）不覆盖「admin 在会话里绑定未开放连接 → 会话共享给成员」与「member_use 事后撤销」两条路径；
+- 执行侧复核：`createConnectionUseGuard`（connections/access.ts）以「本 Run 触发者」（`RunRecord.triggerUserId` ← 触发用户消息 `userId`）判定：兼容模式 / admin / 未知触发者（历史 run、系统触发）放行；成员仅放行 `member_use=1` 的 system 连接；`ssh_exec` / `db_schema` / `db_query` / `db_execute` 在解析连接后调用守卫，`db_list_connections` 对不可用连接标注「（未对成员开放，不可用）」；
+- 归因：`DbExecInput` / `SshExecInput` 增 `actorUserId`，`ssh.exec` / `db.*` 审计补 `userId`（触发者）；
+- 顺带修复（同一根因）：工具只读结果缓存键收紧为 `sessionId:triggerUserId:tool:args`——原键无会话 / 用户，跨会话或共享会话内同参调用会命中他人缓存而绕过复核（本回合同会话同用户仍正常去重）；
+- 测试：`server/tests/m57-p2-conn-guard.test.ts` 5 例（守卫单元 / db_query 拒绝不执行与开放库真跑 / db_list 标注 / ssh 越守卫证伪 / 共享会话触发者口径）；server 全量 **1144/1144 ✅**（87 文件）。
+
+### 90.5 全量隔离审计与归因补齐（同批收口）
+
+- **审计归因补齐**：`mcp.*`（10 处：create/update/delete/test/reconnect/refresh/json-sync/json-import/bind/unbind）补 `userId` + `ip`（`actorOf`）；浏览器 runtime 的 `browser.start/attach/close` 审计补 `userId`（会话属主，与 detail.owner 双记录）；
+- **全量巡检结论**（HTTP / 通道 / 工具 / 文件系统四层）：单用户兼容模式零差异；隔离面无新增缺口；剩余为计划内未做项（P3 个人资源与配额）；
+- 测试：server 全量 **1146/1146 ✅**（87 文件），四包 typecheck 0 错。
+
+## 91. 快捷键帮助 Tab 分组重设计——四组页签 · 说明块归位 · 键位表补齐（快捷键帮助 Tab 化批）
+
+用户实测截图（红框：顶栏键盘按钮与弹出的「键盘快捷键」长列表）诉求「优化下，使用tab进行分组管理，重新设计优化下」——原 M12 面板四个分组纵向通铺于一屏：画布组超出视口后整层滚动、行标签单行截断（`truncate` 截掉适用说明）、可替代组合与同组合多键键帽平铺语义混淆、「指派语义」说明块底部常驻与输入语境割裂。本批为**纯前端批次**（零服务端 / 零资产 / 零协议改动；入口与 `ui-store.helpOpen` 契约零变化），决策见 [ADR 0143](docs/adr/0143-shortcut-help-tabbed-redesign.md)。
+
+### 91.1 实现口径
+
+- 分组页签：通用 / 输入框 / 审批卡 / 画布四组等宽页签（图标 + 标签；Radix Tabs 键盘可达），一次只呈现一组、非当前组不挂载；内容区 `min-h-[232px]` + `max-h-[52vh]` + 内部滚动（短组不塌陷、画布长组组内滚动）；
+- 行结构升级：`keys: string[]` → `combos: string[][]`（外层 = 可替代组合，渲染以「/」分隔；内层 = 组合键，相邻键帽）＋ 可选次行 `note`（适用条件小字，取代原单行 `truncate`）；
+- 说明块归位：「指派语义」迁入「输入框」页签（主色强调块，`AtSign` 图标）；「审批卡」页签补审批流语义块（批准 → 成员继续执行；拒绝 → 改换方案；附反馈提交 → 模型据此调整）；
+- 键位表补齐（一律以代码绑定为准）：画布组新增「删除选中节点 / 连线」（Backspace · Delete，React Flow `deleteKeyCode`）与「保存并提交画布文档」（⌘S，`store.flush()`）、撤销 / 重做补 ⌘Y 备选；输入框组新增「关闭候选 / 清空命令」（Esc）＋候选补全适用说明（弹层打开时 Enter 为补全而非发送）；通用组「快捷键帮助」补 ⌘⇧/ 备选；
+- 头部信息带与 a11y：图标徽章 + 标题 + 副题（「⌘ = Ctrl（非 macOS）· ? 键随时呼出，Esc 关闭」）＋ `DialogDescription` 补齐；页签选择组件内记忆（关闭重开停留上次分组）。
+
+### 91.2 验证
+
+- 单测：`client/tests/shortcut-help.test.tsx` 重写 5 例（显隐驱动 / 默认「通用」页签且非当前组不挂载 / 切「输入框」见候选键与指派语义 / 切「审批卡」「画布」/ 页签记忆）全绿；
+- E2E：`e2e/m12-interactions.spec.ts` 步骤 1 更新为「`?` 打开 → 断言默认页签与通用键 → 切「输入框」断言指派语义 → 切「画布」断言画布组」，页签定位收敛于 `page.getByRole('dialog')` 作用域（避免与主区「画布」Tab 重名冲突）；实跑 1/1 ✅（生产构建单端口托管形态）；
+- 视觉核查：隔离 harness + Chromium 2x 截图逐页签复核（键帽换行 / 留白 / 说明块排版无重叠）；client typecheck 0 错、ESLint 0 报错。
+
+## 92. 研讨型渲染包——五容器族 · 汇聚板专业化 · 资产输出约定（M38）
+
+全场景深度优化批一的 P0 落地：`docs/scene-chat-design.md` M38 原案（自 M37 起「规划待评审」）的容器族与汇聚板愿景全量兑现——点开全场景优化总账（批一：研讨域 brainstorm / research / strategy / society）。决策见 ADR 0144（容器族与汇聚板）与 ADR 0145（点亮本地互动态）；编号让位：原预定 ADR 0066–0068 → 实际 **0144–0145**，design.md 原预定 §53 → 实际 **§92**。
+
+### 92.1 五容器族（remark-ext + 五卡片）
+
+- `::: idea [N] 标题`——点子卡（IdeaCard）：字段行 / 条目同 pan 口径；字段「状态：候选 | 入选 | 被毙」→ 状态徽章（`IDEA_STATUS_MAP`，未命中无徽标）；「点亮」本地计数（`ma:sc:lights:<sessionId>`，ADR 0145）+「深入」回填草稿；
+- `::: phase 阶段名`——阶段分隔条（PhaseBar）：发散 / 探索 → 暖色，收敛 / 评审 / 收口 → 冷色（`data-tone`），其余中性；消息流时序语义、不入卡墙；
+- `::: score [标题]`——评分卡（ScoreCard）：条目 `- 名称 | 影响 8 | 信心 5 | 易度 7`；总分缺省 = 子项乘积（ICE 口径，与 refiner / facilitator 资产及 mock 先例 8×5×7=280 逐字一致），显式「总分 / 合计」列优先；按总分降序 + 条形归一；
+- `::: sources [标题]`——来源卡组（SourcesCard）：条目 `- 标题 | URL | 日期 | 要点 | 高|中|低`（列可缺省、容忍裸 URL 与 markdown 链接）；域名 chip（去 www）+ 可信度徽章（高 / 中 / 低可信）；「引用」回填草稿；
+- `::: decision [标题]`——决议卡（DecisionCard）：字段行「背景 / 决策 / 后果」按三要素排序（其余字段排后）；「确认拍板」回填草稿；
+- **单一解析实现**：`parseIdeaArg / ideaStatusOf / parseScoreLines / parseSourceLines / domainOf` 自 remark-ext 导出，remark 收尾（mdast 扁平文本）与场景面板（容器原始行，双重剥离列表标记）共用——防双实现漂移；
+- fail-safe 降级链不变式：未知容器名 / 游离闭标记保持原文；未闭合去壳展开；无有效条目 → `data-raw` 静态兜底；流式期间轻结构容器直接渲染。
+
+### 92.2 汇聚板专业化（pool 面板）
+
+- `idea / score / sources / decision` 与消息流**同组件渲染**（面板条瘦身：头像 + 类型徽标 + 定位按钮；卡片自带标题——避免双层壳体与标题重复）；
+- `phase` 不入面板卡墙（分隔条语义）；其余容器名沿用通用卡墙（含 `::: ideas` 复数兼容路径）；
+- 逐场景空态文案：brainstorm「点子将汇聚在这里」/ research「来源与证据将汇聚在这里」/ strategy「决议与矩阵将汇聚在这里」/ society「立场与事实将汇聚在这里」+ 中性默认；
+- 点亮跨实例同步：`useSceneLights(sessionId)` 同源 hook（IdeaCard 自持 / PoolPanel 注入 litOverride + onToggleLight），`LIGHTS_EVENT` 事件广播（ADR 0145）。
+
+### 92.3 资产与 mock（容器格式写入资产是面板出现的前提）
+
+- 三份场景协议新增「渲染容器约定」段：brainstorm（点子编号 / 状态枚举 / 阶段条 / ICE 评分，条目 12–14）、research（来源五列 / 论断三分与置信度，条目 9–10）、strategy（决议三要素 / 权衡矩阵与显式总分，条目 10–11）；
+- 5 个 AGENT.md「工作方式」各加一行输出约定：facilitator（phase）、ideator（idea）、refiner（score）、scout（sources）、chief（decision）；
+- mock 三组触发块（唯一触发词「点子走查 / 来源走查 / 决议走查」，同 M37 checklist / M54 pan 先例；块内不写 @）：facilitator→phase、ideator→idea×2、refiner→score、scout→sources、verifier→claim、chief→decision。
+
+### 92.4 验证
+
+- 单测 / 组件测：`client/tests/m38-cards.test.tsx` 21 例（纯函数解析 / 五容器渲染与交互 / fail-safe / 汇聚板专业化与逐场景空态 / 点亮持久化）；受影响既有套件 `markdown-ext / m52-stage / m43-cards` 141 例全绿；
+- E2E：`m16-brainstorm.spec.ts` 新增 M38 用例（阶段条 / 点子卡 ×2 / 评分卡 + 汇聚板沉淀 + 点亮与深入回填）与新增 `m38-research.spec.ts`（来源卡 / 论断卡 + 来源墙 + 引用回填）实跑通过；`playwright.config.ts` main 项目 testMatch 补 `m38-.*`；**全量 E2E 90/90 ✅**（8.6m，含并发批次增量）
+- 回归门禁（本批收口实测）：server **1156/1156 ✅**、client **77 文件 951 例 ✅**（首轮 1 例 `m31-media` 属并发会话中间态假失败——隔离复跑与全量复跑均绿）、eval **32/32 ✅**（零回归）、`QUALITY_STRICT` check:agents **114+29 ✅** / `SKILL_STRICT` check:skills **51/51 ✅**、四包 typecheck 0 错、build 通过（主包 `index-DvMYoLdV.js` 1,322.77 kB / gzip 377.23 kB——含并发批次合流，点记录）；
+- 资产门禁：`check:agents` 114/114 + 协议 29/29（新增段落不破坏质量红线 / 失败模式结构）；mock-coverage 四件套 4/4；
+- 工程红线：单一解析实现（面板与消息同源）；容器内不写 @；冻结口径（ADR 0114）与回填语义（ADR 0064）零变化；零服务端逻辑改动（mock 仅增量触发块）。
+
+## 93. 用户配额与用量看板——并发 · 日 token · 月成本 · 会话 · 存储（M57 P3-1）
+
+P1/P2 完成后多用户体系具备隔离与协作能力，但资源消耗仍无人约束：单个成员可以无限建会话、无限跑任务、无限上传。本批落地配额体系（按用户覆盖）+ 用量看板（个人 + admin），决策见 [ADR 0147](docs/adr/0147-user-quota-and-usage.md)。
+
+### 93.1 数据与强制点
+
+- 迁移 v17 `user_quotas`（五列均可空：max_concurrent_runs / daily_tokens / monthly_cost_usd / max_sessions / max_storage_mb；无行 = 全部不限，兼容模式零变化；全空行自动清理）；
+- `QuotaService`（quota/service.ts）为限额与用量的单一事实源：
+  - **并发**：`limitsOf` 将用户配额与系统 `RUN_MAX_PER_USER` 取小；Engine.assertUserCapacity 消费（路由层 400 文案不变）；
+  - **日 token / 月成本**：Engine 波次边界 `blockedReason` 闸门（基于 `usage.user_id` 当日 / 当月聚合）——超限时落系统事件条（与并行写冲突提醒同通道）并以 `run:end reason='quota'` 收束本 Run；
+  - **会话数**：`POST /api/sessions` 前置断言（超限 403 中文文案）；
+  - **存储**：附件 / 画布素材上传前置断言（工作区目录体积 + 本次增量，目录遍历带上限提前退出）。
+- 用量聚合新增 `usage.sumByUser(userId, sinceIso?)`（时间窗可选）；`sessions.countForUser` 直查库（避免列表消息聚合开销）。
+
+### 93.2 接口与客户端
+
+- `GET /api/usage/me`（个人用量汇总 + 生效限额；兼容模式 userId 空串 → 前端隐藏）；
+- `GET/PUT /api/users/:id/quota`（GET = admin 或本人；PUT = admin，null 清除该项，审计 `auth.quota-set`）；`GET /api/users/:id/usage`（admin）；
+- 客户端：用户管理台行内「配额」按钮 → `QuotaDialog`（用量四指标 + 五项配额编辑，留空 = 不限）；个人设置页「我的用量」卡（今日 token / 本月成本 / 会话 / 存储，含限额分母；无上限时提示不限）；
+- 语义细节：并发取小（三处同名口径统一）；日/月重置按**服务器本地时区**；金额 = LLM_PRICING_JSON 估算值；存储 MB 一位小数（上限未设时按 512MB 安全帽提前退出计数）。
+
+### 93.3 验证
+
+- 服务端 `tests/m57-p3-quota.test.ts` 8 例（QuotaStore 部分写入 / null 清除 / 全空行清理；limitsOf 取小；blockedReason 三态；会话闸门；上传闸门与 usageOf 汇总；HTTP：usage/me · 配额 PUT 成员 403 · admin 生效与审计 · 建会话 403；引擎：波次闸门 reason=quota + 系统条 / 无配额零生效）；
+- 客户端 `tests/m57-p3-quota.test.tsx` 4 例（用量卡两态 / 配额弹窗回填与 null 提交 / 非法输入拒绝）；
+- 全量：server 88 文件 1164 例 ✅ / client 78 文件 955 例 ✅ / 四包 typecheck 0 错。
+
+## 95. 个人资源——personal 连接与成员可用开关（M57 P3-2）
+
+§93（配额）之后，成员仍只能使用管理员开放的 system 连接；本批开放「成员自建个人连接」与「system 连接成员可用开关」两件事（v14 的 scope/owner_id 列启用，零迁移），决策见 [ADR 0148](docs/adr/0148-personal-connections.md)。
+
+### 95.1 语义与数据
+
+- `scope='personal' + owner_id`：仅属主可见 / 可用（自建自管）；system 连接新增 `member_use` 开关（默认 true = 保持旧行为）；
+- `ConnectionDefinition` 增 `scope / ownerId / memberUse`（旧库 NULL → system / 可用，兼容零变化）；唯一索引 `(scope, owner, name)` 自 v14 已存在。
+
+### 95.2 授权（四层保持一致）
+
+- **列表**：成员 = 可用 system（config 脱敏）+ 本人 personal（config 完整，自管需要）；admin = 全量；
+- **资源级守卫** `ownerOrAdmin`（详情 / 编辑 / 删除 / 测试 / SSH 终端签发 / 工作台 schema·sql·表数据）：admin 或属主；system 连接对成员一律 404（不泄漏存在性）；
+- **执行侧**（createConnectionUseGuard）：成员 = member_use=1 system ∪ 本人 personal；浏览器 runtime 同口径（`connections.ownerOf` 比对会话属主）；会话绑定路由同口径；
+- **开关生效**：admin 关 member_use 后，成员列表中即刻消失、绑定 403、已有绑定的工具调用被执行侧拦截；
+- **删除账号级联**：`removePersonalOf`（connections.owner_id 无 users 外键，需显式清理；会话绑定行随 connection 外键自动清理）；成员创建 embedding/media 连接 403（全局单例，指引找管理员）。
+
+### 95.3 客户端
+
+- 成员：个人设置「我的连接」卡（列表 + 新建 / 编辑 / 删除；sqlite / postgres / mysql / ssh 紧凑表单；凭据加密留空 = 不修改）；建好后在**会话头部「资源」入口**绑定即可被 Agent 工具使用（M57 P3 收口：会话资源弹窗补齐成员自助绑定面）；
+- 管理：连接编辑器新增「允许成员使用」开关（memberUse）；
+- 兼容模式：个人连接卡不渲染（单用户走连接管理中心，行为零变化）。
+
+### 95.4 验证
+
+- 服务端 `tests/m57-p3-personal.test.ts` 5 例（Store：personal 创建 / listForUser / ownsPersonal / ownerOf / removePersonalOf 绑定级联 / memberUse 开关；执行守卫三态；HTTP：成员创建 → personal / 媒体 403 / 列表区分与脱敏 / 他人与 system → 404 / 成员改自有连接且 memberUse 被忽略 / 绑定 / memberUse 关闭后不可见且绑定 403）；server 全量 **89 文件 1169 例 ✅**；
+- 客户端 `tests/m57-p3-personal.test.tsx` 4 例（列表过滤 / 新建 payload / 删除刷新 / 设置页门控）；
+- 四包 typecheck 0 错；lint 0 错（本批文件）。
+
+## 96. 模型直连（BYOK）——用户自带 LLM 凭据 · 按会话属主解析 · 成本归因（M57 P3-3）
+
+§95（个人连接）之后，模型与 Key 仍是全团队共享的系统配置：成员无法使用自己的模型额度，也无法按人区分用量成本。本批落地 BYOK（Bring Your Own Key），决策见 [ADR 0153](docs/adr/0153-user-byok-llm.md)。
+
+### 96.1 数据与解析
+
+- 迁移 v18 `user_llm_credentials`（user_id PK，base_url / model 可空，secret_enc 必填；SecretVault 加密，密钥永不回显 / 永不出库；删除账号随 users FK 级联）；
+- `ByokProvider`（llm/byok.ts）包装系统 provider：请求携带 `sessionId` → 会话属主配置了 BYOK → 用其凭据（每用户独立 provider 实例 = 独立限流闸门与韧性层）；无凭据 / 无会话 → 直通系统默认；`LLM_MOCK=true` 恒直通（E2E 确定性）；
+- 解析覆盖全部模型调用点（均带会话上下文）：引擎回合（`ChatRequest.sessionId`）/ 压缩摘要 / 记忆沉淀 / 脑图生成；baseUrl / model 留空 = 分别跟随系统默认。
+
+### 96.2 成本归因与接口
+
+- 归因：`ByokProvider.modelFor(sessionId)` 注入引擎（`billingModelFor`）与压缩器——`usage.model` 记录**实际生效模型**，按 `LLM_PRICING_JSON` 各单价计费（无凭据 = undefined → 回退系统模型，零变化）；
+- 接口（自助）：`GET /api/auth/llm-credentials`（状态投影，绝不含密钥；兼容模式 configured=false）、`PUT`（apiKey ≥8 必填 / baseUrl http(s) / model 可选；审计 `auth.llm-credential-set`）、`DELETE`（清除恢复系统默认；审计 `auth.llm-credential-clear`）；变更即失效 BYOK 缓存（下次调用重建）；
+- 客户端：个人设置「模型直连（BYOK）」卡（状态徽章 / 地址·模型回显 / 更新凭据 / 恢复系统默认；仅多用户模式渲染）。
+
+### 96.3 验证
+
+- 服务端 `tests/m57-p3-byok.test.ts` 5 例（Store 加密往返 / status 不含密钥 / 清除；ByokProvider 四分支 + 缓存与 invalidate + Mock 直通 + modelFor；HTTP：GET 默认 / PUT 不回显密钥与审计与 onChange / 短 Key 与非法地址 400 / DELETE 清除 / 兼容模式 400）；server 全量 **90 文件 1174 例 ✅**；
+- 客户端 `tests/m57-p3-byok.test.tsx` 3 例（表单与 payload / 已配置回显与清除 / 校验拒绝）；
+- E2E `e2e/m57-auth.spec.ts` 第三用例（P3 收口）：配额闸门（admin 设 `maxSessions=1` → bob 第 2 会话 403 + 文案）；bob 设置页「我的用量 / 我的连接 / 模型直连（BYOK）」三卡在位；幂等自清理（起清配额、清自有会话，终删会话 + 复清配额）；
+- 并发验证隔离：`playwright.config.ts` 新增 `outputDir: process.env.PW_OUTPUT_DIR || 'test-results'`（并行会话不复用同一 trace 目录，消除 ENOENT 假失败）+ auth 实例 `LOGIN_RATE_LIMIT=300` 余量；隔离后 3 连跑 3/3 ✓；
+- 四包 typecheck 0 错；文档：api.md §21、operations §4.13。
+
+## 97. 生产型渲染包——阶段映射 · 工序卡族 · 场景工具卡 · 波次网格（M39）
+
+全场景深度优化批二的 P0 落地：`docs/scene-chat-design.md` M39 原案（工程型四场景 development / bi / sre / marketing）全面兑现。决策见 ADR **0149**（阶段映射表 / 悬浮条场景化 / 波次网格）、**0150**（场景工具卡变体与工具记录 meta 扩增）、**0151**（工序卡 / 验收单 / 复盘容器）；编号让位：原预定 ADR 0069 / 0070（+1 让位号）→ 实际 **0149–0151**（0146–0148 被并发批次 M57 P3-1/P3-2 与画布联动批占用），design.md 原预定 §54 → 实际 **§97**。
+
+### 97.1 阶段映射与悬浮条场景化（DEV-1 / SR-1）
+
+- 新文件 `client/src/lib/stage-map.ts`：**渲染知识常量表**（不进 `_group.yaml` 资产、不进服务端）——development 七段（需求 → 架构 → 设计 → 前端 → 后端 → 测试 → 部署；旁路角色折入相邻段，security / tech-writer 为序外标签只显示不计进度）；sre 五段（分级止血 → 回滚 → 修复 → 回归 → 复盘）；
+- 纯函数 `stageOf`（角色 → 阶段名，DEV-2 行标签复用）与 `waveStage`（波次成员 → 去重按序标签 + 进度段 x/y）；未收录场景 / 全未映射 → undefined；
+- `WaveStrip` 新增 `group` prop（ChatArea 传 `sceneGroup`）：命中时换显示「阶段名（多段 `·` 连接）· 阶段 x/y」（`data-wave-stage` 锚点；波次信息退入 `title`）；未命中沿用「第 N 波 · 共 N 波」——口径零变化。
+
+### 97.2 波次网格（MK-1）
+
+- `WaveGroup` 布局选项：`marketing / health` × 同波 **2–4 条** × 非窄屏 × 非对决 → 2 列网格（`grid-cols-2` + `data-wave-grid` 锚点）；单条 / 5 条以上 / 窄屏 / 其他场景回退纵向单列；对决（PK）优先级高于网格。
+
+### 97.3 工序卡与验收单（DEV-2 / DEV-3）
+
+- 交付明细行（`ArtifactRow`）增强：**阶段标签 chip**（`stageOf` 派生，未收录场景不渲染）+ **悬停预览 popover**（Radix Tooltip 懒挂载：完整路径 / 类型 / 体积 / 交付者 / 阶段 / 操作提示；完整内容预览仍走交付件视图，ADR 0079 边界）；`DeliveryFiles` 透传消息作者（`agentId`）——消息内行补作者头像；
+- 收尾卡验收区（`CloseoutCard`，仅 development）：新纯函数 `client/src/lib/acceptance.ts` 的 `acceptanceOf(messages, runId)` 启发式派生——判定徽章（未通过 > 有条件通过 > 通过，扫描本轮 qa 消息）+ 未决项（`- 未决：… / - 待验证：… / - 遗留：…`，去重至多 5 条）；无 qa 内容 → 不渲染验收区（降级：仅列交付件）。
+
+### 97.4 场景工具卡变体与工具记录 meta 扩增（BI-1 / SR-2）
+
+- `ToolCard` 场景路由：`bi × db_query / db_schema` → **取数管道卡**（DbPipelineCard：已校验徽章 + 行数/耗时 + SQL 可展开 + 结果预览表 ≤5 行）；`sre × ssh_exec` → **证据卡**（SshEvidenceCard：exit 色徽 + 耗时 + 等宽命令块 + 输出折叠 + 截断徽章 + 停止/审批拒绝徽章）；其余场景 / 工具 / 无上下文 → 通用卡（现有实现保留）；
+- 服务端 meta 扩增（`ToolResult.meta` 既有通道，随 ToolCallRecord 持久化）：db_query → `{ columns, rows≤5（单元格文本化 ≤160 字）, rowCount, durationMs }`；ssh_exec → `{ command≤500, exitCode, durationMs, output≤2000, truncated }`；历史消息 meta 缺省 → 卡片降级 summary 行；不另起数据管道（与 LiveDock 同源不重复）。
+
+### 97.5 复盘卡（SR-3）
+
+- 新容器 `::: postmortem [标题]`（remark-ext builder + finalizeFieldsAndItems）：字段行「分级 / 时间线 / 归因」按序渲染 + 条目行 `- 改进项 | 内容 | 归属`（归属渲染为 owner · 期限 chip）；fail-safe 与轻结构流式渲染同 M37–M43 口径；
+- sre 协议新增「渲染容器约定」条目 12（与《事故复盘》改进项表同源；容器内不写 @）；复盘呈现以消息内复盘卡为主（收尾卡聚合变体留待真实需求，ADR 0082 条件性纪律）。
+
+### 97.6 验证
+
+- 单测 / 组件测：`client/tests/m39-production.test.tsx` 21 例（阶段映射纯函数 / 悬浮条换显示与回退 / 波次网格四态 / 工序卡阶段标签 / 验收派生与收尾卡验收区 / 两张工具卡结构·截断·拒绝态 / ToolCard 路由 / 复盘卡渲染与 fail-safe）全绿；受影响既有套件（closeout / wave-strip / m43-cards / m52-stage / markdown-ext / m38-cards）回归全绿（closeout 夹具补 TooltipProvider；行点击改 fireEvent 防负载抖动）；
+- E2E：新增 `e2e/m39-production.spec.ts` 3 条（研发阶段条 + 收尾验收单 / 营销波次网格 / SRE 复盘卡）实跑 **3/3 ✅**；`playwright.config.ts` main 项目 testMatch 补 `m39-.*`；**域内回归定向**（m16-brainstorm / m38-research / m39-production / m52-stage）**28/28 ✅**；`m37-scene-chat` 断言按 DEV-1 换显示同步（研发药丸「需求 · 阶段 1/7」）后 **2/2 ✅**；
+- **全量 E2E 实测与甄别**（97 条）：**90 ✅**；7 红——1 例本批已修（m37 阶段条换显示，属预期行为变更的断言同步）+ 3 例隔离复跑绿（m26-console / m27-mcp / m43-pk 辩论场，环境抖动）+ 3 例并发批次域（m43-pk 谈判桌＝M63 报价折线点位 4 vs 6、m34 多空对弈＝M63 新块四路走查、m57-auth P3 配额＝并发新 spec ECONNRESET；证据：spec 注释含「M63」、文件 mtime 19:50 为并发会话所写）；另首轮全量 20 红为 webServer 连接拒绝（并发 E2E 端口竞态，环境级）；
+- 门禁：eval **32/32 ✅**；check:agents **114/114 + 协议 29/29 ✅**（sre 协议追加段落不破坏质量红线 / 失败模式结构）；check:skills **51/51 ✅**；server **1174/1174 ✅**；client **81 文件 993 例**（992 ✅；1 例 `m43-pk` 属并发 M63 批次 claims 扩展的未同步单测，非本批域）；四包 typecheck 0 错；ESLint 改动文件 0 错；build 通过（主包 `index-DuhgBAgt.js` 1,380.34 kB / gzip 395.14 kB——含并发批次合流，点记录）。
+
+## 98. 对抗博弈主面——交锋计量板 · 交锋看板 · 轮次判定 · 参与仪式 · 报价折线 · 博弈走子板 · 四路观点卡（M64）
+
+全场景深度优化「对抗 · 博弈 · 分析三域」批一的 P0–P1 落地（设计基线 [docs/pk-game-analysis-design.md](pk-game-analysis-design.md)）：arena（debate / negotiation）与 versus（invest）主面深化——交锋可计量、轮次可判定、参与有入口、报价可读图、走子可复现、观点可沉淀。决策见 ADR **0154**（交锋计量与交锋看板）/ **0155**（轮次判定与参与仪式）/ **0156**（报价折线 / 博弈走子板 / 四路观点卡）；编号让位：预定 ADR 0147–0151 与 M63 被并发批次（M57 P3-1/P3-2/P3-3 · 画布 / M39 · 盘面深化 / 家装工作室）占用 → 实际落 **ADR 0154–0156**、里程碑 **M64**、design.md **§98**、CHANGELOG **v76**（v74 / v75 先后被盘面深化 / 家装工作室批占用）。容器面全部纯前端派生 + 冻结口径（ADR 0114）；一切新交互只回填草稿（ADR 0064 / 0118）。
+
+### 98.1 交锋计量板（A1）
+
+- `lib/pk.duelTally` 扩展 `claims` 字段（claim 容器计数，按席位分侧；席位优先、`DUEL_STANCE` 兜底不变）；`Scoreboard` 升级为三层读数（发言 / 主张 / 交锋 x/y）+ 轮次读数 + 终局徽标——读数缺省时保持 v1 外观（向后兼容）；
+- 交锋读数点击 → 定位该侧首个未响应缺陷消息；终局徽标点击 → 定位裁决消息；轮次读数：有 `::: ruling` 时「第 N 轮（进行中）/ 共 N 轮」，缺省回落波次口径（E2E `第 \d+ 轮` 断言零变化）。
+
+### 98.2 交锋看板 CrossFire（A2 · U2）
+
+- 新纯函数 `lib/pk.crossFireOf`（findings 条目 + 「已响应」全量提及扫描，口径同配对卡与 duelTally；未响应优先排序）；新元件 `parts/CrossFire`（双泳道：提缺 / 已响应计数 + 响应率条 + 「催回应」回填）；
+- arena 中轴 insights 段序：交锋看板 → 论断树 → 报价流（有数据才显示）；`registry.PART_NAMES` 五件套 → **六件套**（+ `cross-fire`），debate `stage.parts` 声明同步（m21 断言同步）；brainstorm 汇聚板红队段复用（只读模式，不提供催回应）。
+
+### 98.3 证据等级徽标与 claim 扩展字段（A3 · U1 / N1 前置）
+
+- 新共用件 `lib/evidence.ts`：`gradeOf` 词表（官方 > 学术 > 权威媒体 > 待核实 + 色板，多命中取最高优先级）；`ClaimTree` 论据行渲染等级徽标 / 无证据「假设」徽标 / 无等级「补证据」回填；行改 `div[role=button]`（嵌套交互按钮合法化，既有选择器与断言不变）；
+- claim 容器扩展字段行 `视角 / 倾向 / 置信度`（可选、各取首条）：`lib/pk.claimMetaOf` 单一解析（remark-ext finalizeClaim 与场景面板共用），消息卡 chips 同步；`stanceToneOf` 多空色键共用。
+
+### 98.4 轮次判定与参与仪式（A4 / A5 / A6 · U3）
+
+- 新容器 `::: ruling <正方|反方|多方|空方|僵持> 第 N 轮小结`（过程件，与终局 `::: verdict` 渲染分离）：RulingCard 轻卡（原始胜方词徽标 + 条目 chips）+ `derive.rulingsOf`（回合轴色点 + 轮次分 + A5 未决点引用源）；裁决流不含 ruling；
+- 对抗参与条（`parts/ArenaActions`）：加一轮 / 叫停并裁决 / 倾向·左 / 倾向·右 / 倾向·僵持——模板集中 `lib/pk.TEMPLATES`（中轴席名注入、未决点引用、@ 显式）；终局结论条（`parts/ConclusionBar`）：L1 横条（胜负 + 置信度 + 翻盘条件 + 看裁决），会话级关闭记忆（`ma:sc:concl:<sid>`）。
+
+### 98.5 报价折线与让步刻度（G1 / G2）
+
+- 新纯函数 `lib/pk.offerSeriesOf`（双方序列 + 目标 / 底线 / BATNA 基准线 + 让步理由字段；不可解析点跳过）；新元件 `parts/OfferChart`（SVG 自绘：双折线 + 收敛走廊 + 基准线 + 数据点定位；有效点 < 2 不绘图）与 `OfferConcessions`（让步刻度：递减绿 / 扩大红警示 + 说明回填）；
+- 报价段结构：图 → 让步刻度 → 既有列表（列表为明细不动，E2E 既有断言零变化）。
+- **续修订（2026-09-19）报价图交互深化**：图例四层显隐（我方 / 对方 / 基准线 / 收敛走廊）+ 数据点悬停 / 聚焦浮层与同侧折线提亮 + 最新点脉冲光环（quiet 静态）与值标签 + 四档 y 轴刻度与网格 + 视图宽 ResizeObserver 自适应（1:1 零变形，jsdom 回落 320、高 156px）；报价段「图 / 表」切换（会话记忆 `ma:sc:tab:<sid>:offerchart`）+ 段级收起 / 展开（会话记忆 `ma:sc:tab:<sid>:offer-collapsed`；收起 = 仅头部一行）；洞察区高度上限 150px → min(62vh, 520px)（报价图完整展示，仅极端长度区内滚动）；同步增强非报价类图表交互：`SequenceView` 悬停分支淡化与反事实联动、`MomentumBar` 悬停双读数、`ProgressRing` 悬停明细 hint、`StudioPlanView` 悬停高亮与尺寸提示（轻量内联口径，零新依赖）。
+
+### 98.6 博弈走子板与四路观点卡（G4 / N1 · U4）
+
+- `derive.gameMovesOf`（```game 围栏扫描 + `parseGameSpec` 单一解析，失败仍可定位）：`parts/MoveBoard`（轮次 / 模型 / 标题 / 快照名 / 种子复制 + 「模型推演，非预测」声明条）；versus 空态「发起多空对弈」回填 `DUEL_PROMPT`（与 `_presets.yaml` bull-bear-duel 同文）；
+- `parts/ViewCards` 四路观点（视角注册表序 + 倾向色条 + 置信度 + 依据数；分歧提示 chip → 裁决模板）；`panel-ready` versus 就绪口径扩展（带「视角」claim / ```game 围栏亦就绪）；面板场景分支注册表模式（console / pool / versus 同口径）。
+
+### 98.7 验证
+
+- 组件测：`client/tests/m63-pk-arena.test.tsx` **22 例**（证据词表 / claim 字段 / 交锋计量与看板 / ruling 渲染与派生 / ClaimTree 徽标 / arena 集成五组 / versus 集成 / pool 红队 / panelReady 扩展）；受影响既有套件（`m43-pk` claims 断言同步、`m43-cards / m52-stage / markdown-ext / m60-arena-live`）全绿；
+- E2E：`m43-pk` 扩展（交锋走查 → 轮次色点 / 交锋看板 / 结论条 / 参与条；报价走查 → 折线 / 三桩基准线 / 让步刻度）实跑 **2/2 ✅** 与 `m34-invest` 扩展（四路走查 → 观点卡 / 走子板 / 声明条）实跑 **3/3 ✅**；`playwright.config.ts` main 项目 testMatch 补 `m63-.*`；补跑期间修复共享 helper（`createSession` 同名来源行 `.first()` / 新增 `backToChat`）；
+- 资产：debate / negotiation / invest 三份协议「渲染容器约定」段 + judge / negotiator / 四分析师人设输出约定；mock 三组触发块（交锋走查 / 报价走查 / 四路走查——唯一触发词核对过）；check:agents / eval 门禁计入批一收口记录。
+
+## 99. 个人 MCP——属主私有 · 属主会话自动授予（M57 P3 收官）
+
+> 决策见 [ADR 0157](docs/adr/0157-user-personal-mcp.md)；P3「个人资源」两件套的第二件（第一件 = §95 个人连接）。
+
+### 99.1 语义与四层守卫（复用 P3-2 模式）
+
+- `mcp_servers.scope / owner_id`（v14 预留列，零迁移）启用：成员创建一律落 `scope='personal' + owner_id=本人`（服务端定，不信请求体）；`list()`（admin 全量）与 `listForUser(uid)`（全部 system ∪ 本人 personal）分流；
+- `/mcp` 从「整体 admin 挂载」改为**路由级门控**（routes/index.ts 移除 blanket）：管理面 `json-config* / tools 授权矩阵` → `adminOnly`；服务器 CRUD + test/reconnect/refresh → `ownerOrAdmin`（system / 他人 personal → 404 不泄漏存在性）；session 绑定路由维持会话写权限 + personal 归属校验（他人 personal → 404）；
+- 绑定清单 GET 防御性过滤他人 personal（历史 / 脏数据兜底）。
+
+### 99.2 属主会话自动授予（本批核心）
+
+- **可见性**：`filterForSession(sessionId, tools, sessionOwnerId?)` / `isToolUsable` 对 personal 要求 `server.ownerId === session.ownerId`（非属主 / 无属主会话不可见；缺省参数不做复核 = 兼容路径零变化）；
+- **自动授予**：引擎 execute 模式在 `forAgent` 白名单结果上并入属主已注册 personal 工具（`personalToolNames(ownerId)` 按 `toolOwner` 反查 + 注册表取件去重）——绕过 Agent 工具白名单（agent 为管理面资产、成员无授予入口），plan / review 模式不并入；绑定 / 启用 / 连接状态仍由 `filterForSession` 统一复核；
+- **执行侧最小权限**：`executeRegisteredTool` 以 `ctx.userId`（= 会话属主）复核，他人触发直接拒绝（`他人私有：无权使用`）。
+
+### 99.3 绑定与级联
+
+- `POST /sessions/:id/mcp-servers` 绑定 personal 后自动 `runtime.connect`（成员无管理台，不能手动重连）；system 绑定语义不变（沿用连接由管理台维护）；
+- 账号删除：先 `mcpRuntime.disconnect`（注销工具 + 回收 stdio 子进程）再 `removePersonalOf`（`session_mcp_servers` 双 FK 级联解绑）；best-effort 不阻断删除；
+- 审计：`mcp.create` detail 增 `scope / ownerId`；其余 mcp.* 审计沿用。
+
+### 99.4 客户端
+
+- 个人设置「我的 MCP」卡（多用户门控）：列表（展示名 / slug·transport / 状态灯 ok·error·idle）+ 新建（stdio：command + args / http：url；**保存即测试**并 toast 连接结果）+ 测试 / 重连 / 删除；
+- 会话头部「资源」入口（M57 P3 收口）：会话资源弹窗（连接 / MCP 两页签；成员自助绑定面）——已绑定（解绑）+ 可绑定（绑定，候选 = system ∪ 本人 personal）；viewer 只读；管理台仍为 admin-only。
+
+### 99.5 验证
+
+- 服务端 `tests/m57-p3-mcp-personal.test.ts` 2 例：Store（create personal / listForUser / ownsPersonal / ownerOf / removePersonalOf 绑定级联）+ HTTP（成员创建落 personal · 列表分流 · 资源级 404 · 管理面 403 · 改自有 200 · 绑定自有 200 + 自动 connect / 他人 404 / system 200 · 清单防御性过滤）；
+- `tests/m27-engine.test.ts` 扩展 2 例（新 `solo` 角色白名单无 mcp 为对照组）：属主会话自动授予（solo 也见 personal 工具）· 非属主 / 无属主会话绑定也不可见 · `personalToolNames` / `filterForSession(ownerId)` / 执行侧（ctx.userId 他人拒绝、属主放行）；
+- 客户端 `tests/m57-p3-mcp-personal.test.tsx` 4 例（列表过滤与状态 / 新建 payload + 自动测试 + 刷新 / slug 校验拒绝 / 删除与重连路由）；`m57-p3-personal.test.tsx` 门控用例兼容通过；
+- **P3-2/P3-4 共同收口件**：会话资源弹窗 `SessionResourcesDialog`（连接 / MCP 两页签；成员自助绑定面；viewer 只读）+ 客户端 `tests/m57-session-resources.test.tsx` 3 例；store 层按角色收敛管理面请求（mcp-store / connections-store `loadForSession` 对成员不再请求 tools / json-config / audit 等 adminOnly 端点）。
+
+## 100. 分析域深化——指标口径 · 取数链 · 事故时间轴分级 · 立场泳道与共识分歧板（M66）
+
+全场景深度优化「对抗 · 博弈 · 分析三域」批二的落地（设计基线 [docs/pk-game-analysis-design.md](pk-game-analysis-design.md) §6 / §7-U5）：console（bi / sre）与 pool（society）专业语汇承接——指标可核口径、取数可回溯、事故可分级、立场可沉淀、窄屏可收纳。决策见 ADR **0160**（kpi 五列与取数链）/ **0161**（事故时间轴分级与 SLO）/ **0162**（立场泳道与共识分歧板）；编号让位：预定 ADR 0147–0151 与 M63 / M65 被并发批次占用 → 实际落 **ADR 0160–0162**（0157–0159 被个人 MCP / 素材库 / 设计工作室占用）、里程碑 **M66**、design.md **§100**、CHANGELOG **v80**。容器面纯前端派生 + 冻结口径（ADR 0114）；一切回填只写草稿（ADR 0064）。
+
+### 100.1 kpi 五列与取数链（N2）
+
+- `kpi` 容器新增可缺省第 5 列「口径」（remark-ext `kpiRowOf` 单一解析：remark 收尾与面板共用；四列历史写法零变化）：消息卡渲染口径徽章（截断 + hover 全文）；
+- 新 `derive.sqlRunsOf`（```sql 围栏计数与消息摘要；SQL 正文不复制——消息内代码块为唯一全文通道）；ConsolePanel **bi 分支**：指标区（kpi 卡网格 + 定位钮）→ 取数链（作者 + 摘要 + `SQL ×N` 徽章，点击定位）→ 既有时间轴 / 交付件；非 bi / sre 场景零变化（`data-console-kpis` / `data-console-sql` 锚点）。
+
+### 100.2 事故时间轴分级与 SLO 区（N3）
+
+- `timeline` 第三列在 sre 场景语义 = **等级**（协议条目 13）：`derive.incidentLevelOf`（P0|严重|紧急 → p0；P1|高 → p1；P2|中 → p2；其余 → other）；`timelineRowOf` 自 remark-ext 导出单一解析（列表标记剥离）；
+- ConsolePanel **sre 分支**：事故时间轴（时间 + 事件 + 等级徽标 + 左缘色带；筛选 chips 全部/P0/P1/P2，本地态 `ma:sc:tl:<sessionId>`）→ SLO 区（kpi 复用指标卡）→ 交付件；有事故时间轴时通用「活动时间轴」让位（无容器回落）；
+- sre 协议渲染容器约定条目 13–14（时间轴三列语义 / SLO kpi 五列）。
+
+### 100.3 立场泳道与共识分歧板（N4）
+
+- 新容器 `::: stance <立场方>`（字段行 主张 / 核心关切 / 被忽视视角，条目 `- 依据 | …`；StanceCard：三要素序 + 依据正文走 U1 证据等级徽标 + 「推演关切」回填）与 `::: split <标题>`（条目 `- 共识|分歧|存疑 | …`；SplitCard：三列分桶、分歧置中主位、未知键落「其他」行 fail-safe；分歧→中间路径模板 / 存疑→核实路径模板回填）；
+- 汇聚板（pool）：**立场泳道**（按立场方分组，稳定哈希 6 色相 `data-hue`）与**共识分歧板**段（与消息卡同组件渲染 + 面板条瘦身）；`SPECIAL_CARDS` / `NON_GENERIC` 拆分（stance / split 不入通用卡墙，就绪判定沿用「结构化行 / 标题」口径零扩展）；
+- society 协议渲染容器约定条目 14–15（立场三字段 / split 三类条目 / 事实基线 sources）；`TEMPLATES` 增 stanceAsk / splitPath / splitVerify。
+
+### 100.4 窄屏洞察收纳（U5）与收尾合并（附）
+
+- arena 窄屏：洞察区（交锋看板 / 论断树 / 报价流）收纳为「洞察区（N 段）」条（默认收起，展开为内联抽屉）；宽屏行为零变化（`data-insights-bar` / `data-insights` 锚点）；
+- remark-ext 收尾合并：verdict / ruling / split 三族共用 `finalizeItemRows`（消除 M63 引入的重复实现；拆分桶解析 `splitBucketOf` 共享）；quiet / reduced-motion 新增元素全部静态化。
+
+### 100.5 验证
+
+- 组件测：`client/tests/m66-analysis-console.test.tsx` **14 例**（kpiRowOf / timelineRowOf / incidentLevelOf / sqlRunsOf 纯函数；口径徽章两态；stance 渲染与回填；split 三列分桶与回填；console bi / sre 分支与零变化；pool 泳道与共识板；arena 窄屏洞察条）；受影响既有套件（m52-stage / m38-cards / m63-pk-arena / markdown-ext）全绿；
+- E2E：新增 `e2e/m66-analysis-console.spec.ts` 3 条（商业智能指标走查 / 站点可靠性事故走查 / 议题圆桌立场走查）实跑 **3/3 ✅**；`playwright.config.ts` main 项目 testMatch 补 `m66-.*`；
+- 资产：bi / sre / society 三份协议「渲染容器约定」段；mock 三组触发块（指标走查 / 事故走查 / 立场走查——唯一触发词核对过）；check:agents / eval 门禁计入收口记录。
+
+---
+
+## 101. 场景扩展二批——十场景 · 场景玩法工具 · roll / cards / sim 容器族 · 牌阵台与卡片交互（M69）
+
+设计蓝图见 [docs/scene-expansion-v2-design.md](docs/scene-expansion-v2-design.md)（交互与前端细化 / 容器与工具契约 / 镜像面清单）；决策见 [ADR 0166](docs/adr/0166-scene-expansion-v2-m69.md)；变更账 CHANGELOG v78。
+
+### 101.1 十场景与形态
+
+- 三域十场景：经营创作（ecommerce 电商经营 / creator 自媒体工作室）、实用（legal-personal 个人法务 / academic 学术论文 / relationship 情感关系）、玩法（trpg 跑团工坊 / tarot 塔罗研习 / moot-court 模拟法庭 / business-sim 商业沙盘 / philosophy 哲学茶室）；每场景 `_group.yaml` + 协议（三段式 + 质量红线 + 典型失败模式）+ 34 角色（六段骨架）；
+- 形态声明 **dock ×6 / roundtable ×2 / arena ×2**（moot-court 与 business-sim 带 seats 与 parts——复用 arena 五件套）；协议统一「渲染容器约定」段规定各场景容器用法；
+- **既有场景补强 12 角色**（travel / wealth / funding / bi / sre / personal / ops）——**不进 chain**（镜像面既有口径：建会话默认预选不扩，经成员微调或 M48 自动召集使用）；预设新增 5 个（创业启动 / 职业转型 / 年度复盘 / 电商增长 / 内容商业化）。
+
+### 101.2 场景玩法工具（种子复现契约）
+
+- `dice_roll`（trpg）：骰式解析（d20 / 3d6+2 / 2d10-1；骰数 ≤100、面数 ≤1000）+ **mulberry32 确定性 PRNG**——种子缺省随机生成并回显，**同种子逐位复现**（战报存档 / 回放）；输出含 `::: roll` 卡模板；
+- `tarot_draw`（tarot）：78 张全表（22 大阿卡纳 + 4 花色 × 14 阶；正逆位 50%）+ 同款 PRNG（同种子牌序与正逆位复现）；输出含 `::: cards` 卡模板；
+- 两者 tier=deferred + readOnly + 无审批（与 pan 四件套同模式）；registry / categories 登记（新分类「场景玩法」）；协议层「唯一口径」约束——判定 / 抽牌必须出自工具，禁止心算造数。
+
+### 101.3 三容器族与卡片交互
+
+- remark-ext 新增 `::: roll`（字段行：骰式/种子 + 明细/修正/总值）、`::: cards`（条目 `- 牌位 | 牌名 | 正逆位 | 关键词`）、`::: sim`（条目 `- 决策 | … | 反馈 | … | 指标 | …`）——`finalizeFieldsAndItems` 复用 + 收尾按 type 分派；
+- 卡片组件：RollCard（骰面方块 + 总值 + 种子徽章 + **双按钮**：再掷一次（新种子）/ 复现本次（同种子，seed 缺省不渲染））、CardsCard（牌位行 + 正逆位标记 + **双按钮**：重抽一组（新种子）/ 深入解读）、SimCard（三段 + 指标 chips + 下个回合）；全部 `composerInsert` 回填模板句、流式禁用、raw 兜底；
+- 面板文案场景化：pool（trpg / philosophy）、board（creator / academic）、coach（relationship）。
+
+### 101.4 牌阵台（chartboard cards 区）
+
+- ChartboardPanel 收集 `cards` 容器 → **复用 CardsCard 渲染**（面板与消息同组件，ADR 0144 纪律）；计数徽章 = pan + cards；
+- **tarot 场景隐藏「亲手摇卦」**（体系隔离）且空态文案场景化（「对话中抽出的牌阵将显示在这里」）；pan 路径零变化（仅 charts.length > 0 时渲染 PanBoard）。
+
+### 101.5 触发块与验证
+
+- mock 三组触发块：「骰子走查」（gm-host → roll 卡）/「牌阵走查」（tarot-reader → cards 卡）/「回合走查」（sim-host → sim 卡）——E2E 与 eval 的确定性演示通道（索引走 baseId）；
+- 验证账：check:agents **163/163 + 协议 40/40**；check:skills **60/60**；m69-tools **13/13**；m69-md-ext **14/14**（含面板牌阵台与双按钮）；mock-coverage **4/4**；m21 **19/19**；server 全量 1247/1249（2 例为并发批次 M77 中间态，收口后已转绿）；client 全量 1107/1107（95 文件）+ 本轮新增用例；E2E 定向 `e2e/m69-cards.spec.ts`。
+
+## 102. 核心交付锚点范式——交付锚定条 · 变更卡 · 意见闭环 · 签收（M44）
+
+全场景深度优化批三的落地：`docs/scene-chat-design.md` M44 原案（AF-1–AF-5）全面兑现——长会话获得「本轮核心交付是什么、改到第几版、谁改的、我的意见闭环了没」的常驻读数与协作闭环；与 M39 工序卡族（DEV-2）合流。决策见 ADR **0163**（锚点选择 / 钉选 / 锚定条）、**0164**（变更卡 / 提意见 / 闭环配对）、**0165**（签收收尾）；编号让位：原预定 ADR 0078–0080 → 实际 **0163–0165**（落盘窗口内 0143–0162 已被并发批次连续占用），design.md 原预定 §59 → 实际 **§102**（§93–§101 为并发批次）。
+
+### 102.1 锚点与锚定条（AF-1）
+
+- 新文件 `client/src/lib/focus-artifact.ts`（纯函数 + 本地态）：`pickFocusPath`（钉选 localStorage `ma:focus-artifact:<sid>` 优先 → `partitionDelivery` 重要度首个）· `commentDraft` / `signoffDraft` 模板 · `opinionsOf` / `closureOf` 闭环推导 · 已满意（`ma:m44-satisfied:<sid>`）与签收（`ma:signoff:<sid>`）本地集合；
+- 新文件 `client/src/lib/artifact-versions.ts`：版本列表共享缓存（与 use-artifact-meta 同构：会话 + artifactVersion + 路径；失败静默）；
+- `FocusBar`：对话区左上角常驻药丸（核心交付名 + vN + 修改者头像流 + 未闭环计数）+ 悬浮面板（版本线 ≤6 / 未闭环意见 ≤3 可「标记已满意」/ 钉选候选 ≤4 / 查看 Diff·提意见）；隐藏条件：无交付件 / 纯列表模式 / 窄屏。
+
+### 102.2 变更卡与意见闭环（AF-2 / AF-3 / AF-4）
+
+- `ChangeCard`：消息「产出交付件 + 写类工具调用（write_file / apply_patch / edit_file）」→ 变更语义——复用 `ArtifactRow`（扩展 `version` vN 徽章与 `trailing` 行尾槽位，卡族合并）；点击行打开交付件（完整 Diff 在交付件工作台，ADR 0079 边界；增删摘要按降级链）；
+- `MessageActions` 新增「提意见（对交付件）」（成员消息含 artifacts 时）：`commentDraft` 模板入草稿（只写草稿不直发）；锚定条操作区同模板；
+- 闭环（高置信，ADR 0080）：用户消息含「的意见」+ mentions 含非用户成员 + 正文命中交付件名（全名 / 主干取最长）→ 其后首个「同作者 + 同文件」成员消息配对 → 对应文件行尾「回应了你的意见」角标（`data-change-response`）；未配对 = 未闭环计数；低置信不计。
+
+### 102.3 签收（AF-5）
+
+- 收尾卡签收行（development 且锚点存在；`data-signoff` 携锚点）：锚点名 + vN（懒加载；未就绪按钮禁用）+ 闭环统计「已回应 N · 未闭环 M」+ 「签收」toggle（本地按版本 `path@vN`；签收时回填「已签收《名》vN。」草稿）；非 development → 普通验收单（降级不变）。
+
+### 102.4 mock 与资产
+
+- mock `REVISE_TRIGGER`（唯一触发词「修订走查」）：脚本化 write_file 的交付件内容追加修订段——同路径二次写内容变化 → 版本库哈希去重失效 → 产生 vN（E2E「意见 → 修改 → 闭环 → 签收」链路的确定性数据源）；
+- **agents 资产零变更**（零协议 / 零人设；本批为前端 + mock 辅助脚本）。
+
+### 102.5 验证
+
+- 单测 / 组件测：`client/tests/m44-focus.test.tsx` 12 例（锚点选择 / 模板 / 意见识别正负例 / 闭环配对与误配防护与已满意排除 / 变更卡 vN 与回应角标与未配对角标缺省 / 锚定条读数与悬浮面板与钉选与隐藏三态 / 提意见菜单模板 / 签收回填与取消）全绿；受影响既有套件（closeout / m39-production / m38-cards / markdown-ext / m52-stage / m43-cards）**191 例**回归全绿；
+- E2E：新增 `e2e/m44-artifact-focus.spec.ts` 1 条（单成员 pm：产出 v1 → 锚定条 → 提意见模板 → 「修订走查」→ v2 + 回应角标 + 未闭环归零 → 签收回填）实跑 **1/1 ✅**；域内回归（m37 / m38 / m39）**6/6 ✅**；`playwright.config.ts` main 项目 testMatch 补 `m44-.*`；
+- 门禁（本批实测）：eval **34/34 ✅**（窗口内并发已扩至 34 任务，零回归）；check:agents（strict）**163/163 + 协议 40/40 ✅**；check:skills（strict）**60/60 ✅**；四包 typecheck 0 错；ESLint 改动文件 0 错；client build 通过（主包 `index-Dhgz3GQM.js` 1,483.13 kB / gzip 426.04 kB——含并发批次大幅合流，点记录）；
+- **双端全量与全量 E2E 的并发窗口甄别**：client 全量 1126 例（1124 ✅，2 红为场景创建器/组队台用例——隔离复跑 **38/38 全绿**，并发中间态）；server 全量 4 红均为工具清单计数漂移（期望 57 / 实得 60，并发批次新增工具未同步 m28/m47 断言——本批未增删任何工具，非本批域）；全量 E2E 本轮遇**另两会话并发跑 E2E**（m43/m34/m66 与 m77 进程实证 + 8788 端口被占）→ 大面积连接级假失败（32 过），判定环境级；本批域内 E2E 已在隔离窗口全绿（m44 1/1 + m37/m38/m39 6/6），全量建议由收口方在零并发窗口错峰补跑。
+
+## 103. 服务型渲染包——客户管道 · 测算表 · 风险色带 · 进度卡 · 问答卡 · 口径校验徽章（M41）
+
+全场景深度优化批四的落地：`docs/scene-chat-design.md` M41 原案（服务域 sales / finance / funding / ops）的容器族与徽章全面兑现——业务容器族 v2 语法归一（决策项 0071）落地。决策见 ADR **0169**（服务型五容器与语法归一）、**0170**（口径校验徽章 FI-2）；编号让位：原预定 ADR 0071 / 0072 → 实际 **0169 / 0170**（落盘窗口内 0143–0168 被并发批次连续占用，四度顺延），design.md 原预定 §56 → 实际 **§103**（§93–§102 为并发/前批章节）。
+
+### 103.1 五容器与卡片（v2 语法归一）
+
+- `::: pipeline [标题]`（SA-1）——条目 `- 客户 | 阶段 | 金额 | 下一步`；阶段 ∈ {线索|意向|报价|成交}，未知归「其他」列；四列看板（grid-auto-columns 自适应）+ 点卡回填「跟进 <客户>：」草稿（ADR 0064）；
+- `::: figures [标题]`（FI-1）——条目 `- 行名 | 值 | 说明`；值列右对齐（tabular-nums）；关键行启发式（合计/总计/小计/毛利/净额/净利/EBITDA/税后）加粗 + 淡底；
+- `::: risk <高|中|低> [标题]`（FI-3）——首词参数命中才着色（未命中中性，不猜测等级）；顶部色带 + 等级标签，正文 children 原样保留；
+- `::: progress [标题]`（FU-1）——条目 `- 章节 | 状态`（完成/进行中/待办；未识别 → 待办）；总进度条 = 完成数 / 总数；
+- `::: qa [标题]`（FU-2）——条目 `- 问 | 答`（答案内 `|` 保留合并）；原生 details 折叠对（无 JS 状态、缓存安全）；
+- 共享收尾：四类行集容器共用 `finalizeRowSet`（`data-rows` + `data-count` + `data-raw` 重建）；空行集保持原文 / 解析失败 raw 兜底 / 未闭合去壳展开（既有降级链）。
+
+### 103.2 FI-2 口径校验徽章
+
+- 新文件 `client/src/lib/calc-badge.ts`：`calcExpressionOf`（首个 `status='ok'` 的 calc → 表达式）；
+- 消息头部徽章行（波次徽章之后）渲染「已核算」（`data-calc-badge`；`title=已核算：<表达式>`）；运行中 / 失败 calc 不亮；纯派生（零新字段 / 零新接口）。
+
+### 103.3 OP 面收敛（不重复造卡）
+
+- OP-1 纪要 = 既有 `::: minutes`（M42 已落，E2E 覆盖）；OP-2 SOP = 既有 `::: checklist`（M37，E2E 覆盖）；OP-3 招聘管道 = SA-1 复用（ops 输出 `::: pipeline` 即得同卡）。
+
+### 103.4 mock 与资产
+
+- mock 三组触发块（唯一词，同既有先例；块内不写 @）：「管道走查」（sales → pipeline）/「财务走查」（finance → figures + risk；**并在阶段一为 finance 追加脚本化 calc 调用**，供 FI-2 徽章 E2E 走查）/「融资走查」（fundraiser → progress + qa）；
+- **agents 资产零变更**（零协议 / 零人设；前端 + mock 辅助脚本）。
+
+### 103.5 验证
+
+- 单测 / 组件测：`client/tests/m41-service.test.tsx` 13 例（五解析器归一与容错 / calcExpressionOf / 管道四列 + 其他列 + 回填 / figures 关键行 / risk 三态 / progress 进度条 / qa 折叠对 / pipeline fail-safe / FI-2 徽章正反例）全绿；
+- E2E：新增 `e2e/m41-service.spec.ts` 3 条（销售管道 / 财务测算 + 风险 + 徽章 / 融资进度 + 问答）实跑 **3/3 ✅**（融资首轮一例为 close 阶段 trace ENOENT 归档基建噪声——隔离复跑 1/1 ✅）；域内回归（m44 / m38 / m39）**5/5 ✅**；`playwright.config.ts` main 项目 testMatch 补 `m41-.*`；
+- 门禁（本批实测，窗口全绿）：eval **35/35 ✅**（窗口内并发已扩至 35 任务，零回归）；check:agents（strict）**165/165 + 协议 41/41 ✅**；check:skills（strict）**61/61 ✅**；client 全量 **100 文件 / 1155 例 ✅**；server 全量 **102 文件 / 1285 例 ✅**；四包 typecheck 0 错；ESLint 改动文件 0 错（首轮 2 条未用导入 warning 已清）；client build 通过（主包 `index-DwlZKXhN.js` 1,495.16 kB / gzip 428.78 kB——含并发批次合流，点记录）。
+
+## 104. 陪跑型渲染包——三轨打卡 · 每日一练 · 情绪签到 · 目标环 · 记账流水 · 行程卡（M40）
+
+全场景深度优化批五的落地：`docs/scene-chat-design.md` M40 原案（陪跑域 health / learning / personal / wealth / home / travel）的容器族与本地打卡口径全面兑现。决策见 ADR **0172**（打卡与 streak 本地口径）、**0173**（陪跑容器族与 HL-2/HL-8 收敛）；编号让位：原预定 ADR 0071（+让位链）→ 实际 **0172 / 0173**（落盘窗口内 0143–0171 被并发批次连续占用，五度顺延），design.md 原预定 §55 → 实际 **§104**（§93–§103 为并发/前批章节）。
+
+### 104.1 六个容器与卡片
+
+- `::: tracks [标题]`（HL-1）——条目 `- 轨道 | 计划摘要`；周网格（周一锚定 7 日，今日突出、任意格可点补记）+ 逐轨 streak 徽标 + 周进度环（ProgressRing 复用）；
+- `::: quiz [标题]`（HL-3）——条目 `- A | 选项文本`；本地单选 + 「提交给成员」回填「我的答案：X。请批改并讲解。」；
+- `::: mood [标题]`（HL-4）——1–5 档 + 档位词；「提交签到」回填「今日状态：N/5（档位词）。请据此调整今日建议。」；
+- `::: goals [标题]`（HL-5）——条目 `- 目标 | 当前 | 目标值`；`numberWithSuffix`（支持「万」后缀）→ 逐行进度环；缺数值 / 非法退化文本（不猜）；
+- `::: ledger [标题]`（HL-6）——条目 `- 日期 | 项目 | 金额`；金额右对齐 + 负数色标（脏值不猜正负）；
+- `::: itinerary [标题]`（HL-7）——条目 `- 日期 | 交通 | 住宿 | 安排`；按天分组（首次出现序）+ 日期头（含周几）+ **今天高亮**（本地日期比对）+ 交通/住宿/安排三行图标；非日期首列 → 「未标日期」组；
+- 共享收尾：行集容器复用 `finalizeRowSet`（`data-rows` + `data-count` + `data-raw`）；mood 无列表（默认收尾）；解析失败 raw 兜底 / 未闭合去壳展开（既有降级链）。
+
+### 104.2 打卡与 streak 本地口径（HL-1 数据层）
+
+- 新文件 `client/src/lib/habit.ts`：localStorage `ma:habit:<sessionId>`（按天日期集合）；纯函数 `localDateOf`（本地日期不依赖 UTC）· `shiftDate` · `weekDatesOf`（周一锚定）· `streakOf`（今天未打卡则从昨天起算；断签归零）· `toggleHabitDay`（不可变，含补记/取消）· `useHabit` hook；
+- 边界：仅本地可信（不进导出 / 不落库）；隐私模式静默降级；与 sessionStorage「会话内勾选」（CheckGrid）两套机制并存、各司其职。
+
+### 104.3 HL-2 / HL-8 收敛声明
+
+- HL-2 学习路径 = 既有 `::: timeline` 复用（tutor AGENT.md 补一行输出约定，无新容器）；
+- HL-8 清单汇总条 = 既有 checklist 卡自带计数条与进度条（M37-4 已覆盖）——零新增。
+
+### 104.4 mock 与资产
+
+- mock 五组触发块（唯一词，同既有先例；块内不写 @）：「打卡走查」（fitness → tracks）/「出题走查」（tutor → quiz）/「签到走查」（coach → mood）/「理财走查」（wealth → goals + ledger）/「行程走查」（travel → itinerary，**日期为动态相对值**：昨天/今天/明天，供今天高亮断言）；
+- 资产：5 个 AGENT.md（fitness / tutor / coach / wealth / travel）「工作方式」各加一行输出约定——**零协议新增**（按原案 §8.4 口径）。
+
+### 104.5 验证
+
+- 单测 / 组件测：`client/tests/m40-companion.test.tsx` 14 例（habit 日期/周网格/streak/toggle/读写容错 · 六解析器与 numberWithSuffix · 三轨卡点格落盘与 streak 徽标与预置连续 2 天 · quiz 点选提交 · mood 档位回填 · goals 40%/53% 与非法降级 · ledger 负数色标 · itinerary 分组与今天高亮 · tracks fail-safe）全绿；
+- E2E：新增 `e2e/m40-companion.spec.ts` 5 条（健康打卡 / 学习出题 / 出行行程 / 理财目标+流水 / 个人签到）实跑 **5/5 ✅**（并发会话常驻旧版 8788 服务——启用新加的 `PW_PORT` / `PW_DATA_DIR` 隔离：`PW_PORT=8795 PW_DATA_DIR=e2e-m40 PW_OUTPUT_DIR=/tmp/pw-m40`，同一窗口内 m41 回归 3/3 ✅；首轮 7/8——健康打卡点错「周日格」，改 `.is-today` 选择器后复跑全绿）；`playwright.config.ts`：main 项目 testMatch 补 `m40-.*` + main 链路增 `PW_PORT` / `PW_DATA_DIR` 环境隔离（默认行为不变，供并发会话避让）；
+- 门禁（本批实测，窗口全绿）：eval **35/35 ✅**；check:agents（strict）**165/165 + 协议 41/41 ✅**（含本批 5 处 AGENT.md 行）；check:skills（strict）**61/61 ✅**；client 全量 **102 文件 / 1174 例 ✅**；server 全量 **102 文件 / 1285 例 ✅**；四包 typecheck 0 错；ESLint 改动文件 0 错（首轮 1 条未用变量 warning 已清）；client build 随隔离 E2E 的 webServer 构建通过。
+
+## 105. 同角多魂——成员分身（M77）
+
+灵魂层（§26）可多套人格，但成员身份只到「角色」粒度（`participantIds` + `memberSouls`：一角色一场会话最多一份成员身份、一个生效灵魂）。本节将成员身份升级为**成员键（memberKey）**，同一角色的不同人格以多实例同台（决策见 ADR 0174）。
+
+### 105.1 成员键（共享事实源 `shared/src/members.ts`）
+
+- 经典实例 = `agentId`（存量数据天然合法、**零迁移**）；分身实例 = `agentId~soulId`（自描述；agentId/soulId 字符集 `[a-z0-9-]` 不含 `~`）；
+- `memberSouls` 语义不变（经典成员的换装覆盖）；有效灵魂：分身取键后缀，经典取「覆盖 > 角色默认 > 无」；
+- 约束（`lineupError` 单源）：同角有效灵魂去重（含都无灵魂）；无 souls 角色不可分身；分身键灵魂必须存在；同角实例 ≤ 4；
+- `PromptLibrary.get/body/soul/avatarFile` 容忍成员键（按首个 `~` 取 base）——存量调用自动兼容。
+
+### 105.2 @ 寻址与会话装配
+
+- 会话向 token 表（`buildMentionTokens(members)`）：裸名（角色名 / agentId）→ 该角色**主实例**（编制序首位；见 §105.10 口径修订）；多实例时 `名字·灵魂名`（有效灵魂，去重规则保证唯一）→ 单实例；分身机器键作别名；token 边界排除 `·`（拼错的分身点名不回落裸名）；
+- 装配（`context/service.ts`）：roster 由成员实例投影（`label（memberKey｜role）`）；多实例时 L3 注入寻址指南（「@名字 只召集主实例；全员请逐一点名」）与 L0 身份标识行；窗口投影按成员键署名（分身 = `名字·灵魂名｜role`）；
+- mock：脚本 / 风格 / 容器表按 base 查表（`baseAgentId(meta.agentId)`）；请求 meta 增 `memberLabels`，转交行与纪要待办按实例标签点名（`@卢娜·禅意 接力棒给你了`）。
+
+### 105.3 引擎与数据归口
+
+- 成员键贯穿 queue / spoken / activeMembers / RunSnapshot / turn 事件 / 计划与步骤归属 / 任务归属 / 工具 runtime（`memberKey`）；
+- `ChatMessage.agentId` 保持基础角色 + 新增 `memberKey`（迁移 v20 `messages.member_key`）；artifacts 作者 / 记忆 agent-scope / 审批沿用基础角色；
+- 分身换装（PATCH 成员键）= **键替换**：`participantIds` 原位替换 + 运行中 `replaceMemberKey`（队列 / 波内进行中 / 交接便条同步 + `queue:updated` 广播）；分身 `soul: null` → 400（无默认态）；PATCH 经典与分身均做同角灵魂冲突校验（400）；
+- 事件条文案：同角多实例用实例标签（`卢娜·狂野 换上了『考据派』灵魂`），单实例 = 角色名（存量零回归）。
+
+### 105.4 前端（组建 / 会话 / 消息）
+
+- `lib/members.ts`：成员实例视图（标签 / 有效灵魂 / siblingCount / pinned）、`participationOf` / `encodeParticipation`（参与性格 ↔ 成员键确定性编解码：首人格走经典键、其余分身键）；
+- 组队台：编制按角色一行（`lineupItems`），编制行 grid 定列（头像 ∣ 文本 ∣ 右侧组），文本列内「名字 + `×N 分身同台` 徽标」可变宽换行，右侧组（「参与性格」+ 移出 X）恒贴行右缘——移出钮不随内容换行而漂移；行内「参与性格」多选 `SoulParticipantPicker`（勾选 = 入编、全取消 = 默认单人）；AgentPicker 值域升级为成员键，卡片「+ 分身」菜单（未占用灵魂）走 **Portal + fixed 定位**（避开滚动容器裁剪与 Radix 遮罩的 pointer-events 封锁）；`SoulPicker` / `SoulParticipantPicker` 弹层同模式收口（原 `absolute` 相对定位在编制 `overflow-y-auto` 列表内被裁剪成残片），且打开期间触发钮因行内重排（参与人格增删致按钮变宽换行）漂移时跟随重算锚点；
+- 会话内：成员卡按实例渲染（分身标「分身」、无「恢复默认」；@ 召唤 / 拍一拍 / 移除 / 计划徽章 / 战绩均按成员键）；消息气泡作者与点名 chips 按成员键解析（多实例显示 `名字·灵魂名`）；指挥条 / Composer @候选按实例（插入点名 token；多实例角色顶部增「全部 N 位」显式全伞条目，一键插入逐一点名多 token——见 §105.10）；图谱节点 = 成员实例（显示克隆入图）、接力边 from = `memberKey`；任务 / 规划 / 定时面板成员选项按实例投影；
+- run-store：turn:start/end 优先 `memberKey`（消息 + 状态 + 队列）。
+
+### 105.5 验证
+
+- server `tests/m77-soul-instances.test.ts` **17 例**（解析 / token 边界 / **裸名=主实例** / **显式全伞双 token** / 创建与邀请校验 / 换装冲突 / 分身键替换 / 移出 / fork / 装配指南 / 引擎点名与全伞 / 并行波多实例同波 / 运行中换装队列同步 / 自描述回退署名 / 预览 memberKey / 席位迁移）；
+- client `tests/m77-soul-instances.test.tsx` **21 例**（成员视图与编解码 / 回退标签 / 幽灵补位 / 组队台多选 payload / 成员卡换装与移除 / 气泡与点名 / Composer 实例条与插入 / **「全部 N 位」全伞条目** / run-store 归口 / 图谱 / 分身菜单未占用过滤 / 战绩实例归口 / 回退与预览 / 接力链与提意见）；
+- e2e `m77-soul-instances.spec.ts` 2 条（多魂建编 → 点名 → 换装 → 显式全伞；会话内追加分身与同魂冲突拒绝）；
+- 门禁：双端全量单测 / eval 基线 / check:agents（QUALITY_STRICT）/ check:skills 零回归（实跑账见 CHANGELOG）。
+
+### 105.6 续完善（同批收口）
+
+- **自描述回退标签**：成员键内嵌灵魂使「历史归属」不随实例动作丢失——已移除 / 已换键的实例（`luna~zen`）在消息、点名 chips、接力卡、路由上下文等处仍还原 `名字·灵魂名`（client `labelOfMemberKey` / server `memberLabelOf` 同一回退链）；经典键不补默认灵魂后缀，资产删除回退角色名；
+- **幽灵补位**：`memberDisplayList(agents, session, extraKeys)` 统一面板成员选项——把历史计划作者 / 步骤负责人 / 评审人 / 定时目标等已离场引用键补成可读条目（计划卡 / 任务面板 / 定时面板不再裸秀 memberKey）；
+- **实例级统计**：战绩（StatsView `computeStats` 按 `memberKey` 归口，分身各自入榜/计数/被 cue）与迷你档案（MiniDossier 按成员键统计与署名，交接对象过回退标签）均按实例呈现；
+- **单实例 token 口径澄清**：`名字·灵魂名` 仅在同角多实例在场时生成（展示与解析同源）；单实例（含仅一个分身实例）一律裸名——因此「@卢娜·禅意」仅在同角 ≥2 实例时可用；
+- **UI 打磨**：编制行窄栏换行（`flex-wrap` + 中间块 `min-w-[104px]`）、名录页灵魂变体区标注「可同台」用法提示；`+ 分身` 菜单 Portal 化后的外部点击判定需排除菜单自身。
+
+### 105.7 展示面兜底（成员键全消费端审计）
+
+对全客户端按「基础 id 解析」的展示点做了一次系统审计与收口——原属基础角色的展示点保持不变（工件作者 / 记忆 / 审批 `/计划列表/列表摘要的 agentId 兼容），其余展示面按成员实例渲染：
+
+- **波次层**：并行组组头（WaveGroup）与悬浮阶段条（WaveStrip）署名改为实例（`卢娜·狂野、卢娜·禅意`）、头像仍取基础角色；组头订阅的成员键改为 `memberKey ?? agentId`（分身入组头）；对决分侧（PK-1）仍用基础角色 ids（席位声明口径不变），分栏映射同步改用 base 列表；
+- **消息导航条**（MessageRail）与**「下一棒」热身行**（ChatArea）：署名过回退链；
+- **场景层**：`SceneStage.agentOf` 升级为成员键容忍（在场实例预生成显示克隆并缓存引用稳定 → 席位 / 卡片 / 时间轴 / 取数链一次性全解）；`scene/derive` 的 `containersOf.messageAgentId` 与 `sqlRunsOf.agentId` 改成员键；`wavesOf.memberIds` / `useSceneData.speakingId` 保持基础角色（席位高亮比较口径）；
+- **面板层**：TaskView / PlanReviewCard / SchedulePanel（含卡内目标署名）/ MiniDossier / StatsView / GraphView（接力摘要、工件按 base 匹配）统一走 `labelOfMemberKey` 或幽灵补位；
+- **列表层**：`SessionSummary.lastMessage.memberKey`（迁移 v20 列已具备，仅 SELECT 增列）→ 会话列表预览署名可分辨实例（存量行为 NULL → 回退角色名）。
+
+### 105.8 运行台账与交互面收口
+
+- **运行台账随席位移交**（`engine.replaceMemberKey`）：队列 / 波内进行中 / **已发言史 spoken** / **未消费交接提案 pendingHandoffs.targets** / 交接便条 handoffNotes 五处同步——`spoken` 迁移防同席位借换装在同一 Run 内重复出手（fallback 选人不再把新键当未发言者）；提案目标改写防旧键经「资产存在」路径被平台重新召集（幽灵复活）；队列去重幂等；已落库发言史不追溯；
+- **接力链 / 接力卡**：TeamPanel 步骤与镜像卡头像按成员键显示克隆（`memberAgentOf`，单实例零外观变化）——接力进度链同角双实例各自成节点、与队列键同源命中「当前高亮」，节点 title 走回退链；
+- **提意见草稿**（AF-3）：@ 署名改成员实例（分身 = `名字·灵魂名`，草稿点名到具体实例；无键退化纯引用模板）；
+- **回归面**：m12-interactions（进度链 + 迷你档案）E2E 已在验证集内。
+
+### 105.9 画布层收口（最后审计盲区）
+
+全仓横幅扫描补出的画布层（CanvasComposer，前几轮未覆盖）缺口，一并收口：
+
+- **成员召唤条**：原按基础 id 解析 participantIds——分身键解析失败被过滤，极端情况下（仅分身入编）回退为「全体角色」错误列表；现走成员实例投影（id = 成员键、name = 标签），召唤插入 `@名字·灵魂名` 点名到具体分身；
+- **运行状态条**：queue 首位的发言人署名改实例标签（分身不再回退「协作进行中」）；最近回复摘要署名同改；
+- **近期消息浮层**：署名按实例；头像取基础角色；运行态徽标改按成员键读 statuses（原按 agentId 读，分身流式态恒 idle）；
+- 边界重申：画布节点作者（node.by = 基础角色）与系统事件条头像保持角色级（文本已含实例标签）；死代码清理：`lib/members` 移除无消费方的 `instancesOf` / `presentSoulIds`。
+
+### 105.10 口径修订：裸名 @ = 主实例（全伞改显式）
+
+规划期曾选定「裸名 = 全伞」，收口评审后修订为「裸名 = **主实例**（编制序首位）」——判据：
+
+1. **最小意外**：单实例会话中点按 `@名字` 的习惯，不应因中途追加分身而静默变为多人触发（编制首位在换装 / 增删后仍稳定指向该角色的首个实例，含分身键替换场景）；
+2. **默认动作代价不对称**：误触全伞 = 意外 N 轮 / 整波并行（token 与注意力双耗）；误触主实例 = 1 轮，可立即纠偏；
+3. **显式优于隐式**：界面从不展示「裸名会触发全员」这条规则（多实例展示一律 `名字·灵魂名`，与解析同源）；全伞改为 Composer @候选中的「名字（全部 N 位）」条目——一键插入逐一点名多 token（`@卢娜·狂野 @卢娜·禅意`），零新语法、草稿可编辑；
+4. **模型侧口径同步**：L3 寻址指南改写为「@名字 只召集主实例；想让同角多位分身同时上场请逐一点名」；
+5. **回归面**：单实例行为零变化（裸名直达；仅多实例场景的语义收敛）；e2e 因 mock 动态接力链无法区分队列差异，精确断言在 server 单测（waves 数 / 灵魂序列 / mentions 持久化）。
+
+## 106. console 面板二批——客户管道 · 经营指标 · 节奏 · 融资进度与问答 · 主张与依据（批六）
+
+全场景深度优化批六的落地：console 面板（dock 右区）全量场景分支补齐——ADR 0169 边界遗留项「sales / finance / funding / ops 的 console 面板专业化不在本批（另批评估）」的正式闭环（bi / sre 分支由 M66 已落；finance 为 stream 无 console，Ops 经 minutes/checklist 已覆盖）。决策见 ADR **0177**；编号让位：ADR 实际落 **0177**（0171–0176 于落盘窗口被并发批次连续占用——堪舆 v2 / M77 多魂 / 命理深化），design.md 实际落 **§106**（§105 为并发 M77 章节）。
+
+### 106.1 场景分支矩阵（有容器数据才渲染对应段）
+
+- **sales**：「客户管道」——`::: pipeline` 容器 → 阶段列（线索/意向/报价/成交 + 未知归「其他」，与消息卡同口径）+ 列头「N 家 + 金额合计」（`numberWithSuffix` 可解析行才计入；全不可解析不显示）+ 点卡定位；
+- **ecommerce**：「经营指标」（kpi → KpiCells 复用）+「大促节奏」（timeline → 节奏行，第三列 = 节点徽标）；
+- **marketing**：「内容节奏」（timeline → 节奏行，第三列 = 渠道/负责人徽标）；
+- **legal-personal**：「案件时间线」（timeline → 节奏行，第三列 = 节点类型）+「主张与依据」（claim → 标题 + 条目（主张 + 依据）；条目层单一解析）；
+- **funding**：「融资进度」（`::: progress` → **ProgressCard 同组件渲染**）+「投资人问答」（`::: qa` → **QaCard 同组件渲染**）——各带「定位」回源。
+- 通用时间轴让位规则自 sre 扩展至节奏场景（有专用时间轴段时通用「活动时间轴」不重复渲染；容器缺席回落——既有口径保持）。
+
+### 106.2 单一解析补全（ADR 0144 红线）与内部收敛
+
+- 新导出 `parseClaimLines`（列表标记双重剥离无害；细节/元信息行跳过——与卡上消费口径一致）；`finalizeClaim`（mdast 路径）重构为共用——claim 容器自此 remark / panel 双路径同源；
+- `KpiCells` 内部组件提取：bi 指标 / sre SLO / ecommerce 经营指标三处 kpi 网格收敛（DOM 与 M66 分支完全一致，attrs 由各分支 wrapper 保留）。
+
+### 106.3 验证与收口账
+
+- 组件测：`client/tests/console-scenes.test.tsx` 9 例（parseClaimLines 纯函数 / sales 阶段列 + 未知归「其他」+ 合计 + 定位 / 非目标场景零变化 / funding 同组件渲染 + 定位 / 节奏段三场景 + 让位 + 回落 / legal 主张与依据 / claim 卡渲染回归）全绿；
+- 回归：m43-cards + m66-analysis-console + m52-stage + m69-md-ext 共 **110/110 ✅**（claim 重构与 KpiCells 提取零回归）；
+- E2E：新增 `e2e/console-scenes.spec.ts` 5 条（销售管道 / 电商指标+节奏 / 市场内容节奏 / 法务时间线+主张 / 融资进度+问答）隔离窗口实跑 **5/5 ✅**（`PW_PORT=8795 PW_DATA_DIR=e2e-m40 PW_OUTPUT_DIR=/tmp/pw-b6`）；`playwright.config.ts` main 白名单补 `console-scenes`；
+- mock：两组新触发块（「店铺走查」/「案件走查」）；marketing 由 content 基础剧本自带 timeline（零改动）；sales / funding 复用 M41 触发块；
+- 门禁（本批实测）：eval **36/36 ✅**；check:agents（strict）**165/165 + 协议 41/41 ✅**；check:skills（strict）**61/61 ✅**；client 全量 **104 文件 / 1193 例 ✅**；server 全量 **103 文件 / 1294 例 ✅**；ESLint 改动文件 0 错（含顺手清理 ConsolePanel 存量未用导入 LayoutList）；typecheck——本批文件 0 错，唯一 2 处错误在 `team/GraphView|SchedulePanel`（并发会话 M77 域**落盘前 3–14 秒**的中间态，与 M57 窗口一度排除；非本批影响面）。
+- 文档：ADR **0177**、CHANGELOG **v89**、`docs/adr/README.md` 索引、`docs/scene-chat-design.md` §9 落位注记（遗留项闭环）。
+
+## 107. 家装设计工作室与风水阳宅——3D 空间设计 · 效果图链路 · 堪舆点评 · 择日与罗盘盘面（M65–M66 全批 + v2/v3 续）
+
+家装设计工作室与风水阳宅专项的落地（设计基线 [docs/design-studio-design.md](docs/design-studio-design.md) v1.2；评审五项：风水独立成场景 / 择日 v1 不做（v2 已补）/ 方案书轻量打印 / 3D 锁定家装空间 / 媒体连接未配置保留扩展）。实施六批 + 三续：**M65-B0** 接装（three@0.175 / R3F 8.18 / drei 9.122；three-stack gzip 230.82KB ≤ 240KB 预算）、**M65-A** 资产（interior 场景 / 成竹·规方·塑光）、**M65-B** 3D 基座（DesignScene v1 契约 + 2D/3D 双视图 + design-scenes 通道）、**M65-C** 交互链路（layout / styleboard / render 三容器族 + 三卡片 + 工作台打开通道 + 快照入库 + 方案书打印）、**M66-A** 风水资产（fengshui 场景 / 司南·察隅 / luopan_pan 工具 golden 5 / 禁词四层扫描）、**M66-B** 盘面（luopan 第五盘卡：三环罗盘 + 八宅·飞星双盘 + 合规色带 + 九宫叠图）、**v2 三件**（zeri_pan 择日盘（建除十二神 + 冲煞 + 1–5 评分；日历基础域双锚 golden）/ 兼向判定（±4.5° 下卦带，仅 A 级）/ 叠图旋转对齐）、**v3** 自动找正（指北交互 + 快照识别）。编号让位：预定 §102/§103 于落盘窗口被并发批次（M44 核心交付锚点 / M41 服务型渲染包）占用 → 实际落 **§107**；ADR 0167（M65-C）/ 0168（M66-A）/ 0171（M66-B）/ 0175（v2）/ 0178（v3）；CHANGELOG v82 / v83 / v85 / v88 / v90。
+
+### 107.1 场景与角色（2 场景 / 5 角色 / 3 技能 / 2 预设）
+
+- **interior 家装设计工作室**（dock · studio 面板——第 7 类面板）：成竹（设计主案）/ 规方（空间规划）/ 塑光（3D 可视化）；技能 interior-design / 3d-visualization；预设「家装全案设计」；
+- **fengshui 堪舆阳宅**（dock · chartboard）：察隅（户型解析——三态标注 + 坐向分级采集）/ 司南（堪舆判读——先盘后论 + 四维评述 + 改善参考 + 择日）；技能 fengshui；预设「入宅联审」（跨场景：察隅 → 司南 → 筑居）。
+
+### 107.2 技术基座与容器族
+
+- **3D 栈**：three.js + R3F v8（React 18 锁线）+ drei；懒加载唯一入口 studio-lazy（three-stack 独立 chunk）；DesignScene v1（mm 单位 / 俯视坐标北 = −Z / 13 类家具程序化族）；
+- **三容器族**：`::: layout`（房间三段 + 方案源）/ `::: styleboard`（色卡 + 质感）/ `::: render`（键值 + 产物）——卡片五模式交互（回填 / 复制 / 流式禁用等，v57 纪律）；
+- **盘面扩展**：PAN_KINDS 第 10 类 `luopan`（三环罗盘 / 双盘 / 宫位详情 / 叠图 tab）+ 第 11 类 `zeri`（推荐 chips / 星级 / 回填）；「::: pan luopan」先盘后论整卡。
+
+### 107.3 风水工具化与合规
+
+- **luopan_pan**（二十四山 / 八宅坐山派大游年歌 / 三元九运 + 流年入中星 / 洛书顺飞）+ **zeri_pan**（建除十二神 + 冲煞 + 评分；历法基础域 JDN / 日干支双锚 golden）；deferred + 只读 + 禁止心算兜底；
+- **合规四层**：协议红线（不承诺吉凶必应 / 禁恐吓 / 数据分级 A/B/C / 流派口径显式）+ 禁词四层扫描（协议·人设·技能·mock，规范句豁免）+ 破日「诸事慎用日」表述 + 精度声明（近似节气 ±1 天）。
+
+### 107.4 验证与收口账
+
+- client 全量 **104 文件 / 1195 例 ✅**；server 全量 **103 文件 / 1294 例 ✅**；E2E `m65-studio` 1/1 + `m66-fengshui` 2/2（含 v2/v3 全链——择日卡 / 附件 / 叠图 / 旋转 / 指北）；eval 35/36（+interior +fengshui 任务；1 红为 M63 外部批中间态）；check:agents 165+41 / check:skills 61/61（strict）；
+- **E2E 定式沉淀**：虚拟列表「回到最新」浮标轮询（jumpToLatest）；隔离跑（PW_PORT / PW_DATA_DIR——防常驻旧 mock 进程被 reuse）；先切对 tab 再点格（双盘断言）。
+
+- 文档：ADR **0167 / 0168 / 0171 / 0175 / 0178**、CHANGELOG **v82 / v83 / v85 / v88 / v90**、`docs/design-studio-design.md`（专项基线全实施注记）、eval tasks `33-interior` / `34-fengshui`。
+
+## 108. M45 轻回放——波次回放条（批八）
+
+全场景深度优化总账的最后一批（条件性批次主动推进）：`docs/scene-chat-design.md` §13 M45 原案 R-1 落地（ADR 0081 预定口径正式兑现）；R-2 互动统计后端化**触发条件未出现**（无跨会话统计 / 审计需求信号）——维持条件性；R-3 面板联动扩展声明为**既有覆盖收敛**（「场景卡 → 面板定位」已由各面板定位按钮与 pool 定位普遍化）。决策见 ADR **0179**；编号让位：ADR 实际落 **0179**（0178 于落盘窗口被并发 M66-v3 占用），design.md 实际落 **§108**（§107 为并发 M65–M66 章节）。
+
+### 108.1 派生与组件
+
+- 新文件 `client/src/lib/wave-replay.ts`（纯函数）：
+  - `waveNodesOf`——`waveOf` 唯一 `runId~turnIndex` 首次序（wave-sep 与成员行同源去重）；**单条波次成节**；锚点 = 本波首条成员消息；空锚点跳过；
+  - `activeWaveIndexOf`——首个可见行起向前扫描的活跃波次序号（与悬浮阶段条同源）；
+  - `createTrailingThrottle`——leading + trailing 150ms（连点合并尾沿最新；卸载 cancel）；
+- 新组件 `client/src/components/chat/WaveScrubber.tsx`：**≥2 波**时在 Composer 之上常驻细条——`回放` 前缀 + prev/next + 数字刻度（点选跳转）+ 计数（`第 x/N 波` / `共 N 波`）；当前波高亮；端点禁用；
+- ChatArea 挂载：跳转 = `focusMessage`（滚动 + 闪光复用——**不重建历史 UI 状态**，ADR 0081 边界）。
+
+### 108.2 验证
+
+- 单测：`client/tests/m45-replay.test.tsx` 10 例（waveNodesOf 去重/单条成节/锚点/计数 · activeWaveIndexOf 同源扫描与越界 · createTrailingThrottle leading+trailing/cancel · deriveRows 集成（结构键 → 节点）· WaveScrubber 刻度/高亮/计数/端点禁用/连点合并）全绿；
+- E2E：新增 `e2e/m45-replay.spec.ts` 1 条（星象占星 + `disableSerial` + 全员 @ 两波 → 2 刻度 → 双击刻度两次闪光复用 + prev 端点禁用）实跑 **1/1 ✅**；`playwright.config.ts` main 白名单补 `m45-.*`；
+- 域回归：m45-replay + m37-scene-chat ×2 + m12-interactions（ChatArea 关联面）隔离窗口实跑 **4/4 ✅**；
+- 门禁（本批实测）：eval **36/36 ✅**；check:agents（strict）**165/165 + 协议 41/41 ✅**；check:skills（strict）**61/61 ✅**；client 全量 **105 文件 / 1214 例 ✅**；server 全量 **103 文件 / 1296 例 ✅**；ESLint 改动文件 0 错；
+- E2E 口径踩坑（已沉淀 ADR 0179 边界）：并行场景须 `disableSerial` + 全员 @ 才收敛单波；短会话 align:center 下活跃序号可能钉在第一波——断言以「跳转触发 + 闪光」为准。
+
+### 108.3 总账收官声明
+
+本批之后，全场景深度优化 8 批总账**全部闭环**：批一 M38（§92）· 批二 M39（§97）· 批三 M44（§102）· 批四 M41（§103）· 批五 M40（§104）· 批六 console 二批（§106）· 批七编制增补（由并发 M69 批次落地——sre 试雷 / bi 正尺等补强角色）· 批八 M45（本 §108）。M45 R-2 为唯一维持条件性的事项（触发条件写入 ADR 0082 / §13.2）。
+
+## 109. 外部技能与 MCP 安装批——8 技能 + 9 台免 Key MCP 服务器
+
+用户发起的一次性资产扩张：按「当前全部 agent 定义」（165 角色 / 41 场景）从 GitHub / 官方生态检索适配的 Skill 与 MCP，**免 Key 口径**（需要 API Key 或身份声明的候选一律不装），逐个安装并逐个验证。技能适配仍按 ADR 45 改写为「本仓工具可执行」方法论；MCP 走 M28 `mcp.json` 文件权威直配（ADR 53 安全模型不变）。
+
+### 109.1 技能清单（8）与来源
+
+| 技能 | 外部来源 | 预载角色 | 定位 |
+|---|---|---|---|
+| literature-search | ykdojo/paper-search（OpenAlex 口径） | lit-reviewer · scout | 检索式构建 + 文献矩阵 + 综述结构（API 用法含 OpenAlex / arXiv / Semantic Scholar） |
+| natural-writing | conorbronsdon/avoid-ai-writing | editor · content · paper-editor | 去 AI 腔 14 类特征 + 替换表 + 两遍改写 |
+| test-driven-development | obra/superpowers | backend | 红-绿-重构 + 防假绿断言质量 |
+| secure-coding | agamm/claude-code-owasp + Trail of Bits | security · ai-engineer | OWASP Top 10 检查表 + 密钥纪律 + AI/MCP 特有风险 |
+| brand-naming | glacierphonk/naming | brand · account-strategist | 隐喻驱动发散 + 筛选矩阵 + 谐音安检 |
+| translation-quality | HoraceLuBFA/en-zh-translation-polish | localizer · ux-writer | 翻译腔 10 类 + 术语表先行 + 回译核对 |
+| user-persona | takechanman1228/claude-persona | ux-researcher · influencer | 行为变量分群 + 画像卡 + 概念反馈矩阵 |
+| health-metrics | huifer/Claude-Ally-Health | 健康 3 角色按需（生活场景不硬配） | 指标趋势 + 体检口径 + 红线升级（非诊断） |
+
+- 分组登记：研发工程 +2 / 研究与验证 +2 / 营销增长 +1 / 写作沟通 +2 / 生活沟通 +1；命理占星补登存量 fengshui（README 分组表此前漏登）；技能总量 61 → 69，`check:skills`（strict）69/69；
+- 预载接线 14 个角色（均在 ≤4 上限内追加；m21 断言同步 4 处：security / content / brand / localizer）。
+
+### 109.2 MCP 清单（9 台）与配置
+
+`mcp.json`（仓库根，source='json' 文件权威；启动同步 + 5s mtime 轮询自动落地）：
+
+| slug | 来源 | 传输 | 工具数 | 关键配置 | 授权角色（`mcp__<slug>__*`） |
+|---|---|---|---|---|---|
+| sequential-thinking | 官方参考服务器 | npx stdio | 1 | readOnly | 战略 4 / 研究 4 / 辩论 4 / 模拟法庭 3 / 投研 5 |
+| memory | 官方参考服务器 | npx stdio | 9 | MEMORY_FILE_PATH → data/mcp/memory.json | 研究 4 / tutor / coach |
+| time | 官方参考服务器 | uvx stdio | 2 | readOnly | travel 3 / assistant |
+| weather | weather-mcp/weather-mcp（MIT） | npx stdio | 12 | 公制 + 24h + standard 工具集 | travel 3 / fitness / wellness |
+| markitdown | microsoft/markitdown | uvx stdio | 1 | timeoutMs 120s | 法务财务族 7 + datroom-keeper + 学术 3 |
+| deepwiki | Devin（HTTP 免 Key） | http | 3 | — | 研发 9 角色 |
+| context7 | Upstash（HTTP 免 Key） | http | 2 | — | 研发 9 角色 |
+| arxiv | blazickjp/arxiv-mcp-server | uvx stdio | 19 | --storage-path → data/mcp/arxiv | lit-reviewer / scout / verifier |
+| yfinance | nrempel/yahoo-finance-mcp | npx stdio | 6 | readOnly | 投研 5 + valuation-modeler |
+
+- 全部免 Key；需要 Key / 身份声明的候选（GitHub PAT、高德、Brave、SEC UA 等）按用户口径**未安装**；
+- 只读服务器用 `readOnlyOverride: 'readonly'`（并行 + 缓存 + 免审批门）；memory / arxiv 保留默认写类策略（写类走审批）；
+- 安装台账（验证）：9 台逐一真实握手成功（合计 **55 工具**）；app 侧日志确认全部 `MCP 服务器已连接`（含 markitdown 首装超时后重连复位）；
+- 可达性：tools wildcard 接线 **50 个角色文件**；未绑定会话不可见（M27 最小权限语义不变）；general 既有 `mcp__*` 通配维持（可达矩阵守护语义同 m27-mcp E2E）。
+
+### 109.3 验证与镜像面
+
+- `check:skills`（SKILL_STRICT=1）**69/69 ✅**；`check:agents` **165/165 + 协议 41/41 ✅**；eval（mock）**36/36 ✅**；
+- 测试同步：m21 技能断言 4 处；context.test.ts 预算夹具 14k → 15k（69 技能索引增重，实测 14.2k±）；m35 运行时绑定用例跳过 MCP 通配条目（格式守卫保留）；
+- 镜像面：agents/README.md（统计 162→164 业务角色、69 技能分组、预载表 14 行、MCP 工具条目）；agents/CHANGELOG v92；本 §109。
+
+### 109.4 边界与后续
+
+- 会话级绑定后才对模型可见（会话头部「资源」入口 / MCP 管理台）；未绑定 = 零暴露；
+- 第三方 MCP 视同不可信代码（ADR 53）：env 白名单、审批门、会话绑定三层不变；
+- 后续可选：需要 Key 的服务器（GitHub / 高德等）在用户提供凭据后按同一 mcp.json 通道追加。
+
+## 110. 报告专业化——交付规格闭环（v93）
+
+**动因**：交付件不够专业、报告偏短或不完善。根因五层定位：①篇幅语义缺位（协议 200 字约束未区分对话与交付件）；②深度标准未量化（交付契约只有章节结构）；③长报告单次成文写不完（单次输出上限 + 无追加工具）；④无落盘质量信号与验收；⑤素材无沉淀。结论：不新增「写作 Agent」——横切三层（规格 / 工具 / 体检）改造（ADR 0182）。
+
+### 110.1 四档规格（协议一等公民）
+
+全局 `_protocol.md` 新增 `<deliverable_spec>`：「简短优先」限缩为对话发言（交付件不受 200 字约束）；四档 = 速览 ≤800 / 标准 1500–4000 / 深度 ≥4000（分章 + 图表 ≥2 + 来源编号 + 附录）/ 专项多件套；档位优先级 = 用户显式 > 计划验收 > 角色契约默认；分章撰写纪律（骨架占位 → 逐节填充，深度档禁止单次成文）+ 量化自检 + 报告可独立成立。
+
+### 110.2 规格注入（引擎）
+
+`context/deliverable-spec.ts`：会话级粘性解析（倒序扫用户消息：速览/简报/快评 vs 深度报告/详细报告/深度研究/尽量详细…；宽词「深入」不入表防误伤）→ execute 回合指令末行注入档位行（未声明不注入）；`PreparedTurn.deliverableSpec` 透明给引擎 → 深度档回合工具步数上限 8 → 12。
+
+### 110.3 分章撰写（append）与落盘体检
+
+- `write_file` 增 `mode=append`（空行衔接；不存在等价新建；dry-run / summary / diff 全链适配）；
+- `util/doc-metrics.ts`：非空白字符 / 二级章节 / 表格 / 来源标记（URL + 「来源：」+ [编号]）单一实现；Markdown 落盘后体检指标随工具 detail 回灌（模型对照档位自检）；
+- 体检与断言同口径：`assertions.ts` 三断言（`min_chars` / `min_sections` / `min_sources`，四处同改）复用 `measureDoc`。
+
+### 110.4 资产三层与评测锚定
+
+- 技能 `report-authoring`（+1 = 70）：四档表 / 分章流程 / 六类领域章节库（研究 / 投研 / 行业 / 经营复盘 / 决策方案 / 议题简报）/ 量化自检 / 反模式；
+- 16 角色（research×4 / invest×5 / strategy×4 / bi×3）交付契约量化（默认档 + 下限 + 降档裁剪规则）+ 预载；README 预载表与分组同步；m21/m30 断言 6 处同步；
+- eval：research / invest golden 补规格断言（按 mock 实测定标：130 字/4 节、300 字/6 节）；
+- 测试：新 `tests/deliverable-spec.test.ts`（4 例）+ tools append/体检 + m9 断言用例；context 预算夹具 15k → 16k（实测 15.0k±）。
+
+### 110.5 验证与边界
+
+- 评测账（v93）：check:agents strict **165/165 + 协议 41/41**；check:skills strict **70/70**；eval **36/36**；server **106 文件 / 1328 例**；client **106 文件 / 1224 例**；四包 typecheck 0 错；E2E 定向 m34-invest + m50-blank **4/4**；
+- **真实模型探针（v93 续，`--real` 设施）**：eval 支持 `--real`（真实模型执行 `real:true` 探针任务，不参与 mock 基线，`--keep` 保留工作区）+ 探针任务 `depth-report-spec`。三轮实测帐：骨架 559 字（回合耗尽）→ 10279 字（口径盲区两红）→ **13947 字 / S01–S20 / 占位 0 / judge 8 全绿**；实测修正三项：关键词表补「深度档」、min_sources 口径支持 `S-01`/裸编号（doc-metrics 共用）、体检增占位残留警告；探针任务 maxTurns 16（真实深度链预算）；三轮成本约 $2；
+- **探针组扩编（v93 续）**：`invest-depth-report`（4 人链，6/7：报告 13355 字 / 8 章 / 13 表 / 四件交付件齐全；judge 6 扣于降级场景一手核验深度）+ `bi-monthly-analysis`（3 人链 + `seedFiles` 播种 CSV，5/6：17847 字 / 10 章 / 23 表）；三探针组就绪；任务侧纪律：`MAX_TOOL_STEPS=16` + 「不因口径待确认阻塞」；
+- **交付件体检徽章（v93 续）**：`shared/src/doc-metrics.ts` 单一实现（server / eval / client 三端同口径）；ArtifactsView Markdown 预览体检条（字数 / 章节 / 表格 / 来源 / 占位警告）；
+- 未实施（列后续）：专项档解析关键词、素材池（`docs/素材-<主题>/`）、L3 自动评审联动、体检未达标强制补全回合（先行观测再评估——探针实测已部分验证回灌提示对占位清理有效）；编排层实测观察（PRS 扩编一棒制 / 回合预算被探索耗尽 / 口径阻塞自锁）另批评估。
+
+## 111. dock 右区宽度自适应——默认容器 1/3 · 上限最多一半 · 双击复位回自适应（批九）
+
+用户实测反馈（两栏 dock 截图）：固定宽度口径不适应窗口——默认 360px 在宽屏下偏窄（盘面 / 看板阅读局促）、上限 640px 写死（宽屏无法继续拖宽、窄宿主又近乎占满）；诉求原话「这种两栏的可以优化下宽度，支持拖动到最大为1半默认可以增大点宽度或者根据实际窗口自适应等等」。本批把宽度口径整体改为**相对容器**：默认 = 容器 1/3、上限 = 容器一半（「最大为 1 半」，左对话区恒保 ≥50%），双击复位回自适应态。**纯前端微批**（零服务端 / 零资产 / 零协议），决策见 ADR 0183（修订 0127 的固定 clamp 280–640 口径；**编号让位**：§110 / ADR 0182 / v93 已被并行批「报告专业化」占用）。
+
+### 111.1 宽度口径（persist.ts）
+
+- 上限 `dockMaxW(容器) = max(280, ⌊容器 × 0.5⌋)`——右区最多占两栏区一半；默认 `dockDefaultW(容器) = min(clamp(round(容器/3), 380, 600), 上限)`——1280 宿主 ≈ 426 / 1440 ≈ 480 / 1920+ 600 封顶（宽屏较旧固定 360 明显变宽，窄宿主不挤占对话区）；生效宽 `clampDockW(宽, 容器)` 收敛到 [280, 上限]；
+- 存储偏好语义升级 `DockPref.width: number | null`：null = 自适应（按容器比例，双击复位回到此态）；数值 = 拖拽 / 键盘显式宽。旧固定默认 360 在 `loadDockPref` 迁移为 null（未拖宽用户升级即获自适应默认）；存储只做下限护栏，上限在渲染期动态收敛——窗口临时压窄不写回存储，放宽后恢复原意图。
+
+### 111.2 宿主与交互（DockStage）
+
+- ResizeObserver 观测 `.scene-dock`（`useLayoutEffect` 挂载即量测 + 变更回调）：窗口缩放 / 会话栏开合 → 上限与自适应默认跟随（无 RO 环境以视口宽兜底首帧，量测为正才采用）；
+- 拖拽（ref 直改零 React 渲染 + 抬手落盘）/ 双击复位（→ null 跟随窗口）/ 键盘 ← →（16 / Shift 48px）三入口共用同一动态口径；把手 aria：`aria-valuenow` 报生效宽、`aria-valuemax` 随容器收敛（不再固定 640）；
+- `.scene-dock-aside { max-width: 50% }` CSS 硬上限兜底（JS 收敛之外的当帧保证：窗口骤缩 / 存量偏好超限）；折叠 / 关闭 / reopen 与首帧估计等既有链路零变化。
+
+### 111.3 测试与门禁
+
+- client `m52-stage` +4 例（58 → 62 ✅）：纯函数口径（上限半屏下取整 / 默认 1/3 双护栏 / clamp 收敛，8 断言）；存量迁移（360 → null / 720 保留 / 非法回落 280）；默认渲染 380px + 把手 aria（min 280 · now 380 · max 512）；超限收敛（存储 5000 → 渲染 512）+ 存储不改写 + 双击复位 + 键盘 ← 调宽（396 落盘）；
+- E2E `m52-stage` 新增「批九 · dock 右区宽度」1 例：真实浏览器默认自适应（≥380 且不越半屏）→ 拖拽到容器最左缘 = 容器一半（±2px）→ 双击复位（±1px）→ 视口 1680 → 2400 变宽自适应跟随增大；同 spec 全量回归（含 M58 折叠 / 关闭全链与逐场景走查）—— 隔离环境（8795 / e2e-dockw）运行；
+- typecheck（client + e2e）0 错误；ESLint 改动文件 0 错误。
+
+### 111.4 边界与后续
+
+- 窄屏（<900px）dock 右区走底部抽屉降级（§7.3-4），本口径不参与；容器 <560px 时上限退化为下限 280（半屏 < 280 以 280 为准，属极端宿主宽度）；
+- 上限随 `.scene-dock` 实测宽自动跟随——宿主结构调整无需改代码；右区未来若改多面板并排 / 可拖分栏，需重估「单把手 + 单宽意图（number | null）」模型；
+- 存储 `ma:sc:dock.width` 旧值全兼容（数值照旧 / 360 迁自适应 / 非法回落 null），无迁移脚本。
+
+- 镜像面：`docs/scene-expansion-design.md`（§7.2 dock 行 + 头部修订注记 / 专项账）、ADR 0183 + `docs/adr/README.md` 索引、`agents/CHANGELOG.md` v94。
+
+## 112. SSH「本地」预置——新建表单一键填入（连接中心微批）
+
+新建 SSH 连接需逐项手填主机 / 端口 / 用户名 / 认证方式；「连本机」是开发与演示的最常见起点，但本机用户名、默认私钥路径、sshd 是否在监听都要人工查（macOS 默认不开启 sshd，需系统设置开「远程登录」）。本批给「连接管理 → 新建 SSH」加「本地（本机）」一键预置：服务端探测本机默认配置回填表单（凭据字段不动），决策与被否决方案见 ADR 0185。
+
+- 探测（`server/src/connections/ssh/local-preset.ts`；`homeDir` / `env` / `username` / `probePort` 全可注入，单测零触网）：用户名 = `os.userInfo().username`（极端环境回退 `USER` / `USERNAME`）；认证优先级 agent（`SSH_AUTH_SOCK` 非空）> key（`~/.ssh` 默认私钥按 ed25519 → rsa → ecdsa 序，`~` 形式回传、由连接器既有 `expandHome` 展开）> password；22 端口 TCP 探测（600ms 超时，connect / timeout / error 三路收敛布尔，不抛错）；
+- 端点：`GET /api/connections/ssh-preset`（adminOnly，注册先于 `/connections/:id` 防被 id 参数吞没）→ `{ preset: { name, host, port, username, authMethod, privateKeyPath?, agentAvailable, sshdReachable } }`；
+- 前端（新建态专属）：表单顶部「本地（本机）」chip → 回填 name（仅在名称为空时）/ host / port / username / authMethod / privateKeyPath；行内提示探测结论（认证方式 + 22 端口未监听时给系统「远程登录」指引）；不代建连接（用户审阅后「保存 / 保存并测试」），`allowExec` 保持默认关；
+- 验证：server `tests/m23.test.ts` 27 例（+5：探测默认键 / 认证优先级与私钥候选序 / 端口探测参数 / 路由形状 / 路由不被 `:id` 吞没）；client `tests/m23-frontend.test.tsx` 15 例（+1：一键预置回填与提示 + 保存载荷契约）。
+
+- 镜像面：`docs/api.md` §11.1（端点行 + config 约定）、ADR 0185 + `docs/adr/README.md` 索引、`agents/CHANGELOG.md` v96。
+
+## 113. 塔罗抽牌台——仪式化亲手抽牌与公版韦特牌面（M78）
+
+M69 交付后塔罗抽牌是 AI 单方行为（用户只能看 `::: cards` 卡），与「塔罗研习」的参与感相背（用户诉求：交互性 / 可玩性 / 趣味性 / 亲手随机选牌 + 好看的完整卡片 / 专业卡牌）。本批给 tarot 场景补齐**亲手抽牌台**：复刻摇卦台（M54-C）已验证的「亲手仪式 → 交复现参数请解 → 工具复算逐位核对」模式，叠加 78 张公版韦特牌面视觉与研习设施；合规口径继承协议铁律与 `pan/trail.ts` 无奖励机制先例。决策与被否决方案见 ADR 0187；专项设计（交互详设 / 素材映射 / 合规自检 / 批次）见 `docs/tarot-ritual-design.md`。
+
+- 抽牌台（`md-ext/tarot/TarotRitual.tsx`，全局宿主挂 AppLayout）：六阶段状态机 idle（静心：牌阵 + 所问）→ shuffle（洗牌，种子公开）→ cut（三堆点选置顶）→ draw（78 格牌背网格亲手选牌；roving tabindex / 撤销 / 牌位语义提示）→ reveal（逐张 3D 翻牌 600ms + 逆位落定）→ complete（复现参数 + 牌组构成事实 + 请解 / 同参数重放 / 重新洗牌）；进度存 `ma:tc:ritual` 只记参数与进度（关闭 / 刷新可续，与摇卦台同口径）；
+- 诚实参与（选择即结果）：点选格位直接进 `picks` 复现参数（不做假交互）；正逆位在洗牌阶段一次性为 78 张定妥（「牌带正逆位」），切牌旋转与选牌只搬运不重置；本地牌面与工具复算逐位同源（`deck.ts` ↔ `server/src/tools/tarot.ts`，含 mulberry32 常数），正式牌面一律以工具复算为准；
+- 工具扩展（`tarot_draw`）：增可选 `cut`（0/1/2 = 第 c 堆放最上）与 `picks`（不重复 0-77 整数，长度 = 牌阵张数，牌位序 = 点选序）；缺省（0 / [0..N-1]）与旧版逐位一致（m69 golden 不动）；summary / detail 追加复现三元组行；`::: cards` 卡模板契约不变；
+- 牌面视觉（`client/public/tarot/`）：78 张公版韦特（Rider-Waite-Smith 1909，Public Domain；`mixvlad/TarotCards` 经 jsDelivr 拉取，`sips -Z 560` 压缩，6.52MB）+ 定制牌背「星月紫金」（ImageGen 设计稿 51KB + SVG 兜底）；三级降级链（位图 → 程序化文字牌·花色符号 × 点数阵列（马赛 pips 传统）→ 文本）；逆位中性口径（180° 倒置 + 虚线框 + 角标，无凶兆色）；许可登记 `client/public/tarot/rws/README.md`；拉取脚本 `tmp-fetch-tarot-cards.mjs`（断点续拉）；**用户走查修订**：弹窗 720→860px 放大与专业化（尺寸令牌迁 `:root` 全局共用 + 阶段条连接线 + 主按钮渐变投影）+ 修洗牌牌堆定位特异性冲突（`.tc-back` 基类 position 覆盖 `.tc-deck-pile` absolute 招致的堆叠炸裂——提权 + 基类去 position）+ 面板牌阵台（CardsBoard）同步改真实牌面（`TarotCardFace` + `.is-board` 变体，逆位倒置；测试锤点类名零变更）；
+- 研习设施（无 gamification）：手记（自动记录 / 幂等 / 只存参数 / 重放 / 再请解 / 删除；`ma:tc:journal:*`）；78 张图鉴（分组浏览 + 遇见计数只读小字 + 问这张回填）；足迹从手记派生（抽过 / 遇见 / 请解）；入口三处（ChartboardPanel 空态即有 + CardsCard 第三按钮「亲手抽一组」；类名 `.tc-*` 独立命名空间，不复用 `.pn-*` 保 m69 断言）；
+- 面板就绪修订：tarot 场景 chartboard **恒就绪**（`SceneStage.tsx` 一行：`panelReadyBase || （group.id==='tarot' && panel==='chartboard'）`）——空态即有「亲手抽牌 / 图鉴 / 手记」研习入口；`panelReady` 纯函数与其它场景「无数据不展示」口径不动；
+- 协议同步：`agents/tarot/_protocol.md` 铁律 8（亲手抽牌按三元组复算、不采信转述牌面）+ 工具纪律参数口径；`tarot-reader/AGENT.md` 复算一行；`skills/tarot-reading` 复现三元组与检查清单条目；
+- 验证：server 全量 **107 文件 / 1345 例 ✅**（含新增 m78 6 例：cut/picks golden / 旋转等价 / 校验 / 工具壳）；client 全量 **109 文件 / 1258 例 ✅**（新增 m78-deck 6 / m78-ritual 10，m69-md-ext 17 回归）；E2E `m78-tarot-ritual` **2/2 ✅** + 邻回归 m69-cards / m52-stage **25/25 ✅**；typecheck 全仓 0 错；check:agents 165/165 + 协议 41/41；check:skills 70/70；eval（mock 确定性）**36/36 ✅** 无回归。
+
+- 镜像面：`docs/tarot-ritual-design.md`（专项设计）、ADR 0187 + `docs/adr/README.md` 索引、`agents/CHANGELOG.md` v98。

@@ -59,7 +59,14 @@ export function ZiweiBoard({
   const [sel, setSel] = React.useState<string | null>(null)
   const [xun, setXun] = React.useState<number | null>(null)
   const [mu, setMu] = React.useState<MuTone | null>(null)
+  // M63-A：流年层开关（卡含「流年」字段时才可开；数据仅当前年，不虚构其他年份）
+  const [showSui, setShowSui] = React.useState(false)
   const refs = React.useRef(new Map<string, HTMLButtonElement | null>())
+
+  const horo = model.center.horoscope
+  const suiOn = showSui && horo !== undefined
+  const suiSoulZhi = horo ? model.palaces.find((p) => p.name === horo.soulPalace)?.zhi : undefined
+  const suiMuOf = (star: string): MuTone | undefined => horo?.siHua.find((h) => h.star === star)?.mutagen
 
   const byBranch = new Map(model.palaces.map((p) => [p.zhi, p]))
   // 大限巡游序：按年龄起点排序（盘内大限即年龄序，此处防御性重排）
@@ -106,6 +113,7 @@ export function ZiweiBoard({
             if (p.daXian?.current) cls.push('is-current')
             if (xun !== null && xunPalace?.zhi === p.zhi) cls.push('is-xun')
             if (muBranches.has(p.zhi)) cls.push('is-mu')
+            if (suiOn && suiSoulZhi === p.zhi) cls.push('is-sui')
             return (
               <button
                 type="button"
@@ -141,16 +149,23 @@ export function ZiweiBoard({
                   {p.stars.length === 0 ? (
                     <span className="pn-palace-empty">空宫</span>
                   ) : (
-                    p.stars.map((s, i) => (
-                      <span className="pn-star" key={i}>
-                        {s.name}
-                        {s.brightness ? <span className="pn-star-b">{s.brightness}</span> : null}
-                        {s.mutagen ? <MuChip tone={s.mutagen} /> : null}
-                      </span>
-                    ))
+                    p.stars.map((s, i) => {
+                      const suiMu = suiOn ? suiMuOf(s.name) : undefined
+                      return (
+                        <span className="pn-star" key={i}>
+                          {s.name}
+                          {s.brightness ? <span className="pn-star-b">{s.brightness}</span> : null}
+                          {s.mutagen ? <MuChip tone={s.mutagen} /> : null}
+                          {suiMu ? <span className={`pn-sui-mu pn-sui-${suiMu === '禄' ? 'lu' : suiMu === '权' ? 'quan' : suiMu === '科' ? 'ke' : 'ji'}`}>流{suiMu}</span> : null}
+                        </span>
+                      )
+                    })
                   )}
                 </span>
-                <span className="pn-palace-dx">{p.daXian ? `${p.daXian.range[0]}-${p.daXian.range[1]}` : ''}</span>
+                <span className="pn-palace-dx">
+                  {suiOn && horo?.palaceOf[p.zhi] ? <span className="pn-palace-sui">{horo.palaceOf[p.zhi]}</span> : null}
+                  {p.daXian ? `${p.daXian.range[0]}-${p.daXian.range[1]}` : ''}
+                </span>
               </button>
             )
           })}
@@ -188,6 +203,34 @@ export function ZiweiBoard({
               <div className="pn-center-xun">
                 大限 {xunPalace.daXian?.range[0]}-{xunPalace.daXian?.range[1]} · {xunPalace.gan}
                 {xunPalace.zhi} · {xunPalace.name}
+              </div>
+            ) : null}
+            {horo ? (
+              <div className="pn-center-sui">
+                <button
+                  type="button"
+                  className={`pn-sui-btn${suiOn ? ' is-on' : ''}`}
+                  aria-pressed={suiOn}
+                  onClick={() => setShowSui(!showSui)}
+                >
+                  流年 {horo.year} {horo.ganZhi}
+                </button>
+                {suiOn ? (
+                  <div className="pn-center-sui-line">
+                    流年命宫 {horo.soulPalace}
+                    {horo.siHua.length > 0
+                      ? ` ｜ ${horo.siHua.map((h) => `${h.mutagen}${h.star}`).join(' ')}`
+                      : ''}
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    className="pn-ask-btn pn-sui-ask"
+                    onClick={() => onAsk?.(`请补算 ${horo.year + 1} 年的流年四化与流年命宫（参考区间）。`)}
+                  >
+                    补算 {horo.year + 1} 流年
+                  </button>
+                )}
               </div>
             ) : null}
             <div className="pn-center-step">
@@ -241,6 +284,7 @@ export function ZiweiBoard({
               <MuChip tone="科" />
               <MuChip tone="忌" />
             </>,
+            ...(horo ? ['流年层：角标 = 流年宫名 · 流禄/权/科/忌 = 流年四化'] : []),
           ]}
         />
       </div>

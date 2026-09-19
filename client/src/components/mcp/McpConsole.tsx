@@ -195,7 +195,7 @@ function JsonConfigCard(): React.JSX.Element | null {
         <div className="mt-2 rounded-md border border-dashed bg-muted/20 p-2">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <span className="text-[11px] text-muted-foreground">
-              {`文件不存在：可将以下示例写入 ${jsonConfig.file}（支持 \${VAR} / \${VAR:-默认值} 变量展开；eagerLoad: true 让服务器工具常驻）`}
+              {`文件不存在：可将以下示例写入 ${jsonConfig.file}（支持 \${VAR} / \${VAR:-默认值} 变量展开）`}
             </span>
             <Button
               size="xs"
@@ -219,10 +219,7 @@ function JsonConfigCard(): React.JSX.Element | null {
         <DialogContent className="max-w-lg">
           <DialogHeader>
             <DialogTitle>粘贴导入 MCP JSON</DialogTitle>
-            <DialogDescription>
-              生态标准 <span className="font-mono">mcpServers</span> 格式（Claude Desktop / Claude Code
-              配置可直接拷贝）；创建为「手动」源服务器，同名冲突跳过。如需文件权威管理请直接编辑 mcp.json。
-            </DialogDescription>
+            <DialogDescription>创建为「手动」源服务器，同名冲突跳过。</DialogDescription>
           </DialogHeader>
           <textarea
             value={importText}

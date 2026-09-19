@@ -15,7 +15,9 @@ describe('数据库迁移', () => {
   it('空库迁移出全部表，且重复执行幂等', () => {
     const db = openDatabase(':memory:', { memory: true })
     const versions = db.all<{ version: number }>('SELECT version FROM schema_migrations ORDER BY version')
-    expect(versions.map((v) => Number(v.version))).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12])
+    expect(versions.map((v) => Number(v.version))).toEqual([
+      1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
+    ])
 
     const again = applyMigrations(db)
     expect(again.applied).toEqual([])
@@ -38,6 +40,13 @@ describe('数据库迁移', () => {
       'reviews',
       'mcp_servers',
       'session_mcp_servers',
+      // M57：多用户
+      'users',
+      'auth_sessions',
+      'api_keys',
+      'user_prefs',
+      // M68：用户素材库
+      'materials',
     ]) {
       expect(tables).toContain(name)
     }

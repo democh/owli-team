@@ -196,7 +196,7 @@ export function DiffView({ sessionId, path }: { sessionId: string; path: string 
       <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center text-muted-foreground">
         <GitCompareArrows className="size-8 opacity-50" />
         <p className="text-[12.5px] leading-5">
-          {error ?? '该文件暂无版本记录（成员写入后自动记录每一版）'}
+          {error ?? '该文件暂无版本记录'}
         </p>
         <Button variant="outline" size="sm" onClick={() => setError(undefined)}>
           <RefreshCw className="size-3.5" />

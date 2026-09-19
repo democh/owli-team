@@ -608,10 +608,13 @@ describe('场景创建器 SessionList（M16）', () => {
     // M48：空选不再禁用——空编制创建合法（首条消息由平台路由组队）
     expect(screen.getByRole('button', { name: /空编制创建 · 交给平台组队/ })).toBeEnabled()
 
-    // 选中卢娜（默认灵魂狂野）→ 在编制行切换为考据派
+    // 选中卢娜（默认灵魂狂野）→ 编制行「参与性格」：先勾选考据派（多选 = 分身同台），再取消狂野（回到单人格考据派）
     await user.click(screen.getByRole('button', { name: /卢娜/ }))
     await user.click(screen.getByRole('button', { name: '狂野' }))
-    await user.click(screen.getByRole('button', { name: /^考据派/ }))
+    const soulMenu = screen.getByText('参与性格（可多选）').parentElement as HTMLElement
+    await user.click(within(soulMenu).getByRole('button', { name: /^考据派/ }))
+    await user.click(within(soulMenu).getByRole('button', { name: /^狂野/ }))
+    expect(screen.getByRole('button', { name: '考据派' })).toBeInTheDocument()
     expect(screen.getByText('已选 1 位')).toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: /创建并进入/ }))

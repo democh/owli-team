@@ -63,8 +63,7 @@ function makeToolEnv(): { registry: ToolRegistry; runtime: ToolRuntime; workspac
     allowRunCommand: false,
     allowedCommands: [],
     allowSensitive: false,
-    webFetchAllowedDomains: [],
-    webSearch: { enabled: false, apiKey: '', apiUrl: '', htmlUrl: '' },
+    webSearch: { apiKey: '', apiUrl: '', htmlUrl: '' },
     httpUserAgent: '',
     httpMinIntervalMs: 0,
     httpTimeoutMs: 15_000,
@@ -448,19 +447,15 @@ describe('M5：新增工具能力', () => {
   })
 })
 
-// ---------- M5：web_fetch（白名单域名） ----------
+// ---------- M5：web_fetch（任意 http/https URL，无访问限制） ----------
 
 describe('M5：web_fetch', () => {
   beforeEach(() => {
     resetAntiBotState()
   })
 
-  it('未配置 → 未启用；白名单外 → 拒绝；白名单内 → 抓取并转纯文本', async () => {
+  it('任意域名可抓取（无白名单）→ 抓取并转纯文本', async () => {
     const { registry, runtime } = makeToolEnv()
-
-    const disabled = await registry.execute('web_fetch', { url: 'http://127.0.0.1:9/' }, runtime)
-    expect(disabled.ok).toBe(false)
-    expect(disabled.summary).toContain('未启用')
 
     const server = http.createServer((_req, res) => {
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
@@ -469,13 +464,8 @@ describe('M5：web_fetch', () => {
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
     try {
       const port = (server.address() as AddressInfo).port
-      const allowedRt = { ...runtime, webFetchAllowedDomains: ['127.0.0.1'] }
-
-      const notAllowed = await registry.execute('web_fetch', { url: 'https://example.com/' }, allowedRt)
-      expect(notAllowed.ok).toBe(false)
-      expect(notAllowed.summary).toContain('域名不在白名单')
-
-      const fetched = await registry.execute('web_fetch', { url: `http://127.0.0.1:${port}/doc` }, allowedRt)
+      // ADR 0136：无白名单 / 无启用门控——任意 http/https 地址均可抓取
+      const fetched = await registry.execute('web_fetch', { url: `http://127.0.0.1:${port}/doc` }, runtime)
       expect(fetched.ok).toBe(true)
       expect(fetched.detail).toContain('工具文档')
       expect(fetched.detail).toContain('正文内容在这里')
@@ -502,11 +492,10 @@ describe('M5：web_fetch', () => {
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
     try {
       const port = (server.address() as AddressInfo).port
-      const allowedRt = { ...runtime, webFetchAllowedDomains: ['127.0.0.1'] }
-      const declared = await registry.execute('web_fetch', { url: `http://127.0.0.1:${port}/declared` }, allowedRt)
+      const declared = await registry.execute('web_fetch', { url: `http://127.0.0.1:${port}/declared` }, runtime)
       expect(declared.ok).toBe(false)
       expect(declared.summary).toContain('响应过大')
-      const chunked = await registry.execute('web_fetch', { url: `http://127.0.0.1:${port}/chunked` }, allowedRt)
+      const chunked = await registry.execute('web_fetch', { url: `http://127.0.0.1:${port}/chunked` }, runtime)
       expect(chunked.ok).toBe(false)
       expect(chunked.summary).toContain('响应过大')
     } finally {
@@ -533,12 +522,11 @@ describe('M5：web_fetch', () => {
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
     try {
       const port = (server.address() as AddressInfo).port
-      const allowedRt = { ...runtime, webFetchAllowedDomains: ['127.0.0.1'] }
-      const gbk = await registry.execute('web_fetch', { url: `http://127.0.0.1:${port}/gbk` }, allowedRt)
+      const gbk = await registry.execute('web_fetch', { url: `http://127.0.0.1:${port}/gbk` }, runtime)
       expect(gbk.ok).toBe(true)
       expect(gbk.detail).toContain('百度')
 
-      const blocked = await registry.execute('web_fetch', { url: `http://127.0.0.1:${port}/blocked` }, allowedRt)
+      const blocked = await registry.execute('web_fetch', { url: `http://127.0.0.1:${port}/blocked` }, runtime)
       expect(blocked.ok).toBe(false)
       expect(blocked.summary).toContain('风控')
     } finally {

@@ -79,7 +79,7 @@ function PendingCard({ approval, hotkey }: { approval: ApprovalRequest; hotkey?:
         <Badge variant="warning">{approval.action}</Badge>
         {agent && (
           <span className="flex items-center gap-1 text-[11px] text-amber-800/80">
-            <AgentAvatar agent={agent} size={14} animated={false} className="rounded" />
+            <AgentAvatar agent={agent} size={14} animated={false} />
             {agent.name}
           </span>
         )}

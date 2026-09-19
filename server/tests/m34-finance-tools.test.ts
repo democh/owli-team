@@ -45,6 +45,9 @@ function makeFetcher(): Fetcher {
     else if (url.includes('roll/get')) text = fixture('sina-roll.json')
     else if (url.includes('f10/lsjz')) text = fixture('fund-lsjz.json')
     else if (url.includes('pingzhongdata')) text = fixture('fund-pingzhongdata.js')
+    else if (url.includes('jbgk_')) text = fixture('fund-jbgk.html')
+    else if (url.includes('FundArchivesDatas')) text = fixture('fund-jjcc.html')
+    else if (url.includes('fhsp_')) text = fixture('fund-fhsp.html')
     if (text === undefined) throw new Error(`无匹配 fixture：${url}`)
     return {
       status: 200,
@@ -102,8 +105,7 @@ function setup(opts: { py?: PyHarness; overrides?: Record<string, unknown> } = {
     allowRunCommand: false,
     allowedCommands: [],
     allowSensitive: false,
-    webFetchAllowedDomains: [],
-    webSearch: { enabled: false, apiKey: '', apiUrl: '', htmlUrl: '' },
+    webSearch: { apiKey: '', apiUrl: '', htmlUrl: '' },
     httpUserAgent: '',
     httpMinIntervalMs: 0,
     httpTimeoutMs: 15_000,
@@ -271,12 +273,17 @@ describe('M34 工具：fin_kline / fin_indicator', () => {
 })
 
 describe('M34 工具：fin_fund / fin_fundamental / fin_news', () => {
-  it('fin_fund：场外基金档案（名称 / 费率 / 来源）', async () => {
+  it('fin_fund：场外基金档案（规模 / 持仓 / 分红 / 来源）', async () => {
     const { registry, runtime } = setup()
     const result = await registry.execute('fin_fund', { code: '000001', kind: 'fund' }, runtime)
     expect(result.ok).toBe(true)
     expect(result.summary).toContain('华夏成长混合（000001）')
     expect(result.detail).toContain('管理费率')
+    expect(result.detail).toContain('规模：39.38 亿元')
+    expect(result.detail).toContain('前十大持仓')
+    expect(result.detail).toContain('贵州茅台')
+    expect(result.detail).toContain('分红：')
+    expect(result.detail).toContain('2025-09-22')
     expect(result.detail).toContain('来源 eastmoney-fund')
   })
 

@@ -46,8 +46,8 @@ interface ToolsEnv {
   runtime: ToolRuntime
 }
 
-/** 每个用例独立 SQLite + Vault + workspace + 画布目录（互不污染） */
-function makeEnv(): ToolsEnv {
+/** 每个用例独立 SQLite + Vault + workspace + 画布目录（互不污染）；mediaCanvas=false 模拟媒体服务未装配画布 */
+function makeEnv(opts: { mediaCanvas?: boolean } = {}): ToolsEnv {
   const dir = makeTmpDir('ma-m31-tools-')
   const db = openDatabase(path.join(dir, 'app.db'))
   const vault = SecretVault.load({ keyFile: path.join(dir, 'secrets.key') })
@@ -58,11 +58,17 @@ function makeEnv(): ToolsEnv {
   const notify = {
     publish: (input: PublishedNotification) => input,
   } as unknown as NotifyHub
-  const media = new MediaService({ connections, artifacts, notify })
   const canvasChanges: CanvasChange[] = []
   const canvas = new CanvasStore({
     dataDir: path.join(dir, 'data'),
     publish: (sessionId, version, by) => canvasChanges.push({ sessionId, version, by }),
+  })
+  // M31 修订：媒体服务装配画布（创建落占位 / 终态结算）；mediaCanvas=false 时验证降级路径
+  const media = new MediaService({
+    connections,
+    artifacts,
+    notify,
+    canvas: opts.mediaCanvas === false ? undefined : canvas,
   })
   const tools = new Map<string, AgentTool>(
     [...createCanvasTools(), ...createMediaTools()].map((t) => [t.name, t] as const),
@@ -338,28 +344,42 @@ describe('M31 media_generate / media_video', () => {
     expect(res.detail).toContain('设置 → 媒体生成')
   })
 
-  it('创建即返回：文生图回灌任务 id / 作者标注 / 缺省 canvasTarget 落位', async () => {
+  it('创建即返回：回灌任务 id / 作者标注 / 服务端落占位（空画布→原点，完成原地替换）', async () => {
     const env = makeEnv()
     createMediaConnection(env)
-    registerAdapter(env)
+    // 可控适配器：挂起至 release，保证「返回时仍是占位态」可断言
+    let release: (() => void) | undefined
+    registerAdapter(env, async (_job, ctx) => {
+      await new Promise<void>((r) => {
+        release = r
+      })
+      return { outputs: [ctx.saveOutput(Buffer.from('x'), 'png')] }
+    })
     const res = await runTool(env, 'media_generate', { prompt: '一只猫在窗台' })
     expect(res.ok).toBe(true)
     expect(res.summary).toContain('已创建文生图任务')
     const jobId = res.summary.match(/任务 (mj_\S+)（/)?.[1]
     expect(jobId).toBeDefined()
     expect(res.detail).toContain('异步长任务')
-    expect(res.detail).toContain('自动出现在画布')
+    expect(res.detail).toContain('占位节点已就位') // M31 修订：服务端落位（创建即占位）
     expect(res.detail).toContain('canvas_write') // 本回合不空等的替代工作提示
 
     const job = env.media.get(jobId!)!
     expect(job.actor).toBe('pm')
     expect(job.capability).toBe('text2image')
-    expect(job.canvasTarget).toEqual({ x: 0, y: 0 }) // 空画布 → 原点
+    expect(job.placedCanvas).toBe(true)
+    expect(job.canvasNodeId).toBeDefined()
+    const placeholder = env.canvas.get(env.sessionId).nodes.find((n) => n.id === job.canvasNodeId)!
+    expect(placeholder.position).toEqual({ x: 0, y: 0 }) // 空画布 → 原点
+    expect((placeholder.data as { pending?: boolean }).pending).toBe(true)
+    release!()
     await until(() => env.media.get(jobId!)!.status === 'succeeded')
-    expect(env.media.get(jobId!)!.canvasTarget).toEqual({ x: 0, y: 0 }) // 完成后保留，供前端自动落位
+    const settled = env.canvas.get(env.sessionId).nodes.find((n) => n.id === job.canvasNodeId)!
+    expect((settled.data as { pending?: boolean }).pending).toBe(false)
+    expect((settled.data as { artifact?: string }).artifact).toBe(env.media.get(jobId!)!.outputs[0])
   })
 
-  it('canvasTarget 跟随现有内容（右缘 +80）；place_on_canvas=false 关闭放置', async () => {
+  it('占位跟随现有内容（右缘 +80）；place_on_canvas=false 不落位', async () => {
     const env = makeEnv()
     createMediaConnection(env)
     registerAdapter(env)
@@ -367,25 +387,27 @@ describe('M31 media_generate / media_video', () => {
 
     const placed = await runTool(env, 'media_generate', { prompt: '右移' })
     const placedJob = env.media.get(placed.summary.match(/任务 (mj_\S+)（/)![1]!)!
-    expect(placedJob.canvasTarget).toEqual({ x: 380, y: 0 })
+    const node = env.canvas.get(env.sessionId).nodes.find((n) => n.id === placedJob.canvasNodeId)!
+    expect(node.position).toEqual({ x: 380, y: 0 }) // autoPosition：右缘 +80
 
     const off = await runTool(env, 'media_generate', { prompt: '仅落交付件', place_on_canvas: false })
     expect(off.ok).toBe(true)
-    expect(off.detail).not.toContain('自动出现在画布')
+    expect(off.detail).not.toContain('占位节点已就位')
     const offJob = env.media.get(off.summary.match(/任务 (mj_\S+)（/)![1]!)!
-    expect(offJob.canvasTarget).toBeUndefined()
+    expect(offJob.placedCanvas).not.toBe(true)
+    expect(env.canvas.get(env.sessionId).nodes.some((n) => n.id === offJob.canvasNodeId)).toBe(false)
   })
 
-  it('服务端未装配画布：任务照常创建但放弃放置', async () => {
-    const env = makeEnv()
+  it('媒体服务未装配画布：任务照常创建但放弃落位（降级）', async () => {
+    const env = makeEnv({ mediaCanvas: false })
     createMediaConnection(env)
     registerAdapter(env)
-    const tool = env.tools.get('media_generate')!
-    const res = await tool.execute(tool.schema.parse({ prompt: '无画布' }), ctxOf(env, { canvas: undefined }))
+    const res = await runTool(env, 'media_generate', { prompt: '无画布' })
     expect(res.ok).toBe(true)
-    expect(res.detail).not.toContain('自动出现在画布')
+    expect(res.detail).not.toContain('占位节点已就位')
     const job = env.media.list(env.sessionId)[0]!
-    expect(job.canvasTarget).toBeUndefined()
+    expect(job.placedCanvas).not.toBe(true)
+    expect(env.canvas.get(env.sessionId).nodes).toHaveLength(0)
   })
 
   it('media_video：首尾帧不齐 / 连接未声明能力 → 透传错误文案', async () => {

@@ -5,7 +5,9 @@
  */
 import * as React from 'react'
 import type { AgentDefinition, AgentGroup } from '@multi-agent/shared'
+import { baseAgentId } from '@multi-agent/shared'
 import { useMediaQuery } from '../../lib/hooks'
+import { labelOfMemberKey } from '../../lib/members'
 import { useAgentStore } from '../../stores/agent-store'
 import { useRunStore } from '../../stores/run-store'
 import { useSceneStore } from '../../stores/scene-store'
@@ -30,6 +32,7 @@ export function SceneStage({
   children: React.ReactNode
 }): React.JSX.Element {
   const currentId = useSessionStore((s) => s.currentId)
+  const session = useSessionStore((s) => s.sessions.find((x) => x.id === s.currentId))
   const agents = useAgentStore((s) => s.agents)
   const waitingIds = useRunStore((s) => s.queue)
   const narrow = useMediaQuery(NARROW_QUERY)
@@ -41,8 +44,33 @@ export function SceneStage({
   const stage = React.useMemo(() => resolveStage(group?.stage, { listMode }), [group?.stage, listMode])
   // M58：面板「无数据不展示」——未就绪不渲染工作区（宿主零感知：dock 直通纯对话流 / roundtable 无 aside），
   // 数据到位后自动出现（挂载即已带真实数据）
-  const ready = useScenePanelReady(stage.panel)
-  const agentOf = React.useCallback((agentId: string) => agents.find((a) => a.id === agentId), [agents])
+  // M78：tarot 场景 chartboard 恒就绪——空态即有「亲手抽牌 / 图鉴 / 手记」研习入口（面板即入口，
+  // 与 panelReady 纯函数解耦，不动其他场景「无数据不展示」口径）
+  const panelReadyBase = useScenePanelReady(stage.panel)
+  const ready = panelReadyBase || (group?.id === 'tarot' && stage.panel === 'chartboard')
+  // M77：成员键容忍的成员解析——在场实例预生成显示克隆（id = 成员键、name = 实例标签；缓存保证引用稳定）；
+  // 基础 id / 历史键走后补回退链（同角多实例时席位、卡片、时间轴均显示 `名字·灵魂名`）
+  const displayMembers = React.useMemo(() => {
+    const map = new Map<string, AgentDefinition>()
+    for (const key of session?.participantIds ?? []) {
+      const base = agents.find((a) => a.id === baseAgentId(key))
+      if (!base) continue
+      const label = labelOfMemberKey(agents, session, key)
+      map.set(key, label === base.name ? base : { ...base, id: key, name: label })
+    }
+    return map
+  }, [agents, session])
+  const agentOf = React.useCallback(
+    (agentId: string): AgentDefinition | undefined => {
+      const hit = displayMembers.get(agentId)
+      if (hit) return hit
+      const base = agents.find((a) => a.id === baseAgentId(agentId))
+      if (!base) return undefined
+      const label = labelOfMemberKey(agents, session, agentId)
+      return label === base.name ? base : { ...base, id: agentId, name: label }
+    },
+    [displayMembers, agents, session],
+  )
 
   const ctxValue = React.useMemo<SceneCtx>(
     () => ({

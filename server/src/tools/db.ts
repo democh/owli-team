@@ -33,7 +33,7 @@ function resolveConnection(
     return {
       ok: false,
       message:
-        '本会话未绑定任何数据库连接。请在右侧面板「连接」页签中绑定 PostgreSQL / MySQL / SQLite 连接后再试。',
+        '本会话未绑定任何数据库连接。请在会话头部「资源」入口绑定 PostgreSQL / MySQL / SQLite 连接后再试。',
     }
   }
   const hit = list.find((c) => c.id === nameOrId) ?? list.find((c) => c.name === nameOrId)
@@ -43,6 +43,9 @@ function resolveConnection(
       message: `未找到连接「${nameOrId}」。本会话可用：${list.map((c) => `${c.name}(${c.kind})`).join('、')}`,
     }
   }
+  // M57 P2：共享会话最小权限复核（成员禁触达未开放连接；未装配 = 不复核）
+  const denied = ctx.connectionGuard?.(hit.id, ctx.triggerUserId)
+  if (denied) return { ok: false, message: denied }
   return { ok: true, connection: hit }
 }
 
@@ -106,13 +109,14 @@ const dbListConnectionsTool: AgentTool<Record<string, never>> = {
       return {
         ok: true,
         summary: '本会话未绑定数据库连接',
-        detail: '请在右侧面板「连接」页签中绑定连接（需先在连接中心创建）。',
+        detail: '请在会话头部「资源」入口绑定连接（团队连接由管理员在连接中心维护；成员可在「设置 → 我的连接」自建个人连接）。',
       }
     }
-    const lines = list.map(
-      (c) =>
-        `- ${c.name} [${c.kind}] 状态=${c.status}${c.config.readOnly === false || c.config.allowWrites ? '（允许写入）' : '（只读）'}`,
-    )
+    const lines = list.map((c) => {
+      // M57 P2：未对成员开放的连接标注不可用（复核文案不直接回灌，仅提示）
+      const denied = ctx.connectionGuard?.(c.id, ctx.triggerUserId) ? '（未对成员开放，不可用）' : ''
+      return `- ${c.name} [${c.kind}] 状态=${c.status}${c.config.readOnly === false || c.config.allowWrites ? '（允许写入）' : '（只读）'}${denied}`
+    })
     return { ok: true, summary: `${list.length} 个可用数据库连接`, detail: lines.join('\n') }
   },
 }
@@ -144,6 +148,8 @@ const dbSchemaTool: AgentTool<{ connection: string; max_tables?: number }> = {
         sessionId: ctx.sessionId,
         runId: ctx.runId,
         requireBinding: true,
+        // M57 P2：归因（触发者；兼容模式缺省）
+        actorUserId: ctx.triggerUserId,
       })
       const snapshot = outcome.schema!
       const tables = snapshot.tables.slice(0, args.max_tables)
@@ -216,6 +222,8 @@ const dbQueryTool: AgentTool<{ connection: string; sql: string; params?: unknown
         sessionId: ctx.sessionId,
         runId: ctx.runId,
         requireBinding: true,
+        // M57 P2：归因（触发者；兼容模式缺省）
+        actorUserId: ctx.triggerUserId,
       })
       const result = outcome.query!
       // 实时操作事件（直播窗/操作流）：查询 + 结果预览（最多 5 行）
@@ -234,6 +242,21 @@ const dbQueryTool: AgentTool<{ connection: string; sql: string; params?: unknown
         ok: true,
         summary: `查询完成：${result.rowCount} 行（${result.durationMs}ms）`,
         detail: formatQueryResult(result),
+        // M39（§93，BI-1）：取数管道卡数据源（≤5 行预览；单元格文本化并截断，控制消息负载）
+        meta: {
+          columns: result.columns,
+          rows: result.rows.slice(0, 5).map((row) => {
+            const out: Record<string, string> = {}
+            for (const col of result.columns) {
+              const v = row[col]
+              const text = v === null || v === undefined ? 'NULL' : typeof v === 'object' ? JSON.stringify(v) : String(v)
+              out[col] = text.length > 160 ? `${text.slice(0, 160)}…` : text
+            }
+            return out
+          }),
+          rowCount: result.rowCount,
+          durationMs: result.durationMs,
+        },
       }
     } catch (err) {
       ctx.opNotify?.({
@@ -283,6 +306,8 @@ const dbExecuteTool: AgentTool<{ connection: string; sql: string; params?: unkno
         sessionId: ctx.sessionId,
         runId: ctx.runId,
         requireBinding: true,
+        // M57 P2：归因（触发者；兼容模式缺省）
+        actorUserId: ctx.triggerUserId,
       })
       const affected = outcome.query!.affectedRows
       // 实时操作事件（直播窗/操作流）：写操作（已经审批门）

@@ -229,18 +229,34 @@ export class McpRuntimeManager {
 
   // ---------- 工具可用性（引擎按回合过滤 + 执行期校验） ---------- */
 
-  /** 会话可用过滤：非 MCP 工具原样保留；MCP 工具要求服务器启用 + 已连接 + 会话已绑定 */
-  filterForSession(sessionId: string, tools: AgentTool[]): AgentTool[] {
-    return tools.filter((tool) => !isMcpToolName(tool.name) || this.isToolUsable(sessionId, tool.name))
+  /** 会话可用过滤：非 MCP 工具原样保留；MCP 工具要求服务器启用 + 已连接 + 会话已绑定
+   *  M57 P3：personal 服务器仅在其属主的会话中可用（sessionOwnerId 缺省 = 不做 personal 复核，兼容旧调用） */
+  filterForSession(sessionId: string, tools: AgentTool[], sessionOwnerId?: string): AgentTool[] {
+    return tools.filter((tool) => !isMcpToolName(tool.name) || this.isToolUsable(sessionId, tool.name, sessionOwnerId))
   }
 
-  isToolUsable(sessionId: string, registeredName: string): boolean {
+  isToolUsable(sessionId: string, registeredName: string, sessionOwnerId?: string): boolean {
     const serverId = this.toolOwner.get(registeredName)
     if (!serverId) return false
     const server = this.store.get(serverId)
     const runtime = this.runtimes.get(serverId)
     if (!server || !server.enabled || server.status !== 'ok' || !runtime?.handle) return false
+    // M57 P3：personal 仅属主会话可用（他人会话 / 共享会话中的非属主视图一律不可见）
+    if ((server.scope ?? 'system') === 'personal' && server.ownerId !== sessionOwnerId) return false
     return this.store.isBound(sessionId, serverId)
+  }
+
+  /**
+   * M57 P3：某属主 personal 服务器的全部已注册工具名（引擎执行模式自动授予用）。
+   * 仅返回已注册（连接成功）的工具；绑定 / 可用性由 filterForSession 统一复核。
+   */
+  personalToolNames(ownerId: string): string[] {
+    const names: string[] = []
+    for (const [name, serverId] of this.toolOwner) {
+      const server = this.store.get(serverId)
+      if (server && (server.scope ?? 'system') === 'personal' && server.ownerId === ownerId) names.push(name)
+    }
+    return names
   }
 
   /** 审批策略（引擎 approvalGate）：未注册的工具返回 undefined（按内置规则处理） */
@@ -271,6 +287,10 @@ export class McpRuntimeManager {
       return { ok: false, summary: `MCP 服务器不可用（未连接）：请稍后在 MCP 管理台重试` }
     }
     if (!server.enabled) return { ok: false, summary: `MCP 服务器「${server.name}」已禁用` }
+    // M57 P3：personal 最小权限复核（执行侧，以会话属主 ctx.userId 为准）
+    if ((server.scope ?? 'system') === 'personal' && server.ownerId && server.ownerId !== ctx.userId) {
+      return { ok: false, summary: `MCP 服务器「${server.name}」为他人私有：无权使用` }
+    }
     if (!this.store.isBound(ctx.sessionId, serverId)) {
       return {
         ok: false,

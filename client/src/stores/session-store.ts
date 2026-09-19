@@ -17,6 +17,8 @@ export interface SessionDetailResponse {
   messages: ChatMessage[]
   /** M3：最近一次运行快照（interrupted 时前端展示「从断点继续」） */
   latestRun?: RunSnapshot | null
+  /** M57 P2：共享会话人类署名表（userId → 昵称；兼容模式为空） */
+  humanNames?: Record<string, string>
 }
 
 export interface SessionState {
@@ -28,6 +30,8 @@ export interface SessionState {
   order: string[]
   /** M3：当前会话最近一次运行快照 */
   latestRun: RunSnapshot | null
+  /** M57 P2：当前会话人类署名表（userId → 昵称；共享会话消息气泡用；兼容模式为空对象） */
+  humanNames: Record<string, string>
   loadingSessions: boolean
   loadingMessages: boolean
   /** 交付件刷新版本号：artifact:updated 递增，交付件浏览器据此重拉列表 */
@@ -100,6 +104,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   byId: new Map(),
   order: [],
   latestRun: null,
+  humanNames: {},
   loadingSessions: false,
   loadingMessages: false,
   artifactVersion: 0,
@@ -171,13 +176,13 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   selectSession: async (id) => {
     // M55：切换会话后旧缓冲失去意义（消息将整体重拉），随视图一并清空
     rawStreams.clear()
-    set({ currentId: id, byId: new Map(), order: [], latestRun: null })
+    set({ currentId: id, byId: new Map(), order: [], latestRun: null, humanNames: {} })
     if (!id) return
     set({ loadingMessages: true })
     try {
       const res = await apiGet<SessionDetailResponse>(`/api/sessions/${id}`)
       if (get().currentId !== id) return // 切换竞态守卫
-      set({ ...toStores(res.messages), latestRun: res.latestRun ?? null })
+      set({ ...toStores(res.messages), latestRun: res.latestRun ?? null, humanNames: res.humanNames ?? {} })
     } finally {
       if (get().currentId === id) set({ loadingMessages: false })
     }
@@ -188,7 +193,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     if (!id) return
     const res = await apiGet<SessionDetailResponse>(`/api/sessions/${id}`)
     if (get().currentId !== id) return
-    set({ ...toStores(res.messages), latestRun: res.latestRun ?? null })
+    set({ ...toStores(res.messages), latestRun: res.latestRun ?? null, humanNames: res.humanNames ?? {} })
   },
 
   renameSession: async (id, title) => {

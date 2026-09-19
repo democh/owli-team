@@ -9,6 +9,7 @@
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
+import { FONT_MONO } from './fonts'
 
 export interface TerminalRuntime {
   /** 终端 DOM 容器（视图挂载 / 切换 tab 时搬移，不销毁） */
@@ -33,7 +34,7 @@ export function createXtermRuntime(): TerminalRuntime {
     cursorBlink: true,
     fontSize: 12,
     lineHeight: 1.25,
-    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace',
+    fontFamily: FONT_MONO,
     scrollback: 5_000,
     theme: {
       background: '#0b1220',

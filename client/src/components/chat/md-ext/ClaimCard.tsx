@@ -6,7 +6,7 @@
  * - 解析失败 → raw 兜底静态渲染，其余内容照常。
  */
 import * as React from 'react'
-import { claimReasonsOfLines, parseClaimReasons, type ClaimNodeData } from '../../../lib/pk'
+import { claimReasonsOfLines, parseClaimReasons, TEMPLATES, type ClaimNodeData } from '../../../lib/pk'
 import { useUiStore } from '../../../stores/ui-store'
 import { ClaimTree } from '../../scene/parts/ClaimTree'
 import { useMessageInfo } from './message-context'
@@ -15,12 +15,19 @@ export function ClaimCard({
   title,
   detail,
   reasons: reasonsRaw,
+  perspective,
+  stance,
+  confidence,
   raw,
   children,
 }: {
   title?: string
   detail?: string
   reasons?: string
+  /** M63：扩展字段（视角 / 倾向 / 置信度；缺省不渲染 chips） */
+  perspective?: string
+  stance?: string
+  confidence?: string
   raw?: string
   children?: React.ReactNode
 }): React.JSX.Element {
@@ -45,6 +52,9 @@ export function ClaimCard({
     claim: title || '（未命名主张）',
     ...(detail ? { detail } : {}),
     reasons: parsed,
+    ...(perspective ? { perspective } : {}),
+    ...(stance ? { stance } : {}),
+    ...(confidence ? { confidence } : {}),
   }
 
   return (
@@ -52,6 +62,8 @@ export function ClaimCard({
       <ClaimTree
         nodes={[node]}
         onPick={(text) => useUiStore.getState().insertToComposer(`请补充论据「${text}」的证据与出处。`)}
+        onEvidenceAsk={(text) => useUiStore.getState().insertToComposer(TEMPLATES.askEvidence(text))}
+        onHypoAsk={(text) => useUiStore.getState().insertToComposer(TEMPLATES.markHypothesis(text))}
       />
       {children}
     </div>

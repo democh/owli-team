@@ -167,7 +167,7 @@ export function KlineNode({ id, data, selected }: CanvasNodeProps): React.JSX.El
           </button>
           {error && <div className="shrink-0 text-[10.5px] leading-snug text-rose-600">{error}</div>}
           <div className="mt-auto text-[10px] leading-relaxed text-muted-foreground">
-            直连行情网关（只读）；也可让 Agent 用 fin_kline 拉取后经 canvas_write 写入，或从 K 线块「送上画布」。
+            直连行情网关（只读）；也可让 Agent 拉取后写入，或从 K 线块「送上画布」。
           </div>
         </div>
       </NodeShell>

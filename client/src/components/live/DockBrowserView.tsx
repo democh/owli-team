@@ -70,7 +70,7 @@ export function DockBrowserView(): React.JSX.Element {
         )}
         {mode !== 'takeover' && (
           <div className="pointer-events-none absolute inset-x-0 bottom-0 flex items-center justify-center gap-1 bg-gradient-to-t from-slate-900/80 to-transparent px-2 pb-1 pt-4 text-[10px] text-slate-200">
-            点击画面即可接管（键鼠直通浏览器）
+            点击画面即可接管
           </div>
         )}
       </div>

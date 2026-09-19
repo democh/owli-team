@@ -5,6 +5,7 @@
  * 判 true 时面板最多渲染空态，判 false 才隐藏。
  */
 import type { ChatMessage, StagePanel } from '@multi-agent/shared'
+import { claimMetaOf } from '../../lib/pk'
 import { artifactsOf, headingsOf, panRowsOf, type SceneContainer, type SceneVerdict } from './derive'
 
 /** 识别为管道看板的容器名（与 ConsolePanel.KANBAN_NAMES 同口径） */
@@ -25,14 +26,19 @@ function hasRows(c: SceneContainer): boolean {
 export function panelReady(panel: StagePanel, data: PanelReadyData): boolean {
   switch (panel) {
     case 'chartboard':
-      // ChartboardPanel：有 `::: pan` 盘面容器
-      return data.containers.some((c) => c.name === 'pan')
+      // ChartboardPanel：有 `::: pan` 盘面容器 或 `::: cards` 牌阵容器（M69 塔罗牌阵台）
+      return data.containers.some((c) => c.name === 'pan' || c.name === 'cards')
     case 'pool':
       // PoolPanel：存在「有结构化行或带标题」的容器卡
       return data.containers.some((c) => hasRows(c) || c.arg !== '')
     case 'versus':
-      // VersusPanel：有 `::: verdict` 裁决实例
-      return data.verdicts.length > 0
+      // VersusPanel：有 `::: verdict` 裁决实例；M63 扩展——带「视角」字段的 claim（四路观点卡）
+      // 或 ```game 围栏（博弈走子板）亦视为就绪（面板段有数据即可展示）
+      return (
+        data.verdicts.length > 0 ||
+        data.containers.some((c) => c.name === 'claim' && claimMetaOf(c.lines).perspective !== undefined) ||
+        data.messages.some((m) => m.content.includes('```game'))
+      )
     case 'board':
       // BoardPanel：成员消息带 Markdown 标题（目录树）或存在交付件
       return (
@@ -49,5 +55,11 @@ export function panelReady(panel: StagePanel, data: PanelReadyData): boolean {
     case 'coach':
       // CoachPanel：有 `::: checklist` 清单容器
       return data.containers.some((c) => c.name === 'checklist')
+    case 'studio':
+      // StudioPanel（M65-A/B）：有 `::: layout` 容器（方案已声明）或 .scene.json 交付件（§7.1）
+      return (
+        data.containers.some((c) => c.name === 'layout') ||
+        artifactsOf(data.messages).some((p) => p.endsWith('.scene.json'))
+      )
   }
 }

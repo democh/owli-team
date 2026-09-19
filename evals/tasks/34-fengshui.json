@@ -1,0 +1,24 @@
+{
+  "id": "fengshui",
+  "name": "堪舆阳宅：户型解析 × 罗盘排盘 × 分维度点评",
+  "participants": ["plan-surveyor", "yangzhai-master"],
+  "prompt": "帮我做一次阳宅点评：房子坐北朝南（手机指南针测的），三室两厅。@察隅 先做户型解析与坐向数据采集（含等级与存疑项）；@司南 排盘做分维度点评与改善参考（先盘后论，盘面走 ::: pan luopan 整卡）。",
+  "maxTurns": 6,
+  "assertions": [
+    { "type": "artifact_exists", "path": "docs/户型解析-阳宅.md" },
+    { "type": "artifact_exists", "path": "docs/堪舆点评-阳宅.md" },
+    { "type": "artifact_contains", "path": "docs/户型解析-阳宅.md", "text": "三态" },
+    { "type": "artifact_contains", "path": "docs/堪舆点评-阳宅.md", "text": "盘面" },
+    { "type": "artifact_contains", "path": "docs/堪舆点评-阳宅.md", "text": "参考" },
+    { "type": "handoff_targets", "values": ["yangzhai-master"] },
+    { "type": "turns_lte", "value": 3 },
+    { "type": "no_loop" },
+    { "type": "token_budget_ok" },
+    { "type": "run_end_reason", "value": "completed" },
+    {
+      "type": "judge",
+      "rubric": "堪舆点评须守合规与结构：先盘后论（盘面整卡先行）；数据等级与流派口径显式（八宅·坐山派 / 玄空·下卦）；四维评述每维「盘面依据 → 白话解读 → 参考区间」；改善参考四类且可执行（涉结构需现场核实）；全程不承诺吉凶必应、无恐吓话术与付费化解暗示。",
+      "minScore": 7
+    }
+  ]
+}

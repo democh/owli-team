@@ -12,6 +12,13 @@ export class ApiError extends Error {
   }
 }
 
+/** M57：全局 401 回调（登录态失效 → auth-store 翻转登录页；由 auth-store 注册） */
+let unauthorizedHandler: (() => void) | undefined
+
+export function setUnauthorizedHandler(handler: (() => void) | undefined): void {
+  unauthorizedHandler = handler
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, {
     headers: { 'Content-Type': 'application/json' },
@@ -27,6 +34,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     } catch {
       // 非 JSON 响应保留默认文案
     }
+    // M57：401 → 通知全局回调（登录失效）；公开接口（登录失败等）由页面自行处理，回调内部按 phase 判空
+    if (res.status === 401) unauthorizedHandler?.()
     throw new ApiError(message, res.status, refs)
   }
   return (await res.json()) as T

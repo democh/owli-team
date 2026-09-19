@@ -5,6 +5,7 @@
  * - 隔离运行：每任务独立临时 DATA_DIR/WORKSPACE_DIR（绝不触碰真实 data / workspace），串行执行；
  * - mock 模式（默认）：MockProvider 零网络确定性输出，断言全部可判定 → 进 CI；
  * - --judge：用真实模型（JUDGE_MODEL ?? LLM_MODEL）按 rubric 打分（手动 / 夜间跑）；
+ * - --real：任务执行也走真实模型（仅 real:true 探针任务；不参与 mock 基线；需 LLM_API_KEY）；
  * - 报告：evals/reports/<ts>.json + <ts>.md；与 evals/baseline.json 对比，回归则非零退出码；
  * - --update-baseline：以本次结果刷新基线（mock 模式）。
  *
@@ -12,6 +13,7 @@
  *   npm run eval                      # mock 确定性断言（CI）
  *   npm run eval -- --tasks=full-relay-login
  *   npm run eval -- --judge           # 真实模型评分（需配置 LLM_API_KEY）
+ *   npm run eval -- --real --judge --tasks=depth-report-spec --keep   # 真实模型报告规格探针
  *   npm run eval -- --update-baseline
  */
 import fs from 'node:fs'
@@ -60,8 +62,20 @@ interface EvalTaskFile {
   prompt: string
   maxTurns: number
   assertions: unknown[]
+  /** 显式 serial:false 开启并行成波（缺省串行；M61 并行守卫任务用） */
+  serial?: boolean
   /** M25：运行前播种的记忆（agent/session/global scope；owner 缺省按 scope 推导） */
-  memorySeed?: Array<{ scope: MemoryScope; owner?: string; kind: MemoryKind; content: string; importance?: number }>
+  memorySeed?: Array<{
+    scope: MemoryScope
+    owner?: string
+    kind: MemoryKind
+    content: string
+    importance?: number
+  }>
+  /** 工作区播种（发消息前写入会话工作区；如 BI 探针的数据集 CSV） */
+  seedFiles?: Array<{ path: string; content: string }>
+  /** 仅真实模型模式执行（报告规格探针：验证 prompt 遵循度；mock 全量自动跳过） */
+  real?: boolean
 }
 
 interface TaskResult {
@@ -121,7 +135,7 @@ async function buildTaskEnv(rootDir: string, maxTurns: number, provider: LlmProv
   const sessions = new SessionStore(db)
   const projects = new ProjectStore(db, cfg.allowedRoots)
   const workspace = new WorkspaceService({ cfg, sessions, projects })
-  const artifacts = new ArtifactStore(cfg.workspaceDir, (sid) => workspace.dirFor(sid))
+  const artifacts = new ArtifactStore(cfg.workspaceDir, (sid) => workspace.resolveDir(sid))
   const versions = new ArtifactVersionStore(db)
   const embedQueue = new EmbedQueueStore(db)
   const memory = new MemoryStore(db, embedQueue)
@@ -144,7 +158,17 @@ async function buildTaskEnv(rootDir: string, maxTurns: number, provider: LlmProv
     embeddings,
   })
   await memories.start()
-  const context = new ContextService({ cfg, prompts, skills, sessions, artifacts, memory, memories, summaries, compressor })
+  const context = new ContextService({
+    cfg,
+    prompts,
+    skills,
+    sessions,
+    artifacts,
+    memory,
+    memories,
+    summaries,
+    compressor,
+  })
   const approvals = new ApprovalService({ timeoutMs: cfg.approvalTimeoutMs })
   const engine = new Engine({
     cfg,
@@ -231,15 +255,20 @@ function makeJudge(provider: LlmProvider, model: string) {
 
 async function runTask(
   task: EvalTaskFile,
-  opts: { judgeProvider?: LlmProvider; judgeModel: string },
+  opts: { judgeProvider?: LlmProvider; judgeModel: string; realProvider?: LlmProvider; keep?: boolean },
 ): Promise<TaskResult> {
   const started = Date.now()
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), `ma-eval-${task.id}-`))
-  const provider = new MockProvider({ delayMs: 0 })
+  const real = Boolean(opts.realProvider)
+  const provider = opts.realProvider ?? new MockProvider({ delayMs: 0 })
   let env: TaskEnv | undefined
   try {
     env = await buildTaskEnv(tmp, task.maxTurns, provider)
-    const session = env.sessions.create(task.participants, task.name)
+    const session = env.sessions.create(
+      task.participants,
+      task.name,
+      task.serial === false ? { serial: false } : undefined,
+    )
     // M25：播种记忆（agent/session/global；owner 缺省按 scope 推导）→ poke 等到嵌入完成后开始 Run
     const seeds = task.memorySeed ?? []
     if (seeds.length > 0) {
@@ -254,6 +283,15 @@ async function runTask(
       }
       await env.memories.poke()
     }
+    // 工作区播种（报告探针的数据集等；发消息前写入会话沙箱）
+    if (task.seedFiles && task.seedFiles.length > 0) {
+      const dir = env.artifacts.ensureSessionDir(session.id)
+      for (const seed of task.seedFiles) {
+        const full = path.join(dir, seed.path)
+        fs.mkdirSync(path.dirname(full), { recursive: true })
+        fs.writeFileSync(full, seed.content, 'utf8')
+      }
+    }
     const message = env.sessions.appendMessage({
       sessionId: session.id,
       role: 'user',
@@ -262,11 +300,27 @@ async function runTask(
       status: 'complete',
     })
     const { runId } = env.engine.launch(session.id, message.id)
-    await waitRunFinished(env.engine, runId)
+    // 真实模型模式放宽总超时（深度报告全链 5–10 分钟量级）
+    await waitRunFinished(env.engine, runId, real ? 1_800_000 : 120_000)
     env.sessions.saveNow(session.id)
 
     const events = env.events.listByRun(runId)
     const messages: ChatMessage[] = env.sessions.messages(session.id)
+    if (process.env.DEBUG_DUMP === '1') {
+      for (const m of messages) {
+        if (m.role === 'agent')
+          console.log(
+            `[dump][${m.agentId}] mentions=${JSON.stringify(m.mentions)} :: ${m.content.slice(-140).replace(/\n/g, '⏎')}`,
+          )
+      }
+      const tc = events.filter((e) => e.type === 'handoff:accepted' || e.type === 'schedule')
+      for (const e of tc) console.log(`[dump][trace] ${e.type} ${JSON.stringify(e.payload).slice(0, 200)}`)
+      for (const e of events.filter((ev) => ev.type === 'tool')) {
+        console.log(
+          `[dump][tool] ${String(e.payload.name)} ok=${String(e.payload.ok)} :: ${String(e.payload.summary ?? '').slice(0, 140)}`,
+        )
+      }
+    }
     const snapshot = env.context.snapshot(session.id)
     const usage = env.usage.sumByRun(runId)
     const results = await runAssertions(parseAssertions(task.assertions), {
@@ -294,7 +348,8 @@ async function runTask(
     }
   } finally {
     env?.close()
-    fs.rmSync(tmp, { recursive: true, force: true })
+    if (opts.keep) console.log(`[keep] 工作区保留：${tmp}`)
+    else fs.rmSync(tmp, { recursive: true, force: true })
   }
 }
 
@@ -347,6 +402,8 @@ function loadBaseline(): BaselineFile | undefined {
 async function main(): Promise<void> {
   const args = process.argv.slice(2)
   const judgeEnabled = args.includes('--judge')
+  const realEnabled = args.includes('--real')
+  const keepWorkspace = args.includes('--keep')
   const updateBaseline = args.includes('--update-baseline')
   const taskFilter = args
     .find((a) => a.startsWith('--tasks='))
@@ -360,30 +417,37 @@ async function main(): Promise<void> {
     .readdirSync(TASKS_DIR)
     .filter((f) => f.endsWith('.json'))
     .sort()
-  const tasks = files
-    .map((f) => JSON.parse(fs.readFileSync(path.join(TASKS_DIR, f), 'utf8')) as EvalTaskFile)
-    .filter((t) => !taskFilter || taskFilter.includes(t.id))
+  const allTasks = files.map((f) => JSON.parse(fs.readFileSync(path.join(TASKS_DIR, f), 'utf8')) as EvalTaskFile)
+  // 任务选择：显式 --tasks 优先；否则按模式过滤（mock 跳过 real 探针；real 只跑 real 探针）
+  const tasks = allTasks.filter((t) =>
+    taskFilter ? taskFilter.includes(t.id) : realEnabled ? t.real === true : t.real !== true,
+  )
+  if (!realEnabled) {
+    const skipped = allTasks.filter((t) => t.real === true).length
+    if (skipped > 0) console.log(`（${skipped} 个真实模式探针任务已跳过：用 --real 运行）`)
+  }
   if (tasks.length === 0) {
     console.error(taskFilter ? `未找到匹配任务：${taskFilter.join('、')}` : `evals/tasks 下没有任务文件`)
     process.exit(1)
   }
 
-  // judge 通道（真实模型；未配置直接失败，避免静默跳过）
+  // judge / real 通道（真实模型；未配置直接失败，避免静默跳过）
   const cfg = loadConfig()
-  let judgeProvider: LlmProvider | undefined
-  if (judgeEnabled) {
-    if (!cfg.llmApiKey) {
-      console.error('--judge 需要配置 LLM_API_KEY')
-      process.exit(1)
-    }
-    judgeProvider = createProvider(cfg)
+  if ((judgeEnabled || realEnabled) && !cfg.llmApiKey) {
+    console.error(`${realEnabled ? '--real' : '--judge'} 需要配置 LLM_API_KEY`)
+    process.exit(1)
   }
+  let judgeProvider: LlmProvider | undefined
+  if (judgeEnabled) judgeProvider = createProvider(cfg)
+  // --real：任务执行也走真实模型（默认仅 real:true 探针任务；不参与 mock 基线）
+  const realProvider = realEnabled ? createProvider(cfg) : undefined
   const judgeModel = cfg.judgeModel || cfg.llmModel
 
-  console.log(`评测开始：${tasks.length} 个任务 · 模式 ${judgeEnabled ? 'judge（真实模型）' : 'mock（确定性）'}`)
+  const modeLabel = realEnabled ? 'real（真实模型执行）' : judgeEnabled ? 'judge（真实模型评分）' : 'mock（确定性）'
+  console.log(`评测开始：${tasks.length} 个任务 · 模式 ${modeLabel}`)
   const results: TaskResult[] = []
   for (const task of tasks) {
-    const result = await runTask(task, { judgeProvider, judgeModel })
+    const result = await runTask(task, { judgeProvider, judgeModel, realProvider, keep: keepWorkspace })
     results.push(result)
     const failed = result.assertions.filter((a) => !a.ok && !a.skipped)
     console.log(
@@ -399,7 +463,7 @@ async function main(): Promise<void> {
   const passed = results.filter((r) => r.ok).length
   const reportBase = {
     ts,
-    mode: (judgeEnabled ? 'judge' : 'mock') as 'mock' | 'judge',
+    mode: (realEnabled ? 'real' : judgeEnabled ? 'judge' : 'mock') as 'mock' | 'judge' | 'real',
     total: results.length,
     passed,
     failed: results.length - passed,
@@ -407,13 +471,15 @@ async function main(): Promise<void> {
     tasks: results,
   }
 
-  // 基线对比 / 更新
+  // 基线对比 / 更新（真实模式不参与：mock 基线保持纯净）
   const regressions: string[] = []
   const baseline = loadBaseline()
-  if (updateBaseline || !baseline) {
+  if (realEnabled) {
+    // --real：跳过基线读写
+  } else if (updateBaseline || !baseline) {
     const next: BaselineFile = {
       ts,
-      mode: reportBase.mode,
+      mode: judgeEnabled ? 'judge' : 'mock',
       tasks: Object.fromEntries(results.map((r) => [r.id, { ok: r.ok }])),
     }
     fs.writeFileSync(BASELINE_FILE, `${JSON.stringify(next, null, 2)}\n`)
@@ -429,7 +495,9 @@ async function main(): Promise<void> {
   fs.writeFileSync(path.join(REPORTS_DIR, `${ts}.json`), `${JSON.stringify(report, null, 2)}\n`)
   fs.writeFileSync(path.join(REPORTS_DIR, `${ts}.md`), renderMarkdown(report))
   console.log(`报告：evals/reports/${ts}.json / .md`)
-  console.log(`汇总：${passed}/${results.length} 通过${regressions.length > 0 ? ` · 回归 ${regressions.length} 项` : ''}`)
+  console.log(
+    `汇总：${passed}/${results.length} 通过${regressions.length > 0 ? ` · 回归 ${regressions.length} 项` : ''}`,
+  )
   for (const r of regressions) console.error(`回归：${r}`)
 
   process.exit(reportBase.failed > 0 || regressions.length > 0 ? 1 : 0)

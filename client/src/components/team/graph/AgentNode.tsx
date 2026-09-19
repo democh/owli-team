@@ -35,7 +35,7 @@ const AgentNodeView = React.memo(function AgentNodeView({ data }: NodeProps<Agen
         }}
       >
         <Handle type="target" position={Position.Left} isConnectable={false} className="!size-1 !border-0 !bg-transparent" />
-        <AgentAvatar agent={agent} size={32} animated={false} className="rounded-lg" />
+        <AgentAvatar agent={agent} size={32} animated={false} />
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1">
             <span className="truncate text-[12px] font-medium leading-4">{agent.name}</span>

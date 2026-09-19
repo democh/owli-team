@@ -10,6 +10,8 @@ import { toast } from 'sonner'
 import { BellRing, CalendarClock, Loader2, Pause, Play, Plus, RefreshCw, Trash2, Zap } from 'lucide-react'
 import type { AgentDefinition, ScheduleLastStatus, ScheduledTask, ScheduleSpec } from '@multi-agent/shared'
 import { describeScheduleSpec } from '@multi-agent/shared'
+import { baseAgentId } from '@multi-agent/shared'
+import { memberDisplayList, labelOfMemberKey } from '../../lib/members'
 import { useAgentStore } from '../../stores/agent-store'
 import { useScheduleStore } from '../../stores/schedule-store'
 import { useSessionStore } from '../../stores/session-store'
@@ -73,12 +75,16 @@ function defaultOnceAt(): string {
 /** 任务卡：规格 / 目标 / 下次触发 / 运行态 + 操作（立即执行 / 启停 / 删除） */
 function ScheduleCard({ task }: { task: ScheduledTask }): React.JSX.Element {
   const agents = useAgentStore((s) => s.agents)
+  const session = useSessionStore((s) => s.sessions.find((x) => x.id === s.currentId))
   const setEnabled = useScheduleStore((s) => s.setEnabled)
   const remove = useScheduleStore((s) => s.remove)
   const trigger = useScheduleStore((s) => s.runNow)
   const [busy, setBusy] = React.useState<string>()
 
-  const target = task.targetAgentId ? agents.find((a) => a.id === task.targetAgentId) : undefined
+  // M77：目标按成员实例署名（分身 = 名字·灵魂名；已离场也经回退链可读）；头像取基础角色
+  const targetKey = task.targetAgentId
+  const target = targetKey ? agents.find((a) => a.id === baseAgentId(targetKey)) : undefined
+  const targetName = targetKey ? labelOfMemberKey(agents, session, targetKey) : undefined
   const last = task.lastStatus ? LAST_META[task.lastStatus] : undefined
 
   const onTrigger = async (): Promise<void> => {
@@ -146,8 +152,8 @@ function ScheduleCard({ task }: { task: ScheduledTask }): React.JSX.Element {
       <div className="mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[10.5px] text-muted-foreground">
         {task.kind === 'run' && (
           <span className="flex items-center gap-1">
-            {target && <AgentAvatar agent={target} size={12} animated={false} className="rounded" />}
-            {target?.name ?? task.targetAgentId ?? '未指定'}
+            {target && <AgentAvatar agent={target} size={12} animated={false} />}
+            {targetName ?? task.targetAgentId ?? '未指定'}
           </span>
         )}
         <span title={`${task.spec.kind === 'cron' ? `cron「${task.spec.expr ?? ''}」` : String(task.spec.at ?? '')}（${task.timezone}）`}>
@@ -415,9 +421,15 @@ export function SchedulePanel(): React.JSX.Element {
     if (currentId) void load(currentId)
   }, [currentId, load])
 
+  // M77：成员实例投影（id = 成员键、name = 展示标签）+ 幽灵补位（历史定时任务的目标/创建者已离场时仍可读）
   const members = React.useMemo(
-    () => (session?.participantIds ?? []).map((id) => agents.find((a) => a.id === id)).filter(Boolean) as AgentDefinition[],
-    [session, agents],
+    () =>
+      memberDisplayList(
+        agents,
+        session,
+        tasks.flatMap((t) => [t.targetAgentId, t.createdBy === 'user' ? undefined : t.createdBy]),
+      ),
+    [session, agents, tasks],
   )
 
   if (!currentId) {

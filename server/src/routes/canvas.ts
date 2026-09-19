@@ -102,6 +102,15 @@ export function createCanvasRouter(deps: ApiDeps): Router {
     if (body.length > UPLOAD_MAX_BYTES) {
       return res.status(413).json({ error: '文件过大：单文件上限 200MB' })
     }
+    // M57 P3：存储配额闸门（工作区体积 + 本次增量；超限 403）
+    if (deps.quotas) {
+      try {
+        deps.quotas.assertUploadAllowed(sessionId, body.length)
+      } catch (err) {
+        const status = typeof (err as { status?: number }).status === 'number' ? (err as { status: number }).status : 403
+        return res.status(status).json({ error: (err as Error).message })
+      }
+    }
     const rawName = decodeURIComponent(String(req.header('x-file-name') ?? 'file'))
     const ext = path.extname(rawName).toLowerCase()
     const kind = UPLOAD_IMAGE_EXT.has(ext) ? 'image' : UPLOAD_VIDEO_EXT.has(ext) ? 'video' : undefined

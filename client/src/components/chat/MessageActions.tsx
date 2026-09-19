@@ -1,6 +1,7 @@
 /**
  * 消息操作菜单（M8/M9）：复制 / 引用到输入框 / 重新生成 / 编辑重发 / 从这条 fork / 删除 / 反馈。
  * - 重新生成：POST /api/runs/:runId/messages/:id/regenerate（仅文本，不重放工具副作用）→ 附着新 Run；
+ * - 继续生成（M4）：POST /api/runs/:runId/messages/:id/resume（续写已中断消息，不重跑已完成部分）→ 附着新 Run；
  * - 编辑重发：打开 MessageItem 内联编辑（ui-store.editingMessageId）；
  * - 从这条 fork：POST /api/sessions/:id/fork → 切到新分支会话；
  * - 删除：两段式确认（避免误触）；
@@ -13,7 +14,9 @@ import {
   Copy,
   GitBranch,
   Loader2,
+  MessageSquarePlus,
   MoreHorizontal,
+  Play,
   Quote,
   RefreshCw,
   SquarePen,
@@ -23,7 +26,11 @@ import {
 } from 'lucide-react'
 import type { FeedbackItem, Session } from '@multi-agent/shared'
 import { apiDelete, apiGet, apiPost } from '../../lib/api'
+import { baseName } from '../../lib/artifacts'
+import { commentDraft } from '../../lib/focus-artifact'
+import { labelOfMemberKey } from '../../lib/members'
 import { cn } from '../../lib/utils'
+import { useAgentStore } from '../../stores/agent-store'
 import { useRunStore } from '../../stores/run-store'
 import { useSessionStore } from '../../stores/session-store'
 import { useUiStore } from '../../stores/ui-store'
@@ -153,11 +160,36 @@ export function MessageActions({
     close()
   }
 
+  /** M44（AF-3）：提意见——“@作者 对《交付名》的意见：”模板入草稿（无作者退化为纯引用；不直发）
+   *  M77：@ 署名按成员实例（分身 = 名字·灵魂名，草稿点名到具体实例）
+   */
+  const comment = (): void => {
+    const first = message.artifacts?.[0]
+    if (!first) return
+    const agents = useAgentStore.getState().agents
+    const sessionStore = useSessionStore.getState()
+    const session = sessionStore.sessions.find((s) => s.id === sessionStore.currentId)
+    const key = message.memberKey ?? message.agentId
+    const name = key ? labelOfMemberKey(agents, session, key) : undefined
+    insertToComposer(name ? commentDraft(name, first) : `对《${baseName(first)}》的意见：`)
+    toast('已写入提意见草稿')
+    close()
+  }
+
   const regenerate = (): void =>
     void guard(async () => {
       const runId = message.runId ?? latestRun?.id
       if (!runId) throw new Error('找不到该消息所属的运行，无法重新生成')
       const res = await apiPost<{ runId: string }>(`/api/runs/${runId}/messages/${message.id}/regenerate`)
+      attach(res.runId, currentId)
+    })
+
+  /** M4：继续生成——续写已中断（stopped / error）消息的剩余内容（服务端守卫不可续写态） */
+  const resume = (): void =>
+    void guard(async () => {
+      const runId = message.runId ?? latestRun?.id
+      if (!runId) throw new Error('找不到该消息所属的运行，无法继续生成')
+      const res = await apiPost<{ runId: string }>(`/api/runs/${runId}/messages/${message.id}/resume`)
       attach(res.runId, currentId)
     })
 
@@ -191,6 +223,8 @@ export function MessageActions({
 
   const isUser = message.role === 'user'
   const busyReason = active ? '运行中暂不可操作' : undefined
+  /** M4：可续写态（已中断且有正文；streaming / complete 与空正文由服务端守卫拒绝） */
+  const resumable = !isUser && (message.status === 'stopped' || message.status === 'error') && message.content.trim().length > 0
 
   /** M9：反馈提交（rating 1/-1 + 可选原因；同消息覆盖） */
   const submitFeedback = (rating: 1 | -1, text?: string): void => {
@@ -232,6 +266,14 @@ export function MessageActions({
         >
           <MenuItem icon={<Copy className="size-3.5" />} label="复制" onClick={copy} />
           <MenuItem icon={<Quote className="size-3.5" />} label="引用到输入框" onClick={quote} />
+          {!isUser && message.artifacts && message.artifacts.length > 0 ? (
+            <MenuItem
+              icon={<MessageSquarePlus className="size-3.5" />}
+              label="提意见（对交付件）"
+              title={`对《${baseName(message.artifacts[0]!)}》写意见草稿（可编辑后发送）`}
+              onClick={comment}
+            />
+          ) : null}
           {isUser ? (
             <MenuItem
               icon={<SquarePen className="size-3.5" />}
@@ -241,13 +283,24 @@ export function MessageActions({
               onClick={edit}
             />
           ) : (
-            <MenuItem
-              icon={<RefreshCw className="size-3.5" />}
-              label="重新生成"
-              disabled={active || message.status === 'streaming'}
-              title={busyReason}
-              onClick={regenerate}
-            />
+            <>
+              {resumable ? (
+                <MenuItem
+                  icon={<Play className="size-3.5" />}
+                  label="继续生成"
+                  title="从中断处续写剩余内容（不重复已完成部分）"
+                  disabled={active}
+                  onClick={resume}
+                />
+              ) : null}
+              <MenuItem
+                icon={<RefreshCw className="size-3.5" />}
+                label="重新生成"
+                disabled={active || message.status === 'streaming'}
+                title={busyReason}
+                onClick={regenerate}
+              />
+            </>
           )}
           <MenuItem
             icon={<GitBranch className="size-3.5" />}

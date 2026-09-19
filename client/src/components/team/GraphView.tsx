@@ -44,7 +44,9 @@ import {
   X,
 } from 'lucide-react'
 import type { AgentDefinition, Artifact, ChatMessage } from '@multi-agent/shared'
+import { baseAgentId, soulIdOfMember } from '@multi-agent/shared'
 import { apiGet } from '../../lib/api'
+import { labelOfMemberKey, memberViews } from '../../lib/members'
 import {
   buildGraph,
   neighborsOf,
@@ -260,7 +262,7 @@ function ChainPreview({
         {chain.map((a, i) => (
           <React.Fragment key={a.id}>
             {i > 0 && <span className="text-[10px] text-muted-foreground/50">›</span>}
-            <AgentAvatar agent={a} size={24} animated={false} className="rounded-full" />
+            <AgentAvatar agent={a} size={24} animated={false} />
           </React.Fragment>
         ))}
       </div>
@@ -343,10 +345,11 @@ export function GraphView(): React.JSX.Element {
   }, [])
 
   const session = sessions.find((s) => s.id === currentId)
-  const participants = React.useMemo(() => {
-    const ids = new Set(session?.participantIds ?? [])
-    return agents.filter((a) => ids.has(a.id))
-  }, [agents, session])
+  // M77：节点 = 成员实例（分身 = `名字·灵魂名` 节点）——显示克隆入图（id = 成员键、name = 标签）
+  const participants = React.useMemo(
+    () => memberViews(agents, session).map((m) => ({ ...m.agent, id: m.key, name: m.label })),
+    [agents, session],
+  )
 
   // 结构指纹：流式 delta 不改变图结构/边权，避免 40ms 高频重建（status/mentions/createdAt 变化才重算）
   const structureKey = useSessionStore((s) =>
@@ -392,7 +395,8 @@ export function GraphView(): React.JSX.Element {
     for (const id of order) {
       const m = byId.get(id)
       if (m?.role === 'agent' && m.agentId && m.status !== 'streaming') {
-        count.set(m.agentId, (count.get(m.agentId) ?? 0) + 1)
+        const key = m.memberKey ?? m.agentId
+        count.set(key, (count.get(key) ?? 0) + 1)
       }
     }
     return count
@@ -790,10 +794,12 @@ export function GraphView(): React.JSX.Element {
   }
 
   const selectedNode = selectedId ? model.nodes.find((n) => n.id === selectedId) : undefined
-  /** 生效灵魂：会话覆盖 > 角色默认（档案面板徽标） */
-  const soulOverride = useSessionStore(
-    (s) => s.sessions.find((x) => x.id === s.currentId)?.memberSouls?.[selectedId ?? ''],
-  )
+  /** 生效灵魂：会话覆盖（经典）> 分身键内嵌 > 角色默认（档案面板徽标） */
+  const soulOverride = useSessionStore((s) => {
+    const key = selectedId ?? ''
+    const sessionNow = s.sessions.find((x) => x.id === s.currentId)
+    return sessionNow?.memberSouls?.[key] ?? soulIdOfMember(key)
+  })
   /** A1 预览目标节点与最近发言（悬停节点在 model 中解析） */
   const previewNode = preview ? model.nodes.find((n) => n.id === preview.id) : undefined
   const previewMessage = React.useMemo(
@@ -809,7 +815,7 @@ export function GraphView(): React.JSX.Element {
   const selectedArtifacts = React.useMemo(
     () =>
       selectedId
-        ? artifacts.filter((a) => a.authorAgentId === selectedId).sort((a, b) => b.mtime - a.mtime)
+        ? artifacts.filter((a) => a.authorAgentId === baseAgentId(selectedId)).sort((a, b) => b.mtime - a.mtime)
         : [],
     [artifacts, selectedId],
   )
@@ -819,7 +825,8 @@ export function GraphView(): React.JSX.Element {
     [selectedId, structureKey],
   )
 
-  const nameOf = (id: string): string => agents.find((a) => a.id === id)?.name ?? id
+  // M77：接力摘要 / 工件归属按成员实例署名（分身 = 名字·灵魂名；工件作者仍为基础角色 → 按 base 匹配）
+  const nameOf = (id: string): string => labelOfMemberKey(agents, session, id)
 
   const canvas = (
     <ReactFlow

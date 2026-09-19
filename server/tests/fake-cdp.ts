@@ -35,6 +35,7 @@ export class FakeCdp {
   /** close() 调用次数（重连失败的废弃连接应被关闭） */
   closeCalls = 0
   private sessionSeq = 1
+  private targetSeq = 1
   private readonly handlers = new Map<string, Set<(params: unknown, sessionId?: string) => void>>()
   private readonly closeHandlers = new Set<(reason: string) => void>()
 
@@ -115,6 +116,15 @@ export class FakeCdp {
     this.sessionSeq += 1
     this.currentSessionId = `cdp-session-${this.sessionSeq}`
     return this.currentSessionId
+  }
+
+  /** M62：新建页面 target 并 attach（模拟浏览器 Target.createTarget + attachToTarget） */
+  async createTargetAttach(url = 'about:blank'): Promise<{ sessionId: string; targetId: string }> {
+    this.targetSeq += 1
+    const targetId = `page-${this.targetSeq}`
+    this.sent.push({ method: 'Target.createTarget', params: { url } })
+    this.openTarget({ targetId, url })
+    return { sessionId: await this.attachToTarget(targetId), targetId }
   }
 
   async detachSession(sessionId: string): Promise<void> {

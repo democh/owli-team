@@ -13,6 +13,7 @@
  * - 用量：kind='turn'（agentId='__router__'，与角色回合同口径审计）。
  */
 import { extractJson } from '../context/compressor.js'
+import { baseAgentId } from '@multi-agent/shared'
 import { resilientStream } from '../llm/resilience.js'
 import type { ChatRequest, LlmProvider, LlmUsage } from '../llm/provider.js'
 import { getLogger } from '../logger.js'
@@ -43,6 +44,12 @@ export const ROUTE_SCHEMA: Record<string, unknown> = {
         properties: {
           agentId: { type: 'string', description: '接手角色 id（在场成员，或本次召集的 members 之一）' },
           task: { type: 'string', description: '一句话任务要点（写清期望产出）' },
+          mode: {
+            type: 'string',
+            enum: ['execute', 'plan', 'review'],
+            description:
+              '可选：建议的协作范式。默认 execute（直接干活）；多环节复杂需求且需用户先拍板 → plan（先交计划）；纯核对/验收类 → review',
+          },
         },
         required: ['agentId', 'task'],
         additionalProperties: false,
@@ -55,14 +62,18 @@ export const ROUTE_SCHEMA: Record<string, unknown> = {
   additionalProperties: false,
 }
 
-const ROUTE_SYSTEM = `你是多 Agent 协作平台的路由器。根据用户的最新需求与会话上下文，从角色目录中决定「这一棒派给谁、要不要先召集人手」。
+const ROUTE_SYSTEM = `你是多 Agent 协作平台的路由器。根据用户的最新需求与会话状态（session_state），从角色目录中决定「这一棒派给谁、要不要先召集人手」。
 
 规则：
 - assignments：把任务派给 1-4 位角色（按处理顺序排列，首位最先开工）；优先复用已在场成员；task 为一句可执行的任务要点（≤60 字，写清期望产出）；
+- 复杂度分级：简单直答类需求（闲聊 / 单一问题 / 轻量查询）只派 1 位最对口的角色；多面需求才拆 2-4 人；跨阶段需求（调研→方案→落地）只派第一阶段，后续由接手方自行转交，不要一次派全链；
+- 去重纪律：不要重复派给「最近接手」且已交付的角色；同一交付件不要重复创建（参考已有交付件清单）；
+- 阶段纪律：开场（opening）优先派最上游角色（需求澄清 / 研究定位类）；进行中（ongoing）接续未完成的环节，不重头开始；
+- mode：默认 execute；多环节复杂需求且建议用户先拍板 → plan；纯核对 / 验收类 → review（软建议，平台不会强制切换）；
 - members：仅当现有在场成员明显无法覆盖需求时，才从目录中召集未在场角色（id 列表，可空）；被召集者会自动加入会话；
 - 不要把任务派给 "user"；不要发明目录之外的 id；@ 直达的消息不会经过你（无需处理）；
 - reason：一句话决策理由（供用户审计）；
-- 只输出 JSON 对象：{ "members": [], "assignments": [ { "agentId", "task" } ], "reason": "…" }`
+- 只输出 JSON 对象：{ "members": [], "assignments": [ { "agentId", "task", "mode" } ], "reason": "…" }`
 
 export interface PlatformRouteInput {
   cfg: AppConfig
@@ -73,6 +84,12 @@ export interface PlatformRouteInput {
   userText: string
   /** 最近上下文渲染（可选；空串 = 仅本次消息） */
   contextText?: string
+  /** M61-D1：会话阶段（opening = 尚无成员发言；ongoing = 进行中） */
+  stage?: 'opening' | 'ongoing'
+  /** M61-D1：最近接手者渲染（去重参考；空串 = 无） */
+  recentHandlers?: string
+  /** M61-D1：已有交付件清单（防重复创建；空串 = 无） */
+  deliverables?: string
   /** 会话在场成员 id（空数组 = 零编制开场） */
   presentIds: string[]
   /** 全量角色 id（校验用） */
@@ -87,6 +104,8 @@ export interface PlatformRouteInput {
 export interface RouteAssignment {
   agentId: string
   task: string
+  /** M61-D1：建议范式（软建议，注入任务便条；不强制切换） */
+  mode?: 'plan' | 'review'
 }
 
 export interface PlatformRouteOutcome {
@@ -112,6 +131,12 @@ export async function runPlatformRoute(input: PlatformRouteInput): Promise<Platf
   const { cfg, provider } = input
   const parts = [`<request>\n${input.userText.trim()}\n</request>`]
   if (input.contextText?.trim()) parts.push(`<context>\n${input.contextText.trim()}\n</context>`)
+  // M61-D1：会话简报（阶段 / 最近接手 / 已有交付件）——空段不注入，保持既有输入零差异
+  const stateLines: string[] = []
+  if (input.stage) stateLines.push(`阶段：${input.stage === 'opening' ? '开场（尚无成员发言）' : '进行中'}`)
+  if (input.recentHandlers?.trim()) stateLines.push(`最近接手：${input.recentHandlers.trim()}`)
+  if (input.deliverables?.trim()) stateLines.push(`已有交付件：${input.deliverables.trim()}`)
+  if (stateLines.length > 0) parts.push(`<session_state>\n${stateLines.join('\n')}\n</session_state>`)
   if (input.catalog.trim()) parts.push(input.catalog.trim())
   const request: ChatRequest = {
     system: ROUTE_SYSTEM,
@@ -185,25 +210,33 @@ export function coerceRoutePlan(
   const obj = raw as { members?: unknown; assignments?: unknown; reason?: unknown } | undefined
   if (!obj || typeof obj !== 'object') return null
   const present = new Set(opts.presentIds)
+  // M77：分身在场 = 基础角色已在场（LLM 输出角色 id 或成员键均可收敛）
+  const presentBases = new Set([...present].map((id) => baseAgentId(id)))
 
   const members: string[] = []
   for (const item of Array.isArray(obj.members) ? obj.members : []) {
     const id = String(item ?? '').trim()
     if (id === '' || id === 'user') continue
-    if (!opts.knownIds.has(id) || present.has(id) || members.includes(id)) continue
+    if (!opts.knownIds.has(id) || present.has(id) || presentBases.has(id) || members.includes(id)) continue
     members.push(id)
   }
 
   const eligible = new Set([...present, ...members])
   const assignments: RouteAssignment[] = []
   for (const item of Array.isArray(obj.assignments) ? obj.assignments : []) {
-    const entry = item as { agentId?: unknown; task?: unknown } | undefined
+    const entry = item as { agentId?: unknown; task?: unknown; mode?: unknown } | undefined
     const agentId = String(entry?.agentId ?? '').trim()
     const task = String(entry?.task ?? '').trim().replace(/\s+/g, ' ')
     if (agentId === '' || task === '' || agentId === 'user') continue
-    if (!eligible.has(agentId) || assignments.some((a) => a.agentId === agentId)) continue
+    if (!eligible.has(agentId) && !presentBases.has(agentId)) continue
+    if (assignments.some((a) => a.agentId === agentId)) continue
     if (assignments.length >= ROUTE_MAX_ASSIGNMENTS) break
-    assignments.push({ agentId, task: task.length > TASK_MAX_CHARS ? `${task.slice(0, TASK_MAX_CHARS)}…` : task })
+    const mode = entry?.mode === 'plan' || entry?.mode === 'review' ? entry.mode : undefined
+    assignments.push({
+      agentId,
+      task: task.length > TASK_MAX_CHARS ? `${task.slice(0, TASK_MAX_CHARS)}…` : task,
+      ...(mode ? { mode } : {}),
+    })
   }
   if (assignments.length === 0) return null
 

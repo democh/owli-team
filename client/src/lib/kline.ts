@@ -4,6 +4,7 @@
  * - v10 API 单点隔离：init / setSymbol / setPeriod / setDataLoader / createIndicator / createOverlay / resize / dispose；
  * - 主题对齐 md-light（A 股配色：涨红跌绿，与 KPI 卡组 --up/--down 同源互换）；
  * - ATR 为自注册指标（klinecharts 内置不含）；MA 口径与服务端 fin_kline 对齐（5/10/20/60）；
+ * - 副图面高度按容器自适应分配（v10 主图只拿剩余高度，多副图会把蜡烛面挤为 0）。
  * - 标注走内置 simpleTag（全宽横线 + 轴侧标签）；数据为静态快照：
  *   getBars 仅 init 一次性回填（forward/backward 明确 more=false，不做无休止回补）。
  */
@@ -38,6 +39,9 @@ const STYLES: DeepPartial<Styles> = {
       last: { upColor: UP_COLOR, downColor: DOWN_COLOR, text: { size: 11, color: '#ffffff' } },
     },
     tooltip: {
+      // 图例只在悬停（crosshair 命中 pane）时显示：默认 showRule=always 会让
+      // 标题+OHLC+MA+BOLL 四行图例常驻压在主图顶部（矮容器下遮挡近半可视区）
+      showRule: 'follow_cross',
       title: { size: 11 },
       legend: { size: 11 },
       rect: { color: 'rgba(255, 255, 255, 0.96)', borderColor: LINE_COLOR, borderSize: 1 },
@@ -46,7 +50,8 @@ const STYLES: DeepPartial<Styles> = {
   indicator: {
     ohlc: { upColor: UP_COLOR, downColor: DOWN_COLOR, noChangeColor: NEUTRAL_COLOR },
     lastValueMark: { text: { size: 11, color: TEXT_COLOR } },
-    tooltip: { title: { size: 11 }, legend: { size: 11 } },
+    // 与 candle 同口径：副图图例（VOL/MACD/RSI）也仅悬停显示，避免常驻遮挡
+    tooltip: { showRule: 'follow_cross', title: { size: 11 }, legend: { size: 11 } },
   },
   xAxis: { axisLine: { color: LINE_COLOR }, tickLine: { color: LINE_COLOR }, tickText: { color: TEXT_COLOR, size: 11 } },
   yAxis: { axisLine: { color: LINE_COLOR }, tickLine: { color: LINE_COLOR }, tickText: { color: TEXT_COLOR, size: 11 } },
@@ -59,8 +64,24 @@ const STYLES: DeepPartial<Styles> = {
 
 /** 主图（蜡烛图面）指标；其余指标各自独立副图 */
 const MAIN_PANE_INDICATORS = new Set<KlineIndicator>(['MA', 'EMA', 'BOLL'])
+/** klinecharts 主图面 id（内部常量 PaneIdConstants.CANDLE） */
+const CANDLE_PANE = 'candle_pane'
 /** 副图面 id（固定命名，便于样式与复用） */
 const PANE_ID: Record<string, string> = { VOL: 'vol_pane', MACD: 'macd_pane', RSI: 'rsi_pane', KDJ: 'kdj_pane', ATR: 'atr_pane' }
+
+/**
+ * 副图面高度分配（v10 布局语义：副图面各取 layout.pane.height（缺省 100px），
+ * 主图蜡烛面只拿「剩余高度」——矮容器放 3 个副图时主图被挤为 0，蜡烛不可见）。
+ * 策略：优先保障主图（≥50% 且 ≥96px，图例浮层 + 蜡烛需要主图占大头），
+ * 其余由副图面均分（每面 30–140px）。
+ * @returns 每个副图面的目标高度（px；容器高度不可用时返回 0 表示跳过）
+ */
+export function allocateSubPaneHeight(containerHeight: number, subPaneCount: number): number {
+  if (subPaneCount <= 0 || containerHeight <= 0) return 0
+  const candleFloor = Math.max(96, Math.round(containerHeight * 0.5))
+  const each = Math.floor((containerHeight - candleFloor) / subPaneCount)
+  return Math.max(30, Math.min(140, each))
+}
 
 /** MA 口径与服务端 fin_kline 对齐（自动算 5/10/20/60） */
 const MA_CALC_PARAMS = [5, 10, 20, 60]
@@ -177,10 +198,24 @@ export function createKline(el: HTMLElement, input: KlineRenderInput): KlineHand
     },
   })
 
+  // 副图面 id 收集（创建后统一分配高度，防主图被挤为 0）
+  const subPaneIds: string[] = []
+  const usedPanes = new Set<string>()
   for (const name of input.indicators) {
-    const paneId = MAIN_PANE_INDICATORS.has(name) ? 'candle_pane' : PANE_ID[name]
-    chart.createIndicator(name === 'MA' ? { name, calcParams: MA_CALC_PARAMS, paneId } : { name, paneId }, false)
+    const paneId = MAIN_PANE_INDICATORS.has(name) ? CANDLE_PANE : PANE_ID[name]
+    // v10 isStack=false 会清空该面既有指标；同面多指标（如 MA+BOLL）需叠加创建
+    chart.createIndicator(name === 'MA' ? { name, calcParams: MA_CALC_PARAMS, paneId } : { name, paneId }, usedPanes.has(paneId))
+    usedPanes.add(paneId)
+    if (paneId !== CANDLE_PANE && !subPaneIds.includes(paneId)) subPaneIds.push(paneId)
   }
+
+  /** 按容器高度分配副图面高度（主图吃剩余空间；容器尺寸变化时重算） */
+  const applyPaneHeights = (): void => {
+    const each = allocateSubPaneHeight(el.clientHeight, subPaneIds.length)
+    if (each <= 0) return
+    for (const id of subPaneIds) chart.setPaneOptions({ id, height: each })
+  }
+  applyPaneHeights()
 
   // 标注（压力位 / 支撑位）：simpleTag = 全宽横线 + 轴侧标签
   const firstTs = data[0].timestamp
@@ -195,7 +230,10 @@ export function createKline(el: HTMLElement, input: KlineRenderInput): KlineHand
 
   let ro: ResizeObserver | undefined
   if (typeof ResizeObserver !== 'undefined') {
-    ro = new ResizeObserver(() => chart.resize())
+    ro = new ResizeObserver(() => {
+      applyPaneHeights()
+      chart.resize()
+    })
     ro.observe(el)
   }
   return {

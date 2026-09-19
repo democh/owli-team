@@ -80,17 +80,53 @@ export function isMindDescendant(index: MindIndex, ancestorId: string, candidate
   return mindSubtreeIds(index, ancestorId).includes(candidateId)
 }
 
-// ---------- 尺寸估算（MindNode 为 w-fit 胶囊，布局按文本估宽） ----------
+// ---------- 尺寸估算（MindNode 为 w-fit 胶囊，长文本折行；布局按文本估宽估高） ----------
 
-/** 估算胶囊尺寸：CJK ≈ 12px / 拉丁 ≈ 6.8px；与 MindNode 渲染（min-w-28 / px-3 / 点与折叠区）对齐 */
+/** 单字符估算宽：CJK（含全角标点）≈ 12px / 其余 ≈ 6.8px */
+function charWidth(ch: string): number {
+  return (ch.codePointAt(0) ?? 0) > 0x2e7f ? 12 : 6.8
+}
+
+/** 胶囊文本区最大宽（= MindNode max-w-52）/ 行高（leading-5）/ 单行盒高（py-1.5 + 边框） */
+const MIND_TEXT_MAX_W = 208
+const MIND_LINE_H = 20
+const MIND_BOX_BASE_H = 34
+
+/**
+ * 折行行数估算（与浏览器渲染规则近似）：
+ * 全角 / CJK 逐字可断；拉丁数字按词不拆（词间断行）；超行宽单词硬拆（break-words）。
+ */
+function estimateMindLines(text: string): number {
+  const tokens =
+    (text || '主题').match(
+      /[\p{Script=Han}\u3000-\u303f\uff00-\uffef]|[^\s\p{Script=Han}\u3000-\u303f\uff00-\uffef]+/gu,
+    ) ?? []
+  let lines = 1
+  let width = 0
+  for (const token of tokens) {
+    let w = 0
+    for (const ch of token) w += charWidth(ch)
+    if (width > 0 && width + w > MIND_TEXT_MAX_W) {
+      lines += 1
+      width = 0
+    }
+    if (w > MIND_TEXT_MAX_W) {
+      const extra = Math.ceil(w / MIND_TEXT_MAX_W) - 1
+      lines += extra
+      width = w - extra * MIND_TEXT_MAX_W
+    } else {
+      width += w
+    }
+  }
+  return lines
+}
+
+/** 估算胶囊尺寸：CJK ≈ 12px / 拉丁 ≈ 6.8px；与 MindNode 渲染（min-w-28 / px-3 / 点与折叠区）对齐；长文本按行数展高 */
 export function estimateMindSize(text: string): { width: number; height: number } {
   let textWidth = 0
-  for (const ch of text || '主题') {
-    const code = ch.codePointAt(0) ?? 0
-    textWidth += code > 0x2e7f ? 12 : 6.8
-  }
+  for (const ch of text || '主题') textWidth += charWidth(ch)
   const width = Math.min(248, Math.max(112, Math.round(24 + 12 + Math.min(textWidth, 208) + 24)))
-  return { width, height: 34 }
+  return { width, height: MIND_BOX_BASE_H + (estimateMindLines(text) - 1) * MIND_LINE_H }
 }
 
 export function mindNodeText(node: CanvasNode | undefined): string {

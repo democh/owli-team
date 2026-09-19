@@ -1,9 +1,11 @@
 /**
  * M31：创建菜单（双击空白 / 工具栏「添加」）—— 便签 / 提示词 / 脑图 / 画框 / 上传素材 / 博弈推演 / K 线行情。
+ * M31 修订：提示词节点 hint 按媒体能力门控（未配置生成能力时降级为「记录可复用的指令」）。
  */
 import * as React from 'react'
 import { Dices, Frame, LineChart, StickyNote, TerminalSquare, Upload, Waypoints, type LucideIcon } from 'lucide-react'
 import { cn } from '../../lib/utils'
+import { useMediaCapabilities } from './useMediaCapabilities'
 
 export type CreateKind = 'note' | 'prompt' | 'mind' | 'group' | 'upload' | 'game' | 'kline'
 
@@ -30,6 +32,15 @@ export function CanvasCreateMenu({
   onPick(kind: CreateKind): void
   onClose(): void
 }): React.JSX.Element {
+  // 能力门控：提示词节点 hint 随生图 / 生视频能力切换（节点本体保留——无能力时仍是可复用的指令载体）
+  const { canGenerate } = useMediaCapabilities()
+  const items = React.useMemo(
+    () =>
+      ITEMS.map((it) =>
+        it.kind === 'prompt' ? { ...it, hint: canGenerate ? '连到图片 / 视频生成' : '记录可复用的指令' } : it,
+      ),
+    [canGenerate],
+  )
   const menuRef = React.useRef<HTMLDivElement>(null)
   React.useEffect(() => {
     const onPointerDown = (e: PointerEvent): void => {
@@ -54,7 +65,7 @@ export function CanvasCreateMenu({
       className="canvas-node-pop fixed z-50 w-48 rounded-lg border bg-card p-1 shadow-soft"
       style={{ left, top }}
     >
-      {ITEMS.map((item) => (
+      {items.map((item) => (
         <button
           key={item.kind}
           type="button"

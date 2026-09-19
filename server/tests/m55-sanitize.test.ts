@@ -70,6 +70,60 @@ describe('sanitizeModelText（M55 仿写日志与协议标记剥离）', () => {
   })
 })
 
+// 规则 4：子轮边界（工具结果回灌后）模型漏换行导致 `:::` 容器头 / `# 标题` 贴住前文
+// （样本取自真实会话：`…activating the bazi tool.::: pan bazi 四柱 …`）。
+describe('sanitizeModelText（粘连块起始拆分，规则 4）', () => {
+  const GLUED_PAN = [
+    "I'll start by checking the workspace and activating the bazi tool.::: pan bazi 四柱 壬申 戊申 乙亥 壬午",
+    '命造：乾造 ｜ 生肖 猴 ｜ 公历 1992-08-27 12:00',
+    '- 命宫 壬寅 | 武曲(得)忌 天相(庙)',
+    ':::',
+  ].join('\n')
+
+  it('粘连容器头拆为独立行：卡片可被行级容器解析识别', () => {
+    const out = sanitizeModelText(GLUED_PAN)
+    expect(out).toBe(
+      [
+        "I'll start by checking the workspace and activating the bazi tool.",
+        '::: pan bazi 四柱 壬申 戊申 乙亥 壬午',
+        '命造：乾造 ｜ 生肖 猴 ｜ 公历 1992-08-27 12:00',
+        '- 命宫 壬寅 | 武曲(得)忌 天相(庙)',
+        ':::',
+      ].join('\n'),
+    )
+  })
+
+  it('粘连标题拆分（句读符后 `# 标题` 独立成行）；「C# 语言」类不误伤', () => {
+    const out = sanitizeModelText("I'll draw the cards.# 十字阵解读 · 当下整体处境")
+    expect(out).toBe(["I'll draw the cards.", '# 十字阵解读 · 当下整体处境'].join('\n'))
+    const csharp = 'C# 是一门编程语言。'
+    expect(sanitizeModelText(csharp)).toBe(csharp)
+    expect(sanitizeModelText('记号 #标签 不做拆分')).toBe('记号 #标签 不做拆分')
+  })
+
+  it('宁窄勿宽：行首容器头 / 反引号示例 / 无空格 `:::x` 一律不拆', () => {
+    const ok = ['::: pan bazi 四柱 甲子 丙寅', '正文。', ':::'].join('\n')
+    expect(sanitizeModelText(ok)).toBe(ok)
+    const code = '用 `::: pan` 标记盘面卡。'
+    expect(sanitizeModelText(code)).toBe(code)
+    const nospace = '前缀abc:::def 不是容器头'
+    expect(sanitizeModelText(nospace)).toBe(nospace)
+  })
+
+  it('幂等 + 与仿写块剥离叠加：同一文本先拆行后剥块', () => {
+    const once = sanitizeModelText(GLUED_PAN)
+    expect(sanitizeModelText(once)).toBe(once)
+    const both = [
+      '先给出结论。::: pan gua 本卦 天雷无妄',
+      ':::',
+      '',
+      '[工具调用]',
+      '- gua_pan({"n":1}) → 起卦完成',
+    ].join('\n')
+    expect(sanitizeModelText(both)).toBe(['先给出结论。', '::: pan gua 本卦 天雷无妄', ':::'].join('\n'))
+  })
+})
+
 describe('extractDeliveredPaths（M55 落盘声明提取）', () => {
   it('采集完成态声明：已写入 / 「落盘**：」清单形态', () => {
     expect(extractDeliveredPaths('已写入 docs/a.md（3.9KB）')).toEqual(['docs/a.md'])

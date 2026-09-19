@@ -29,7 +29,8 @@ export function createContextRouter(deps: ApiDeps): Router {
   })
 
   router.post('/sessions/:id/memory', (req, res) => {
-    if (!deps.sessions.get(req.params.id)) return res.status(404).json({ error: '会话不存在' })
+    const session = deps.sessions.getSession(req.params.id)
+    if (!session) return res.status(404).json({ error: '会话不存在' })
     const body = req.body as { kind?: unknown; content?: unknown }
     const kind = String(body?.kind ?? '')
     if (!MEMORY_KINDS.includes(kind as MemoryKind)) {
@@ -37,7 +38,12 @@ export function createContextRouter(deps: ApiDeps): Router {
     }
     const content = String(body?.content ?? '').trim()
     if (!content) return res.status(400).json({ error: 'content 不能为空' })
-    const result = deps.memory.upsert(req.params.id, kind as MemoryKind, content, 'user')
+    // M57：写入携带用户归属（多用户隔离；单用户兼容模式缺省）
+    const result = deps.memory.upsertScoped('session', req.params.id, kind as MemoryKind, content, {
+      source: 'user',
+      sourceSessionId: req.params.id,
+      userId: session.ownerId,
+    })
     res.status(201).json({ item: result?.item, added: result?.added ?? false })
   })
 

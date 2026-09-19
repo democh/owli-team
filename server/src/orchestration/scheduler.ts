@@ -9,7 +9,9 @@
  *
  * 循环检测基于「波次签名序列」（签名 = 波成员排序拼接，并行波带 +）：
  * - 单人连续 ≥3 波 / 两人交替 ≥4 波（rounds 场景放宽为 ≥6）→ 抑制并交还用户；
- * - 内容级循环（M3/M16）：每波串联文本相邻 3-gram 重复率 > 0.85 连续 4 波 → 强制交还。
+ * - 内容级循环（M3/M16）：每波串联文本相邻 3-gram 重复率 > 0.85 连续 4 波 → 强制交还；
+ * - 实质进展停滞（M61-D3）：连续两波无任何成功写动作（交付件 / 文件零产出）且文本相似 > 0.9
+ *   → 提前抑制（比 4 波内容循环更早、更准：只判「空谈无产出」，有写动作不误伤）。
  */
 
 /** 循环检测：最近 window 个签名中形成「两人交替（≥altThreshold）」或「同一签名反复（≥3）」即判定 */
@@ -65,6 +67,29 @@ export function detectContentLoop(contents: string[], threshold = 0.85): boolean
     if (trigramDice(recent[i - 1], recent[i]) <= threshold) return false
   }
   return true
+}
+
+/**
+ * M61-D3：实质进展停滞 —— 同一成员（波签名相同）连续两波「零写动作（无交付件 / 文件产出）」
+ * 且文本高度相似（> threshold）→ 判定空谈停滞（比内容级循环 4 波门限更早）。有写动作即视为
+ * 有实质进展，不误伤迭代型协作；多人轮转的重复由内容级循环（detectContentLoop，0.85 / 4 波）处理，
+ * 本检测只收「同一成员重述」这一强信号。输入不足两波 / 签名不同 / 任一对比波文本为空 → false。
+ */
+export function detectStall(
+  waveTexts: string[],
+  waveWriteCounts: number[],
+  waveSignatures: string[],
+  threshold = 0.9,
+): boolean {
+  const n = Math.min(waveTexts.length, waveWriteCounts.length, waveSignatures.length)
+  if (n < 2) return false
+  const last = n - 1
+  if (waveWriteCounts[last]! > 0 || waveWriteCounts[last - 1]! > 0) return false
+  if (waveSignatures[last] !== waveSignatures[last - 1]) return false
+  const a = waveTexts[last - 1]!.trim()
+  const b = waveTexts[last]!.trim()
+  if (a === '' || b === '') return false
+  return trigramDice(a, b) > threshold
 }
 
 /** 波次签名：波成员排序拼接（并行波带 +；串行波 = 成员 id 本身） */
@@ -185,6 +210,8 @@ export interface MergeWaveInput {
   signatures: string[]
   /** 每波串联文本（含本波；内容级循环检测输入） */
   waveTexts: string[]
+  /** M61-D3：每波成功写动作计数（含本波；实质进展停滞检测输入；缺省 = 不检测） */
+  waveWriteCounts?: number[]
   /** 本 Run 已发言成员（含本波） */
   spoken: string[]
   fallbackUsed: boolean
@@ -200,6 +227,8 @@ export interface MergeWaveResult {
   handedToUser: boolean
   fallbackUsed: boolean
   loopSuppressed: boolean
+  /** M61-D3：停滞抑制（零写动作 + 文本高度相似；与 loopSuppressed 同走抑制路径，分开审计） */
+  stallSuppressed: boolean
   /** 任一成员给出多目标 → 下一波并行（fan-out 意图） */
   forceNextParallel: boolean
   dropped: Array<{ id: string; reason: string; by: string }>
@@ -235,6 +264,7 @@ export function mergeWaveSchedule(input: MergeWaveInput): MergeWaveResult {
       handedToUser: true,
       fallbackUsed: input.fallbackUsed,
       loopSuppressed: false,
+      stallSuppressed: false,
       forceNextParallel: false,
       dropped,
     }
@@ -247,6 +277,7 @@ export function mergeWaveSchedule(input: MergeWaveInput): MergeWaveResult {
 
   let handedToUser = false
   let loopSuppressed = false
+  let stallSuppressed = false
   // 循环检测：签名序列 + 拟新增接手将形成 A/B 交替或反复 → 抑制并交还
   if (acceptedAll.length > 0 && detectLoop([...signatures, ...acceptedAll], 6, rounds ? 6 : 4)) {
     loopSuppressed = true
@@ -255,6 +286,15 @@ export function mergeWaveSchedule(input: MergeWaveInput): MergeWaveResult {
   // 内容级循环：每波串联文本相邻比较（避免同波正常相似被误判）
   if (!handedToUser && detectContentLoop(waveTexts)) {
     loopSuppressed = true
+    handedToUser = true
+  }
+  // M61-D3：实质进展停滞（同签名两波零写动作 + 文本高度相似）——比内容级循环更早的提前抑制
+  if (
+    !handedToUser &&
+    input.waveWriteCounts &&
+    detectStall(waveTexts, input.waveWriteCounts, signatures)
+  ) {
+    stallSuppressed = true
     handedToUser = true
   }
 
@@ -281,11 +321,21 @@ export function mergeWaveSchedule(input: MergeWaveInput): MergeWaveResult {
       handedToUser: true,
       fallbackUsed,
       loopSuppressed,
+      stallSuppressed,
       forceNextParallel: false,
       dropped,
     }
   }
   // handoff 多目标（≥2 位成员）→ 下一波并行
   const forceNextParallel = decisions.some((d) => d.accepted.length >= 2)
-  return { acceptedByAgent, queue, handedToUser: false, fallbackUsed, loopSuppressed, forceNextParallel, dropped }
+  return {
+    acceptedByAgent,
+    queue,
+    handedToUser: false,
+    fallbackUsed,
+    loopSuppressed,
+    stallSuppressed,
+    forceNextParallel,
+    dropped,
+  }
 }

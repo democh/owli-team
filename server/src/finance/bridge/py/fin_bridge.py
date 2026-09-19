@@ -80,6 +80,13 @@ def install_impersonate() -> bool:
     """
     用 curl_cffi 接管标准 requests（impersonate=chrome：TLS/JA3 指纹模拟真实浏览器）。
     任何失败静默回退原生 requests（akshare 等库内部 `import requests` 后属性访问即命中）。
+
+    接管策略（兼容 akshare）：
+    - 模块级 get / post / head 直接换 curl_cffi 实现；
+    - `requests.Session` 换为 requests 原生 Session 的**子类**（保留 mount / headers / cookies
+      等外观），仅把 `request()` 委派给 curl_cffi —— 直接替换为 creq.Session 会缺 `mount`
+      导致 akshare 的 request_with_retry（mount 适配器）抛 AttributeError；
+    - curl_cffi 异常归一为 `requests.RequestException`，保住 akshare 自带重试语义。
     """
     if os.environ.get("FIN_BRIDGE_IMPERSONATE", "1") == "0":
         return False
@@ -97,10 +104,33 @@ def install_impersonate() -> bool:
 
             return wrapped
 
+        # requests kwargs 白名单（curl_cffi 不认识 hooks / cert 之外的自定义键）
+        pass_keys = frozenset(
+            ("params", "data", "json", "headers", "cookies", "auth", "timeout", "allow_redirects", "proxies", "verify", "stream")
+        )
+
+        class _ImpersonateSession(std.Session):
+            """requests.Session 兼容外观；实际请求经 curl_cffi（Chrome TLS 指纹）。"""
+
+            def request(self, method, url, **kwargs):  # type: ignore[override]
+                forward = {key: value for key, value in kwargs.items() if key in pass_keys}
+                forward.setdefault("timeout", 20)
+                headers = dict(self.headers)
+                extra = forward.pop("headers", None)
+                if extra:
+                    headers.update(extra)
+                if self.cookies:
+                    forward.setdefault("cookies", self.cookies.get_dict())
+                try:
+                    return creq.request(method, url, impersonate="chrome", headers=headers, **forward)
+                except Exception as exc:  # 归一异常类型：akshare 只重试 requests.RequestException
+                    raise std.RequestException(f"curl_cffi 请求失败（{type(exc).__name__}）：{exc}") from exc
+
         std.get = _wrap(creq.get)
         std.post = _wrap(creq.post)
-        std.Session = creq.Session  # type: ignore
-        log("curl_cffi impersonate（chrome）已接管 requests")
+        std.head = _wrap(creq.head)
+        std.Session = _ImpersonateSession  # type: ignore[misc]
+        log("curl_cffi impersonate（chrome）已接管 requests（Session 子类兼容 mount）")
         return True
     except Exception as exc:  # pragma: no cover - 兼容性兜底
         log(f"curl_cffi 接管失败，回退原生 requests: {exc}")
@@ -201,6 +231,20 @@ def _cn_ms(date_str, time_str: str = "") -> int:
 FREQ_MAP = {"day": "d", "week": "w", "month": "m", "min5": "5", "min15": "15", "min30": "30", "min60": "60"}
 ADJ_MAP = {"qfq": "2", "hfq": "1", "none": "3"}
 
+# 分钟线频度：仅这些周期允许包含 time 字段（服务端校验，日/周/月线传 time 会报
+# 「xx线指标参数传入错误:time」整链降级）
+_MINUTE_FREQS = ("5", "15", "30", "60")
+# 默认取数窗口（天；按周期给足，覆盖网关 limit 上限 500 根后由 Node 侧切片）：
+# 日线 ~730 交易日 / 周线 ~520 周 / 月线 ~360 月
+_BS_WINDOW_DAYS = {"d": 365 * 3, "w": 365 * 10, "m": 365 * 30}
+
+
+def bs_kline_fields(frequency: str) -> str:
+    """baostock K 线字段白名单：time 仅分钟线可用（日/周/月线含 time → 10004012 报错）。"""
+    if frequency in _MINUTE_FREQS:
+        return "date,time,code,open,high,low,close,volume,amount"
+    return "date,code,open,high,low,close,volume,amount"
+
 
 def normalize_code(raw: str) -> str:
     """sh600519 / 600519.SH / sh.600519 / 600519 → sh.600519（baostock 格式）"""
@@ -278,14 +322,14 @@ def _kline_baostock(params: dict) -> dict:
     end = param_str(params, "end") or datetime.now().strftime("%Y-%m-%d")
     start = param_str(params, "start")
     if not start:
-        days = 365 * 2 if frequency in ("d", "w", "m") else 30
+        days = _BS_WINDOW_DAYS.get(frequency, 30)
         start = (datetime.strptime(end, "%Y-%m-%d") - timedelta(days=days)).strftime("%Y-%m-%d")
 
     bs_login(bs)
     try:
         rs = bs.query_history_k_data_plus(
             code,
-            "date,time,open,high,low,close,volume,amount",
+            bs_kline_fields(frequency),
             start_date=start,
             end_date=end,
             frequency=frequency,
@@ -321,6 +365,8 @@ def _kline_baostock(params: dict) -> dict:
 
 _AK_PERIOD = {"day": "daily", "week": "weekly", "month": "monthly"}
 _AK_ADJUST = {"qfq": "qfq", "hfq": "hfq", "none": ""}
+# akshare 日/周/月默认窗口（天；与 _BS_WINDOW_DAYS 同口径，覆盖 limit 500 根）
+_AK_WINDOW_DAYS = {"daily": 365 * 3, "weekly": 365 * 10, "monthly": 365 * 30}
 
 
 def _kline_akshare(params: dict) -> dict:
@@ -341,7 +387,8 @@ def _kline_akshare(params: dict) -> dict:
     try:
         if period in _AK_PERIOD:
             if not start:
-                start = (datetime.strptime(end, "%Y-%m-%d") - timedelta(days=365 * 3)).strftime("%Y-%m-%d")
+                days = _AK_WINDOW_DAYS.get(_AK_PERIOD[period], 365 * 3)
+                start = (datetime.strptime(end, "%Y-%m-%d") - timedelta(days=days)).strftime("%Y-%m-%d")
             frame = ak.stock_zh_a_hist(
                 symbol=digits,
                 period=_AK_PERIOD[period],

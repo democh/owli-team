@@ -19,6 +19,7 @@ import type { AppConfig } from '../config.js'
 import type { MemoryStore } from '../store/memory.js'
 import type { SessionStore } from '../store/sessions.js'
 import type { UsageStore } from '../store/usage.js'
+import type { UserLabeler } from './user-label.js'
 import {
   coerceSummaryData,
   mergeSummaryData,
@@ -68,6 +69,10 @@ export interface CompressorDeps {
   memory: MemoryStore
   /** M4：摘要调用用量落库（kind='summary'） */
   usage?: UsageStore
+  /** M57 P3：BYOK 生效模型解析（摘要成本归因；缺省 = summaryModel / 系统默认） */
+  billingModelFor?: (sessionId: string) => string | undefined
+  /** M57：共享会话人类署名（摘要输入文本；缺省 = 「用户」） */
+  userLabelFor?: (sessionId: string) => UserLabeler | undefined
 }
 
 export interface CompressionInput {
@@ -116,7 +121,7 @@ export class Compressor {
     }
 
     const lastSeq = range[range.length - 1].seq ?? fromSeq
-    const historyText = renderForSummary(range)
+    const historyText = renderForSummary(range, this.deps.userLabelFor?.(input.sessionId))
     const historyTokens = countTokensCalibrated(historyText)
     const userContent = [
       existing && existing.content
@@ -138,6 +143,8 @@ export class Compressor {
           system: SUMMARY_SYSTEM,
           messages: [{ role: 'user', content: userContent }],
           model: this.deps.cfg.summaryModel || undefined,
+          // M57 P3：BYOK 凭据按会话属主解析
+          sessionId: input.sessionId,
           temperature: 0,
           responseFormat: { type: 'json_schema', name: 'session_summary', schema: SUMMARY_SCHEMA },
           meta: { agentId: SUMMARY_AGENT_ID, participantIds: [], stepIndex: 0 },
@@ -170,7 +177,7 @@ export class Compressor {
           runId: input.runId,
           sessionId: input.sessionId,
           agentId: SUMMARY_AGENT_ID,
-          model: this.deps.cfg.summaryModel || this.deps.cfg.llmModel,
+          model: this.deps.billingModelFor?.(input.sessionId) || this.deps.cfg.summaryModel || this.deps.cfg.llmModel,
           promptTokens: usage.promptTokens,
           completionTokens: usage.completionTokens,
           kind: 'summary',
@@ -281,15 +288,15 @@ export function pickCompressionRange(
   return splitAt > 0 ? messages.slice(0, splitAt) : undefined
 }
 
-/** 区间渲染为摘要输入文本（总量与单条双限制，避免摘要调用爆窗） */
-export function renderForSummary(messages: ChatMessage[]): string {
+/** 区间渲染为摘要输入文本（总量与单条双限制，避免摘要调用爆窗）；共享会话人类消息署昵称 */
+export function renderForSummary(messages: ChatMessage[], userLabeler?: UserLabeler): string {
   const per = Math.max(
     PER_MESSAGE_MIN_TOKENS,
     Math.min(PER_MESSAGE_MAX_TOKENS, Math.floor(SUMMARY_INPUT_BUDGET_TOKENS / Math.max(1, messages.length))),
   )
   const lines: string[] = []
   for (const m of messages) {
-    const who = m.role === 'user' ? '用户' : `Agent(${m.agentId ?? '未知'})`
+    const who = m.role === 'user' ? (userLabeler?.(m) ?? '用户') : `Agent(${m.agentId ?? '未知'})`
     const text = m.content.trim() || attachmentOnlyNote(m) || '（无文本，仅工具调用）'
     const { text: clipped } = truncateToTokens(text, per)
     lines.push(`[${who}] ${clipped}`)

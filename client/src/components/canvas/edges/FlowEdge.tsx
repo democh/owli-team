@@ -4,6 +4,7 @@
  * - mind：层级曲线（低饱和默认色，无箭头）；
  * - ref：虚线关联（无箭头）。
  * 曲线技法源自 RelayEdge（把手方向外推的三次贝塞尔，反向自动兜回）。
+ * M31 修订：related —— 端点被选中的边提亮增强（选中节点即可看清它接在什么链路上）。
  */
 import * as React from 'react'
 import { BaseEdge, Position, type Edge, type EdgeProps } from '@xyflow/react'
@@ -11,6 +12,8 @@ import type { CanvasEdgeKind } from '@multi-agent/shared'
 
 export interface FlowEdgeData extends Record<string, unknown> {
   kind: CanvasEdgeKind
+  /** 端点处于选中集（关联边高亮，视图层派生） */
+  related?: boolean
   /** 生成任务运行中（能量流动，P3 由 media-store 注入） */
   flowing?: boolean
 }
@@ -64,6 +67,11 @@ function CanvasEdgeView({
   const kind = data?.kind ?? 'flow'
   const path = curvePath(sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition)
   const flow = kind === 'flow'
+  /** 关联边：端点被选中但边本身未选中（边自身 selected 已有更强样式）；flow 加粗至选中级，其余提亮 */
+  const related = !!data?.related && !selected
+
+  const strokeWidth = flow ? (selected ? 2.2 : related ? 2 : 1.6) : selected ? 1.8 : related ? 1.6 : 1.2
+  const opacity = flow ? (selected ? 1 : related ? 0.95 : 0.75) : selected ? 0.8 : related ? 0.75 : 0.4
 
   return (
     <>
@@ -72,10 +80,11 @@ function CanvasEdgeView({
         path={path}
         markerEnd={flow ? markerEnd : undefined}
         style={{
-          stroke: flow ? 'hsl(var(--primary))' : 'hsl(var(--muted-foreground))',
-          strokeWidth: flow ? (selected ? 2.2 : 1.6) : selected ? 1.8 : 1.2,
+          stroke: flow ? 'hsl(var(--primary))' : related ? 'hsl(var(--foreground))' : 'hsl(var(--muted-foreground))',
+          strokeWidth,
           strokeDasharray: kind === 'ref' ? '5 5' : undefined,
-          opacity: flow ? (selected ? 1 : 0.75) : selected ? 0.8 : 0.4,
+          opacity,
+          transition: 'stroke-width 120ms ease, opacity 120ms ease, stroke 120ms ease',
         }}
       />
       {flow && data?.flowing && (

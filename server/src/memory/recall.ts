@@ -82,6 +82,8 @@ export interface RecallInput {
   budgetTokens: number
   /** 已在 L1 会话记忆中出现的 id（避免重复注入） */
   exclude?: Set<string>
+  /** M57：用户维度（多用户隔离；缺省 = 不过滤——单用户兼容模式） */
+  userId?: string
 }
 
 export interface RecallResult {
@@ -111,7 +113,7 @@ export function recallMemories(deps: RecallIndexDeps, input: RecallInput): Recal
   const nowMs = Date.now()
   const queryTokens = extractEntities(input.queryText)
   const scored: Array<{ item: MemoryItem; entry: RecalledMemory }> = []
-  for (const item of deps.store.rowsByIds([...best.keys()])) {
+  for (const item of deps.store.rowsByIds([...best.keys()], input.userId)) {
     if (item.status !== 'active') continue // vec0 镜像不过滤状态
     if (input.exclude?.has(item.id)) continue
     const { score, signals } = scoreMemory(item, best.get(item.id) ?? 0, queryTokens, nowMs)

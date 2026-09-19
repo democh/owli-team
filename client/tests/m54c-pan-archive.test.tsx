@@ -175,6 +175,46 @@ describe('ArchiveDrawer 档案抽屉', () => {
     expect(container.querySelector('.pn-diff')).toBeNull()
     expect(container.querySelector('.pn-arch-mix')?.textContent).toContain('异类盘仅并排')
   })
+
+  it('M63-F 走查：新盘（六壬）回看走盘面 + 同 kind 差异对照', async () => {
+    const DL_FIELDS: Row[] = [
+      { label: '天地盘', value: '子→申 丑→酉 寅→戌 卯→亥 辰→子 巳→丑 午→寅 未→卯 申→辰 酉→巳 戌→午 亥→未' },
+      { label: '月将', value: '太冲 卯 ｜ 中气 霜降' },
+    ]
+    const dlItems = (last: string): Row[] => [
+      { label: '一课', value: '上 酉（下 癸）' },
+      { label: '二课', value: '上 巳（下 酉）' },
+      { label: '三课', value: '上 卯（下 未）' },
+      { label: '四课', value: '上 亥（下 卯）' },
+      { label: '初传', value: '卯 ｜ 遁干 己 ｜ 天将 贵人' },
+      { label: '中传', value: '亥 ｜ 遁干 乙 ｜ 天将 勾陈' },
+      { label: '末传', value: `未 ｜ 遁干 癸 ｜ 天将 ${last}` },
+    ]
+    seed([
+      mkEntry(DL_FIELDS, dlItems('太常'), { kind: 'daliuren', title: '课A', savedAt: 1001 }),
+      mkEntry(DL_FIELDS, dlItems('玄武'), { kind: 'daliuren', title: '课B', savedAt: 1002 }),
+    ])
+    const { container } = render(<ArchiveDrawer sessionId="s1" />)
+    fireEvent.click(container.querySelector<HTMLElement>('.pn-arch-head')!)
+
+    // 回看：六壬卡 → 盘面可达（天地盘三层圆盘）
+    const rows = Array.from(container.querySelectorAll<HTMLButtonElement>('.pn-arch-main'))
+    fireEvent.click(rows[0]!)
+    await waitFor(() => expect(container.querySelector('.pn-arch-view .pn-daliuren')).not.toBeNull())
+    expect(container.querySelectorAll('.pn-arch-view .pn-dl-di')).toHaveLength(12)
+    expect(container.querySelectorAll('.pn-arch-view .pn-chuan-card')).toHaveLength(3)
+
+    // 再加选第二张（同 kind）→ 并排对照 + 差异块（末传天将不同）
+    fireEvent.click(rows[1]!)
+    await waitFor(() => expect(container.querySelectorAll('.pn-arch-pair .md-pan')).toHaveLength(2))
+    expect(container.querySelector('.pn-diff')).not.toBeNull()
+    const diffRows = Array.from(container.querySelectorAll('.pn-diff-row'))
+    const last = diffRows.find((r) => r.querySelector('.pn-diff-label')?.textContent === '末传')
+    expect(last).toBeTruthy()
+    expect(last!.classList.contains('is-diff')).toBe(true)
+    expect(last!.textContent).toContain('太常')
+    expect(last!.textContent).toContain('玄武')
+  })
 })
 
 // ---------------------------------------------------------------------------

@@ -1,0 +1,23 @@
+id: fengshui
+name: 堪舆阳宅
+description: 阳宅堪舆点评：罗盘定向 → 盘面排出（八宅 / 玄空流年）→ 格局分维度点评与改善参考；与数术研习（metaphysics 排盘论命）区隔——宅居环境专项，点评围绕房子不围绕命
+icon: compass
+theme: ["#991b1b", "#fbbf24"]
+objective: 以传统堪舆为文化参考做居住环境的格局点评：先盘后论、表述克制、建议可执行
+chain: [plan-surveyor, yangzhai-master]
+defaultSkills: [fengshui]
+parallel: false
+order: 123
+guide: 上传户型图或说说房子的朝向，做一次阳宅点评
+agenda:
+  - label: 户型图点评
+    prompt: 我上传了户型图，帮我做一次阳宅点评：先解析户型与朝向，再排盘做分维度点评（先盘后论）：
+  - label: 罗盘定向排盘
+    prompt: 按我提供的坐向排一次罗盘盘：坐向度数 / 方位词与数据来源如下，排出二十四山、八宅游年与流年飞星：
+  - label: 流年飞星参考
+    prompt: 帮我看看今年的流年飞星落宫与方位参考（说明所在房子的坐向）：
+  - label: 入宅前格局复核
+    prompt: 入宅前帮我复核一下格局：户型与坐向如下，重点看门主灶与动线，给分维度点评与改善参考：
+stage:
+  layout: dock
+  panel: chartboard

@@ -3,7 +3,7 @@
  * - 数据库工作台 store：连接过滤 / 分页与排序三态 / 写确认两步流（dryRun → execute）；
  * - 对象树纯函数：过滤与模式分组；
  * - SSH 终端 store：token → WS → ready/exit/error 状态机、二进制输入输出、resize 帧、重连、运行时注入；
- * - 连接管理（控制台）：SSH 完整表单（认证方式切换 / 保存载荷契约）与「打开/终端」入口。
+ * - 连接管理（控制台）：SSH 完整表单（认证方式切换 / 保存载荷契约 / 「本地（本机）」一键预置回填）与「打开/终端」入口。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
@@ -547,6 +547,74 @@ describe('M23：连接管理（SSH 表单与工作台入口）', () => {
       config: { host: '10.0.0.8', port: 22, username: 'deploy', authMethod: 'password', allowExec: false },
       secret: { password: 'p@ss' },
     })
+  })
+
+  it('SSH 新建：「本地（本机）」一键预置回填（用户名 / 认证 / 私钥路径）与探测提示；保存载荷契约', async () => {
+    const bodies: Array<Record<string, unknown>> = []
+    fetchMock.mockImplementation((url: string, init?: RequestInit) => {
+      // /connections/ssh-preset 与 /connections 同前缀：必须先于通配匹配
+      if (url === '/api/connections/ssh-preset') {
+        return Promise.resolve(
+          jsonResponse({
+            preset: {
+              name: '本地',
+              host: '127.0.0.1',
+              port: 22,
+              username: 'democh',
+              authMethod: 'key',
+              privateKeyPath: '~/.ssh/id_ed25519',
+              agentAvailable: false,
+              sshdReachable: false,
+            },
+          }),
+        )
+      }
+      if (url === '/api/connections' && init?.method === 'POST') {
+        const body = JSON.parse(String(init.body)) as Record<string, unknown>
+        bodies.push(body)
+        return Promise.resolve(
+          jsonResponse({ connection: makeConnection({ id: 'conn_local', name: '本地', kind: 'ssh', config: {}, secretSet: false }) }),
+        )
+      }
+      if (url.includes('/api/audit')) return Promise.resolve(jsonResponse({ entries: [] }))
+      // 绑定清单端点必须先于 /api/connections 匹配（两者都包含 '/connections'）
+      if (url.includes('/api/sessions/')) return Promise.resolve(jsonResponse({ bindings: [] }))
+      if (url.includes('/connections')) return Promise.resolve(jsonResponse({ connections: [] }))
+      return Promise.resolve(jsonResponse({}, 404))
+    })
+    render(<ConnectionsConsole />)
+    await userEvent.click(screen.getByRole('button', { name: '新建连接' }))
+    await userEvent.click(screen.getByRole('button', { name: 'SSH' }))
+    await userEvent.click(screen.getByRole('button', { name: '本地（本机）' }))
+
+    // 回填：名称 / 主机 / 端口 / 用户名 / 认证方式 key + 默认私钥路径
+    await waitFor(() =>
+      expect((screen.getByPlaceholderText('10.0.0.8 或 example.com') as HTMLInputElement).value).toBe('127.0.0.1'),
+    )
+    expect((screen.getByPlaceholderText('如：生产只读库') as HTMLInputElement).value).toBe('本地')
+    expect((screen.getByPlaceholderText('22') as HTMLInputElement).value).toBe('22')
+    expect((screen.getByPlaceholderText('root / deploy') as HTMLInputElement).value).toBe('democh')
+    expect((screen.getByPlaceholderText('~/.ssh/id_ed25519') as HTMLInputElement).value).toBe('~/.ssh/id_ed25519')
+    // 探测结论提示：22 端口未监听 → 开启系统「远程登录」指引
+    expect(screen.getByText(/已填入本机配置：democh@127\.0\.0\.1/)).toBeTruthy()
+    expect(screen.getByText(/本机 22 端口未监听/)).toBeTruthy()
+
+    // 保存：config 契约（默认私钥路径随行；allowExec 保持默认关；无凭据不携带 secret）
+    await userEvent.click(screen.getByRole('button', { name: '保存' }))
+    await waitFor(() => expect(bodies.length).toBe(1))
+    expect(bodies[0]).toMatchObject({
+      name: '本地',
+      kind: 'ssh',
+      config: {
+        host: '127.0.0.1',
+        port: 22,
+        username: 'democh',
+        authMethod: 'key',
+        allowExec: false,
+        privateKeyPath: '~/.ssh/id_ed25519',
+      },
+    })
+    expect(bodies[0]?.secret).toBeUndefined()
   })
 
   it('连接卡片：「打开」展开数据库工作台；「终端」建会话并展开终端（M49 深度工作台）', async () => {

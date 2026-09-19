@@ -12,6 +12,7 @@ import { Check, Loader2, Plus, Trash2, Upload, X } from 'lucide-react'
 import { toast } from 'sonner'
 import type { AgentAvatar, AgentDefinition, ConsoleAgentDetail, ConsoleSoulDetail } from '@multi-agent/shared'
 import { cn } from '../../lib/utils'
+import { useConnectionsStore } from '../../stores/connections-store'
 import { useConsoleStore } from '../../stores/console-store'
 import { useMcpStore } from '../../stores/mcp-store'
 import { AgentAvatar as AgentAvatarView } from '../agents/AgentAvatar'
@@ -105,7 +106,7 @@ function ChoiceRow({
   active: boolean
   onClick: () => void
   title: string
-  desc: string
+  desc?: string
 }): React.JSX.Element {
   return (
     <button
@@ -119,7 +120,7 @@ function ChoiceRow({
       )}
     >
       <div className="text-[12.5px] font-medium">{title}</div>
-      <div className="text-[11px] text-muted-foreground">{desc}</div>
+      {desc ? <div className="text-[11px] text-muted-foreground">{desc}</div> : null}
     </button>
   )
 }
@@ -130,6 +131,8 @@ export function AgentEditor({ agentId, onClose }: { agentId: string; onClose: ()
   const tools = useConsoleStore((s) => s.tools)
   // M27：MCP 服务器组（整组勾选 = 写入 mcp__<slug>__* 通配）
   const mcpServers = useMcpStore((s) => s.servers)
+  // 多 Provider：模型服务连接（provider 绑定候选与 model 下拉候选）
+  const connections = useConnectionsStore((s) => s.connections)
   const [detail, setDetail] = React.useState<ConsoleAgentDetail>()
   const [draft, setDraft] = React.useState<AgentDraft>()
   const [tab, setTab] = React.useState('basic')
@@ -160,12 +163,29 @@ export function AgentEditor({ agentId, onClose }: { agentId: string; onClose: ()
     })()
     if (useConsoleStore.getState().tools.length === 0) void useConsoleStore.getState().loadTools()
     if (useMcpStore.getState().servers.length === 0) void useMcpStore.getState().refreshAll()
+    void useConnectionsStore.getState().load()
     return () => {
       cancelled = true
     }
   }, [agentId, onClose])
 
   const patch = (p: Partial<AgentDraft>): void => setDraft((d) => (d ? { ...d, ...p } : d))
+
+  /** 多 Provider：模型名候选（启用中的模型服务清单聚合；同名以创建序先者为准，与路由一致） */
+  const modelCandidates = React.useMemo(() => {
+    const seen = new Set<string>()
+    const out: Array<{ provider: string; model: string }> = []
+    for (const c of [...connections].sort((a, b) => a.createdAt.localeCompare(b.createdAt))) {
+      if (c.kind !== 'llm' || !c.enabled) continue
+      const models = Array.isArray(c.config.models) ? c.config.models.filter((m): m is string => typeof m === 'string') : []
+      for (const m of models) {
+        if (seen.has(m)) continue
+        seen.add(m)
+        out.push({ provider: c.name, model: m })
+      }
+    }
+    return out
+  }, [connections])
 
   const save = async (): Promise<void> => {
     if (!draft || !detail) return
@@ -348,7 +368,7 @@ export function AgentEditor({ agentId, onClose }: { agentId: string; onClose: ()
       <div className="flex h-full w-[620px] max-w-[94vw] flex-col border-l bg-card shadow-2xl">
         {/* 头部 */}
         <div className="flex h-12 shrink-0 items-center gap-2 border-b px-4">
-          {avatarShape && <AgentAvatarView agent={avatarShape} size={24} animated={false} className="rounded-md" />}
+          {avatarShape && <AgentAvatarView agent={avatarShape} size={24} animated={false} />}
           <span className="truncate text-[13px] font-semibold">{draft?.name || agentId}</span>
           <span className="font-mono text-[11px] text-muted-foreground">
             {agentId}
@@ -383,7 +403,7 @@ export function AgentEditor({ agentId, onClose }: { agentId: string; onClose: ()
               <TabsContent value="basic" className="space-y-4">
                 <div className="flex items-start gap-4">
                   <div className="shrink-0 space-y-2">
-                    <AgentAvatarView agent={avatarShape} size={64} animated={false} className="rounded-xl" />
+                    <AgentAvatarView agent={avatarShape} size={64} animated={false} />
                     <div className="flex flex-col gap-1">
                       <Button variant="outline" size="xs" onClick={() => fileRef.current?.click()}>
                         <Upload className="size-3" />
@@ -431,18 +451,12 @@ export function AgentEditor({ agentId, onClose }: { agentId: string; onClose: ()
 
               {/* ---------- 人设 ---------- */}
               <TabsContent value="persona" className="space-y-3">
-                <p className="text-[11.5px] text-muted-foreground">
-                  AGENT.md 正文：进入系统提示的核心人设（职责 / 边界 / 协作方式）。保存前自动做 front-matter 与正文自检。
-                </p>
                 <MarkdownField value={draft.body} rows={22} onChange={(v) => patch({ body: v })} />
               </TabsContent>
 
               {/* ---------- 灵魂 ---------- */}
               <TabsContent value="souls" className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <p className="text-[11.5px] text-muted-foreground">
-                    灵魂 = 可选人格变体（只影响表达风格）；「默认」灵魂随角色启动。
-                  </p>
+                <div className="flex items-center justify-end">
                   <Button variant="outline" size="xs" onClick={() => setSoulDraft(emptySoul())}>
                     <Plus className="size-3" />
                     新建灵魂
@@ -450,7 +464,7 @@ export function AgentEditor({ agentId, onClose }: { agentId: string; onClose: ()
                 </div>
                 {detail.souls.length === 0 && !soulDraft && (
                   <div className="rounded-md border border-dashed px-3 py-6 text-center text-[11.5px] text-muted-foreground">
-                    暂无灵魂（souls/ 目录为空）。角色不配灵魂时使用 AGENT.md 默认人设。
+                    暂无灵魂。
                   </div>
                 )}
                 {detail.souls.map((s) => {
@@ -654,19 +668,16 @@ export function AgentEditor({ agentId, onClose }: { agentId: string; onClose: ()
                     active={draft.skillsMode === 'inherit'}
                     onClick={() => patch({ skillsMode: 'inherit' })}
                     title="继承场景默认"
-                    desc="不写 skills 字段：使用所属场景的 defaultSkills 兜底"
                   />
                   <ChoiceRow
                     active={draft.skillsMode === 'none'}
                     onClick={() => patch({ skillsMode: 'none' })}
                     title="不预载技能"
-                    desc="显式写入空清单（[]）：覆盖场景兜底，不预载任何技能"
                   />
                   <ChoiceRow
                     active={draft.skillsMode === 'custom'}
                     onClick={() => patch({ skillsMode: 'custom' })}
                     title="指定技能清单"
-                    desc="正文直接进系统提示（load_skill 仍可运行时加载其它技能）"
                   />
                 </div>
                 {draft.skillsMode === 'custom' && (
@@ -682,9 +693,6 @@ export function AgentEditor({ agentId, onClose }: { agentId: string; onClose: ()
 
               {/* ---------- 交接 ---------- */}
               <TabsContent value="handoff" className="space-y-3">
-                <p className="text-[11.5px] text-muted-foreground">
-                  常见交接对象：引导该角色完成任务后把接力棒交给谁（handoff 工具的下游候选）。
-                </p>
                 <RefMultiSelect
                   options={handoffOptions}
                   value={draft.handoff}
@@ -697,10 +705,24 @@ export function AgentEditor({ agentId, onClose }: { agentId: string; onClose: ()
               {/* ---------- 高级 ---------- */}
               <TabsContent value="advanced" className="space-y-4">
                 <div className="grid grid-cols-2 gap-3">
-                  <FieldRow label="model" hint="留空 = 继承全局默认">
-                    <TextInput value={draft.model} mono ariaLabel="模型" placeholder="如 gpt-5.2 / claude-…" onChange={(v) => patch({ model: v })} />
+                  <FieldRow label="model" hint="服务名/模型名（如 deepseek/deepseek-flash）经对应服务调用；留空 = 系统默认">
+                    <TextInput
+                      value={draft.model}
+                      mono
+                      ariaLabel="模型"
+                      list="llm-model-candidates"
+                      placeholder="如 deepseek/deepseek-flash"
+                      onChange={(v) => patch({ model: v })}
+                    />
+                    <datalist id="llm-model-candidates">
+                      {modelCandidates.map((c) => (
+                        <option key={`${c.provider}/${c.model}`} value={`${c.provider}/${c.model}`}>
+                          {c.provider}
+                        </option>
+                      ))}
+                    </datalist>
                   </FieldRow>
-                  <FieldRow label="temperature" hint="0–2；留空 = 继承全局">
+                  <FieldRow label="temperature" hint="0–2；留空 = 继承全局（设置面板「统一温度」开启时被忽略）">
                     <TextInput value={draft.temperature} mono ariaLabel="温度" placeholder="如 0.3" onChange={(v) => patch({ temperature: v })} />
                   </FieldRow>
                 </div>

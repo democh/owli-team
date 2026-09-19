@@ -1,0 +1,25 @@
+{
+  "id": "interior",
+  "name": "家装设计工作室：需求研判 × 空间规划 × 3D 效果图",
+  "participants": ["interior-designer", "space-planner", "visualizer"],
+  "prompt": "做一套家装全案设计：三室两厅，夫妻两人 + 一个孩子，我常在家办公、收纳需求大，喜欢低饱和原木风。@成竹 先做需求研判与风格定位（情绪板方向 + 色材基调）；@规方 出空间规划与布局数据（尺度校验 + scene 文件）；@塑光 搭 3D 场景并出核心视角效果图（先快照再图生图）。",
+  "maxTurns": 6,
+  "assertions": [
+    { "type": "artifact_exists", "path": "docs/设计方案-家装.md" },
+    { "type": "artifact_exists", "path": "docs/空间规划-家装.md" },
+    { "type": "artifact_exists", "path": "docs/出图说明-家装.md" },
+    { "type": "artifact_contains", "path": "docs/设计方案-家装.md", "text": "风格定位" },
+    { "type": "artifact_contains", "path": "docs/空间规划-家装.md", "text": "尺度校验" },
+    { "type": "artifact_contains", "path": "docs/出图说明-家装.md", "text": "六要素" },
+    { "type": "handoff_targets", "values": ["space-planner", "visualizer"] },
+    { "type": "turns_lte", "value": 4 },
+    { "type": "no_loop" },
+    { "type": "token_budget_ok" },
+    { "type": "run_end_reason", "value": "completed" },
+    {
+      "type": "judge",
+      "rubric": "家装设计方案须完整：需求研判含居住画像与生活习惯四问、三级分类（必须满足 / 尽量满足 / 可以放弃）；风格定位给情绪板方向与色材基调（色值可执行）；空间规划含结构转译（实测 / 估读 / 存疑三态）与尺度校验（通道 / 家具间距合规区间）、布局数据落 scene 文件；出图说明含 prompt 六要素（空间 / 视角 / 风格 / 材质 / 光照 / 负面）与 seed 参数、迭代变化点；全程声明纪律在位（效果图为示意表现、结构改动需现场核实）、好住优先（收纳 / 动线 / 照明先于颜值）。",
+      "minScore": 7
+    }
+  ]
+}

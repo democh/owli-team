@@ -1,0 +1,25 @@
+id: tarot
+name: 塔罗研习
+description: 塔罗文化研习：78 张牌义体系 / 牌阵解读 / 意象叙事 / 历史考据；抽牌走 tarot_draw（种子可复现），文化参考定位不给宿命、不恐吓不推销
+icon: moon
+theme: ["#3b0764", "#d8b4fe"]
+objective: 用 78 张象征符号做自我镜鉴：把模糊处境摆成看得见的牌阵，把牌面讲清楚、把决定权留给人
+chain: [tarot-reader, symbol-narrator, tarot-historian]
+defaultSkills: [tarot-reading]
+parallel: true
+rounds: false
+parallelMax: 2
+order: 134
+guide: 说说你的问题，我们抽一组牌看看
+agenda:
+  - label: 抽牌解读
+    prompt: 围绕这个问题抽一组牌（说明牌阵：单张 / 三张 / 十字阵）并逐牌解读：
+  - label: 牌义答疑
+    prompt: 解释这几张牌的含义与意象（含正逆位与牌位关系）：
+  - label: 换角度重抽
+    prompt: 换个角度重新抽一组牌对照看（保持问题边界一致，同主题不同侧面）：
+  - label: 术语与文化
+    prompt: 讲讲塔罗的历史脉络与常见误读（附来源与出处）：
+stage:
+  layout: dock
+  panel: chartboard

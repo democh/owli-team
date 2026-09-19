@@ -1,14 +1,16 @@
 /**
  * 指标面板（M9）：右栏「指标」分段 —— 让系统健康度与成本一眼可见。
- * 数据源：GET /api/metrics/summary（run_events + usage + tool_metrics + feedback 聚合）。
+ * 数据源：GET /api/metrics/summary（run_events + usage + tool_metrics + feedback 聚合）
+ *        + GET /api/metrics/scheduling（M61-D6：路由 / 波次 / 抑制 / 冲突 / 接单）。
  * - 运行/回合/平均回合耗时/token/费用/压缩次数；
  * - 工具调用与失败率排行；
  * - 反馈好评率（👍/👎）；
- * - 按用途（agent 回合 / summary 压缩 / judge 评审）的用量拆分。
+ * - 按用途（agent 回合 / summary 压缩 / judge 评审）的用量拆分；
+ * - 调度健康（路由命中 / 波次与并行 / 抑制与冲突）。
  */
 import * as React from 'react'
 import { Activity, Loader2, RefreshCw } from 'lucide-react'
-import type { MetricsSummary } from '@multi-agent/shared'
+import type { MetricsSummary, SchedulingStats } from '@multi-agent/shared'
 import { apiGet } from '../../lib/api'
 import { cn } from '../../lib/utils'
 import { Button } from '../ui/button'
@@ -62,16 +64,22 @@ function fmtMs(ms: number): string {
 export function MetricsPanel(): React.JSX.Element {
   const [windowIndex, setWindowIndex] = React.useState(0)
   const [data, setData] = React.useState<MetricsResponse | null>(null)
+  const [sched, setSched] = React.useState<SchedulingStats | null>(null)
   const [loading, setLoading] = React.useState(false)
 
   const load = React.useCallback(async (): Promise<void> => {
     setLoading(true)
     try {
       const sinceMs = WINDOWS[windowIndex].sinceMs
-      const res = await apiGet<MetricsResponse>(
-        `/api/metrics/summary${sinceMs ? `?sinceMs=${sinceMs}` : ''}`,
-      )
+      const qs = sinceMs ? `?sinceMs=${sinceMs}` : ''
+      const [res, sc] = await Promise.all([
+        apiGet<MetricsResponse>(`/api/metrics/summary${qs}`),
+        apiGet<{ scheduling: SchedulingStats }>(`/api/metrics/scheduling${qs}`).catch(
+          () => ({ scheduling: null }),
+        ),
+      ])
       setData(res)
+      setSched(sc.scheduling)
     } catch {
       // 服务端异常时保留旧数据
     } finally {
@@ -186,6 +194,46 @@ export function MetricsPanel(): React.JSX.Element {
                     </span>
                   </div>
                 ))}
+              </div>
+            </div>
+          )}
+
+          {sched && sched.waves > 0 && (
+            <div className="rounded-xl border bg-card p-2">
+              <div className="mb-1 text-[11px] font-medium text-muted-foreground">调度健康</div>
+              <div className="space-y-1 text-[11.5px]">
+                <div className="flex items-center gap-2">
+                  <span className="min-w-0 flex-1">路由</span>
+                  <span className="shrink-0 tabular-nums">
+                    {sched.routes} 次
+                    {sched.routeFallbacks > 0 && (
+                      <span className="ml-1 text-amber-600">降级 {sched.routeFallbacks}</span>
+                    )}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="min-w-0 flex-1">波次</span>
+                  <span className="shrink-0 tabular-nums text-muted-foreground">
+                    共 {sched.waves} · 并行 {sched.parallelWaves}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="min-w-0 flex-1">抑制</span>
+                  <span className="shrink-0 tabular-nums text-muted-foreground">
+                    循环 {sched.loopSuppressed} · 停滞 {sched.stallSuppressed}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="min-w-0 flex-1">写冲突 / 接单</span>
+                  <span
+                    className={cn(
+                      'shrink-0 tabular-nums',
+                      sched.writeConflicts > 0 ? 'text-amber-600' : 'text-muted-foreground',
+                    )}
+                  >
+                    {sched.writeConflicts} / {sched.handoffAccepted}
+                  </span>
+                </div>
               </div>
             </div>
           )}

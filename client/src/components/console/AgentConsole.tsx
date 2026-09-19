@@ -311,9 +311,7 @@ export function AgentConsole(): React.JSX.Element {
         {!loading && agents.length === 0 && (
           <div className="rounded-lg border border-dashed px-4 py-16 text-center">
             <div className="text-[13px] font-medium">还没有 Agent</div>
-            <p className="mt-1 text-[11.5px] text-muted-foreground">
-              点右上角「新建 Agent」创建自定义角色：选场景 → 填基本信息 → 完善人设 / 工具白名单 / 技能预载。
-            </p>
+            <p className="mt-1 text-[11.5px] text-muted-foreground">点右上角「新建 Agent」创建自定义角色。</p>
           </div>
         )}
         {sections.map(({ group, items }) => {
@@ -330,7 +328,7 @@ export function AgentConsole(): React.JSX.Element {
                 {items.map((a) => (
                   <article key={a.id} className="rounded-lg border bg-card p-3 transition-colors hover:border-primary/30">
                     <div className="flex items-start gap-3">
-                      <AgentAvatar agent={toDefinition(a)} size={40} animated={false} className="rounded-lg" />
+                      <AgentAvatar agent={toDefinition(a)} size={40} animated={false} />
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-1.5">
                           <span className="truncate text-[13px] font-semibold">{a.name}</span>
@@ -376,9 +374,6 @@ export function AgentConsole(): React.JSX.Element {
         <DialogContent className="max-w-xl">
           <DialogHeader>
             <DialogTitle>新建 Agent · {wizard?.step === 1 ? '选择场景' : '基本信息'}</DialogTitle>
-            <DialogDescription>
-              资产写入 agents/&lt;场景&gt;/&lt;id&gt;/AGENT.md（zod 校验 → 原子写 → 热更新，无需重启）。
-            </DialogDescription>
           </DialogHeader>
           {wizard && (
             <div className="mt-3 space-y-3">

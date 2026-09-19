@@ -10,6 +10,7 @@
 import type { ChatMessage, MemoryKind, MemoryScope } from '@multi-agent/shared'
 import type { AppConfig } from '../config.js'
 import { extractJson } from '../context/compressor.js'
+import type { UserLabeler } from '../context/user-label.js'
 import { countTokensCalibrated, truncateToTokens } from '../context/tokenizer.js'
 import { resilientStream } from '../llm/resilience.js'
 import type { ChatRequest, LlmProvider, LlmUsage } from '../llm/provider.js'
@@ -70,6 +71,8 @@ export interface DigestDeps {
   memory: MemoryStore
   /** M4：沉淀调用用量落库（kind='digest'） */
   usage?: UsageStore
+  /** M57：共享会话人类署名（沉淀输入文本；缺省 = 「用户」） */
+  userLabelFor?: (sessionId: string) => UserLabeler | undefined
   /** 写入后加速嵌入消费（MemoryService.poke；缺省 = worker 定时器兜底） */
   poke?: () => Promise<number>
 }
@@ -100,7 +103,7 @@ export class MemoryDigester {
     }
     const range = this.recentTurn(input.sessionId)
     if (range.length === 0) return { ok: false, candidates: 0, added: 0, skipped: '无对话内容' }
-    const transcript = renderForDigest(range)
+    const transcript = renderForDigest(range, this.deps.userLabelFor?.(input.sessionId))
 
     let received = ''
     let usage: LlmUsage | undefined
@@ -112,6 +115,8 @@ export class MemoryDigester {
         system: DIGEST_SYSTEM,
         messages: [{ role: 'user', content: `<transcript>\n${transcript}\n</transcript>` }],
         model: this.deps.cfg.summaryModel || undefined,
+        // M57 P3：BYOK 凭据按会话属主解析
+        sessionId: input.sessionId,
         temperature: 0,
         responseFormat: { type: 'json_schema', name: 'memory_digest', schema: DIGEST_SCHEMA },
         meta: { agentId: DIGEST_AGENT_ID, participantIds: [], stepIndex: 0 },
@@ -154,15 +159,18 @@ export class MemoryDigester {
     }
 
     const candidates = coerceDigestCandidates(extractJson(received))
+    // M57：多用户隔离——global 记忆按用户切分（owner = 会话属主）；单用户兼容模式回退旧口径
+    const userId = this.deps.sessions.getSession(input.sessionId)?.ownerId
     let added = 0
     for (const candidate of candidates) {
-      const owner = candidate.scope === 'global' ? 'global' : input.sessionId
+      const owner = candidate.scope === 'global' ? userId || 'global' : input.sessionId
       const result = this.deps.memory.upsertScoped(candidate.scope, owner, candidate.kind, candidate.content, {
         status: 'candidate',
         source: 'digest',
         sourceSessionId: input.sessionId,
         sourceRunId: input.runId,
         importance: candidate.importance,
+        userId,
       })
       if (result?.added) added++
     }
@@ -217,10 +225,10 @@ export function coerceDigestCandidates(raw: unknown): DigestCandidate[] {
 }
 
 /** 区间渲染为沉淀输入文本（总量预算内取最近内容；单条限长） */
-export function renderForDigest(messages: ChatMessage[]): string {
+export function renderForDigest(messages: ChatMessage[], userLabeler?: UserLabeler): string {
   const lines: string[] = []
   for (const m of messages) {
-    const who = m.role === 'user' ? '用户' : `Agent(${m.agentId ?? '未知'})`
+    const who = m.role === 'user' ? (userLabeler?.(m) ?? '用户') : `Agent(${m.agentId ?? '未知'})`
     const text = m.content.trim() || attachmentOnlyNote(m) || '（无文本，仅工具调用）'
     const { text: clipped } = truncateToTokens(text, PER_MESSAGE_MAX_TOKENS)
     lines.push(`[${who}] ${clipped}`)

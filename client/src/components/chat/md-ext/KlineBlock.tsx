@@ -194,7 +194,7 @@ export function KlineBlock({ code, title }: { code: string; title?: string }): R
             <button
               key={p}
               type="button"
-              className={cn('md-block-btn', (dataset.period ?? 'day') === p && !override && 'is-active')}
+              className={cn('md-block-btn', (dataset.period ?? 'day') === p && 'is-active')}
               disabled={switching !== undefined}
               onClick={() => void switchTo(p, (dataset.adjust as KlineAdjust) ?? 'qfq')}
             >

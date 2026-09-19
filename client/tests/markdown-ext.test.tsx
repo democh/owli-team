@@ -433,6 +433,14 @@ describe('Markdown 时间轴（::: timeline）', () => {
     expect(items[1]!.querySelector('.md-timeline-date')?.className).not.toContain('is-today')
     expect(items[1]!.querySelector('.md-timeline-today')).toBeNull()
   })
+
+  it('点负责人 chip → 派活草稿回填（只写草稿不直发）', () => {
+    useUiStore.setState({ composerInsert: undefined })
+    const content = ['::: timeline 内容日历', '- 2026-06-20 | 公众号推文 | 林悦', ':::'].join('\n')
+    const { container } = render(<Markdown content={content} />)
+    fireEvent.click(container.querySelector('.md-timeline-owner')!)
+    expect(useUiStore.getState().composerInsert?.text).toBe('@林悦 ')
+  })
 })
 
 const MAIL_CONTENT = [
@@ -724,6 +732,18 @@ describe('Markdown 终局裁决卡（::: verdict）', () => {
     const rows = card.querySelectorAll('.md-verdict-row')
     expect(rows).toHaveLength(2)
     expect(rows[1]!.querySelector('.md-verdict-value')?.textContent).toBe('')
+  })
+
+  it('复制裁决：结构化 markdown（标题 + 条目）写入剪贴板', async () => {
+    const user = userEvent.setup()
+    const { container } = render(<Markdown content={CONTENT} />)
+    await user.click(container.querySelector('.md-verdict-actions .md-block-btn')!)
+    await waitFor(async () => {
+      expect(await navigator.clipboard.readText()).toContain('《多空对弈裁决》（多方）')
+    })
+    const text = await navigator.clipboard.readText()
+    expect(text).toContain('- 置信度：中')
+    expect(text).toContain('- 翻盘条件：放量跌破密集区支撑 → 裁决翻转空方')
   })
 
   it('fail-safe：未闭合 verdict 无卡片壳、列表原文保留', () => {

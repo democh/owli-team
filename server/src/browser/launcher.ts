@@ -45,6 +45,107 @@ export interface LaunchResult {
   version?: string
 }
 
+/** M62：实例注册表文件名（profile 目录内；崩溃恢复 / 观测 / 复用归属防御） */
+export const INSTANCE_INFO_FILE = '.ma-instance.json'
+
+/** M62：实例注册表内容（写入时机：端点就绪后；删除时机：会话关闭 / 启动对账） */
+export interface InstanceInfo {
+  v: 1
+  browserSessionId: string
+  sessionId: string
+  /** 归属用户（多用户模式；兼容模式缺省） */
+  userId?: string
+  backend: BrowserBackend
+  pid?: number
+  endpoint: string
+  headless: boolean
+  startedAt: string
+}
+
+/** 写入实例注册表（best-effort：失败不影响启动） */
+export function writeInstanceInfo(profileDir: string, info: InstanceInfo): void {
+  try {
+    fs.writeFileSync(path.join(profileDir, INSTANCE_INFO_FILE), JSON.stringify(info), 'utf8')
+  } catch {
+    // 忽略：注册表仅用于恢复 / 观测
+  }
+}
+
+/** 读取实例注册表（不存在 / 损坏返回 undefined） */
+export function readInstanceInfo(profileDir: string): InstanceInfo | undefined {
+  try {
+    const raw = fs.readFileSync(path.join(profileDir, INSTANCE_INFO_FILE), 'utf8')
+    const parsed = JSON.parse(raw) as unknown
+    return parsed && typeof parsed === 'object' ? (parsed as InstanceInfo) : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/** 清除实例注册表（关闭 / 对账后） */
+export function clearInstanceInfo(profileDir: string): void {
+  try {
+    fs.rmSync(path.join(profileDir, INSTANCE_INFO_FILE), { force: true })
+  } catch {
+    // 忽略
+  }
+}
+
+/** 删除 profile 目录（仅 managed 临时目录；local 持久目录绝不可删） */
+export function removeProfileDir(profileDir: string): void {
+  try {
+    fs.rmSync(profileDir, { recursive: true, force: true })
+  } catch {
+    // best-effort
+  }
+}
+
+/** 读取进程命令行（ps -p <pid> -o command=；失败返回 undefined） */
+function processCommandOf(pid: number): Promise<string | undefined> {
+  return new Promise((resolve) => {
+    execFile('ps', ['-p', String(pid), '-o', 'command='], { timeout: 2_000 }, (err, stdout) => {
+      resolve(err ? undefined : String(stdout).trim())
+    })
+  })
+}
+
+/**
+ * M62：仅当 pid 存活且命令行含 `--user-data-dir=<profileDir>` 时终止（防 pid 复用误杀）。
+ * SIGTERM → 2s 宽限 → SIGKILL。返回三态：killed（已终止）/ gone（已不存在）/ foreign（非本实例，不处理）。
+ */
+export type KillOutcome = 'killed' | 'gone' | 'foreign'
+export async function killProcessIfOwned(pid: number, profileDir: string): Promise<KillOutcome> {
+  if (!Number.isInteger(pid) || pid <= 1) return 'foreign'
+  if (!isAlive(pid)) return 'gone'
+  const command = await processCommandOf(pid)
+  if (!command || !command.includes(`--user-data-dir=${profileDir}`)) return 'foreign'
+  try {
+    process.kill(pid, 'SIGTERM')
+  } catch {
+    return 'gone'
+  }
+  const deadline = Date.now() + 2_000
+  while (Date.now() < deadline) {
+    if (!isAlive(pid)) return 'killed'
+    await sleep(100)
+  }
+  try {
+    process.kill(pid, 'SIGKILL')
+  } catch {
+    // 已退出
+  }
+  return 'killed'
+}
+
+function isAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch {
+    return false
+  }
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
@@ -70,8 +171,8 @@ export async function findExistingLocal(profileDir: string): Promise<string | un
   return probed?.url
 }
 
-/** 清掉上次运行遗留的 DevToolsActivePort：Chrome 被强杀时不清理该文件，误读会连到过期端口 */
-function removeStaleActivePort(profileDir: string): void {
+/** 清掉残留的 DevToolsActivePort：Chrome 被强杀时不清理该文件，误读会连到过期端口 */
+export function clearStaleActivePort(profileDir: string): void {
   try {
     fs.rmSync(path.join(profileDir, 'DevToolsActivePort'), { force: true })
   } catch {
@@ -147,7 +248,7 @@ export async function launchBrowser(opts: LaunchOptions): Promise<LaunchResult> 
       return { endpoint: existing, backend: 'local', profileDir: persistent, external: true }
     }
     // 复用失败：清掉残留端口文件再启动，保证后续读到的端点必属新实例
-    removeStaleActivePort(persistent)
+    clearStaleActivePort(persistent)
     const executable = await resolveExecutable(opts.executable)
     const child = spawn(
       executable,

@@ -40,7 +40,7 @@ test('嵌入连接 → 设置启用 → L1.5 分层随快照输出（无召回�
   await page.getByLabel('嵌入连接').selectOption({ label: connName })
   await page.getByRole('button', { name: '保存并生效' }).click()
   await expect(page.getByText('设置已保存并即时生效')).toBeVisible()
-  await expect(page.getByText(/运行期设置/)).toBeVisible()
+  await expect(page.getByRole('heading', { name: '模型与生成' })).toBeVisible()
 
   // 回到工作台（连接管理是独立控制台视图，对话在主区进行）
   await page.getByRole('button', { name: '工作台', exact: true }).click()

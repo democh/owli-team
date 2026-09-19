@@ -50,6 +50,9 @@ function makeFetcher(opts: { fail?: string[]; failAll?: () => boolean; calls?: C
     'roll/get': fixture('sina-roll.json'),
     'f10/lsjz': fixture('fund-lsjz.json'),
     pingzhongdata: fixture('fund-pingzhongdata.js'),
+    'jbgk_': fixture('fund-jbgk.html'),
+    FundArchivesDatas: fixture('fund-jjcc.html'),
+    'fhsp_': fixture('fund-fhsp.html'),
   }
   const fail = opts.fail ?? []
   return async (req) => {
@@ -478,12 +481,19 @@ describe('M34 网关：indicator / fundamental / calendar', () => {
 // ---------------------------------------------------------------- 基金 / 新闻 / 主数据
 
 describe('M34 网关：基金 / 新闻 / 主数据 / 搜索', () => {
-  it('fundProfile：天天基金主源（名称 / 费率 / 收益）', async () => {
+  it('fundProfile：天天基金主源（名称 / 费率 / 规模 / 持仓 / 分红）', async () => {
     const { gateway, db } = makeGateway()
     try {
       const res = await gateway.fundProfile('000001', 'fund')
       expect(res.source).toBe('eastmoney-fund')
-      expect(res.data).toMatchObject({ code: '000001', name: '华夏成长混合', feeRate: 1.5, kind: 'fund' })
+      expect(res.data).toMatchObject({ code: '000001', name: '华夏成长混合', feeRate: 1.2, kind: 'fund', scale: 39.38 })
+      // 费率语义：jbgk 管理费率（1.2%）优先于 pingzhongdata fund_Rate（申购费率 1.5%）
+      // jbgk：无跟踪标的 → 缺省；jjcc 持仓（10 行）；fhsp 分红（3 条）
+      expect(res.data.trackingIndex).toBeUndefined()
+      expect(res.data.holdings).toHaveLength(10)
+      expect(res.data.holdings?.[0]).toMatchObject({ code: '300308', name: '中际旭创', weightPct: 6.45 })
+      expect(res.data.dividends).toHaveLength(3)
+      expect(res.data.dividends?.[0]).toMatchObject({ date: '2025-09-22', amount: 0.01 })
     } finally {
       db.close()
     }
@@ -544,6 +554,64 @@ describe('M34 网关：基金 / 新闻 / 主数据 / 搜索', () => {
       expect(byName.data[0].code).toBe('000001')
       const byPrefix = await gateway.search('1599')
       expect(byPrefix.data[0].code).toBe('159915')
+    } finally {
+      db.close()
+    }
+  })
+
+  it('symbolMaster：分页未完成 → 增量交付 + search 补 suggest；重启实例从游标续拉至完成', async () => {
+    const paged: Fetcher = async (req) => {
+      if (req.url.includes('suggest/get')) {
+        return {
+          status: 200,
+          ok: true,
+          statusText: 'OK',
+          finalUrl: req.url,
+          headers: new Headers(),
+          text: fixture('eastmoney-suggest.json'),
+          setCookies: [],
+        }
+      }
+      const u = new URL(req.url)
+      const pn = Number(u.searchParams.get('pn'))
+      const isEtf = (u.searchParams.get('fs') ?? '').includes('MK00')
+      const total = isEtf ? 150 : 650
+      const prefix = isEtf ? 510000 : 600000
+      const rows: Array<Record<string, unknown>> = []
+      for (let i = (pn - 1) * 100; i < Math.min(pn * 100, total); i++) {
+        rows.push({ f12: String(prefix + i), f13: 1, f14: `标的${i}` })
+      }
+      return {
+        status: 200,
+        ok: true,
+        statusText: 'OK',
+        finalUrl: req.url,
+        headers: new Headers(),
+        text: JSON.stringify({ rc: 0, data: { total, diff: rows } }),
+        setCookies: [],
+      }
+    }
+    const { gateway, db } = makeGateway({ fetcher: paged })
+    try {
+      // 第一轮：前台 6 页预算（股票段 pn1-6）→ 600 行增量返回，complete=false
+      const first = await gateway.symbolMaster()
+      expect(first.cache).toBe('miss')
+      expect(first.data).toHaveLength(600)
+      expect(first.degraded).toContain('增量加载中')
+      // 增量期间 search：本地命中不足 → 在线 suggest 合并（source=local+suggest）
+      const found = await gateway.search('600519')
+      expect(found.source).toBe('local+suggest')
+      expect(found.data[0].code).toBe('600519')
+      // 重启实例（同库）：从持久化游标续拉（股票 pn7 + ETF pn1-2）→ 完整 800 行
+      const g2 = makeGateway({ fetcher: paged, db }).gateway
+      const rest = await g2.symbolMaster()
+      expect(rest.data).toHaveLength(800)
+      expect(rest.degraded).toBeUndefined()
+      expect(rest.data.some((row) => row.code === '510000')).toBe(true)
+      // 完整后命中缓存
+      const hit = await g2.symbolMaster()
+      expect(hit.cache).toBe('hit')
+      expect(hit.data).toHaveLength(800)
     } finally {
       db.close()
     }

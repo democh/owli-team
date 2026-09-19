@@ -8,9 +8,11 @@
  * 全部写操作落审计（mcp.* action）+ 广播 notify:mcp-changed（保留主题 __mcp__，多标签同步）。
  */
 import { Router } from 'express'
+import type { Request, RequestHandler } from 'express'
 import { z } from 'zod'
 import type { McpServerConfig, McpToolDirectoryEntry, McpTransportKind } from '@multi-agent/shared'
 import { MCP_TOPIC } from '@multi-agent/shared'
+import type { AuthUser } from '../auth/service.js'
 import type { ApiDeps } from './index.js'
 import { matchesToolPattern } from '../tools/registry.js'
 
@@ -67,6 +69,8 @@ function wrap(
 
 export function createMcpRouter(deps: ApiDeps): Router {
   const router = Router()
+  const userOf = (req: Request): AuthUser | undefined => (req as Request & { user?: AuthUser }).user
+  const actorOf = (req: Request): { userId?: string; ip?: string } => ({ userId: userOf(req)?.id, ip: req.ip })
   const store = deps.mcp
   const runtime = deps.mcpRuntime
   if (!store || !runtime) {
@@ -86,13 +90,46 @@ export function createMcpRouter(deps: ApiDeps): Router {
     })
   }
 
+  // ---------- M57 P3：多用户门控（管理面 admin；成员可自建 personal 并管理） ----------
+
+  const isAdminReq = (req: Request): boolean => {
+    // 未装配 access（测试 / 裁剪场景）或兼容模式 → 放行（与旧「整体 admin 挂载」下无账号时零差异）
+    if (!deps.access?.multiUser) return true
+    return userOf(req)?.role === 'admin'
+  }
+  /** 管理面守卫（json-config / 授权矩阵 / 系统级操作）；兼容模式放行 */
+  const adminOnly: RequestHandler = (req, res, next) => {
+    if (isAdminReq(req)) return next()
+    const user = userOf(req)
+    if (!user) return res.status(401).json({ error: '未登录或登录已失效：请登录后重试' })
+    res.status(403).json({ error: '需要管理员权限（MCP 管理台由管理员统一管理）' })
+  }
+  /** 资源级守卫：admin 全量；成员仅限自己的 personal 服务器（system / 他人 personal → 404 不泄漏存在性） */
+  const ownerOrAdmin: RequestHandler = (req, res, next) => {
+    if (isAdminReq(req)) return next()
+    const user = userOf(req)
+    if (!user) return res.status(401).json({ error: '未登录或登录已失效：请登录后重试' })
+    if (store.ownsPersonal(user.id, req.params.id)) return next()
+    res.status(404).json({ error: 'MCP 服务器不存在' })
+  }
+
   // ---------- 服务器 CRUD ----------
 
-  router.get('/mcp/servers', (_req, res) => {
-    res.json({ servers: store.list() })
+  router.get('/mcp/servers', (req, res) => {
+    // M57：admin = 全量；成员 = 绑定候选（全部 system ∪ 本人 personal）
+    if (isAdminReq(req)) {
+      res.json({ servers: store.list() })
+      return
+    }
+    const user = userOf(req)
+    if (!user) {
+      res.status(401).json({ error: '未登录或登录已失效：请登录后重试' })
+      return
+    }
+    res.json({ servers: store.listForUser(user.id) })
   })
 
-  router.get('/mcp/servers/:id', (req, res) => {
+  router.get('/mcp/servers/:id', ownerOrAdmin, (req, res) => {
     const server = store.get(req.params.id)
     if (!server) {
       res.status(404).json({ error: 'MCP 服务器不存在' })
@@ -112,14 +149,24 @@ export function createMcpRouter(deps: ApiDeps): Router {
       res.status(400).json({ error: invalid })
       return
     }
+    // M57 P3：成员创建一律落 personal（scope / owner 服务端定，不信请求体）
+    const user = userOf(req)
+    const isAdmin = isAdminReq(req)
+    if (!isAdmin && !user) {
+      res.status(401).json({ error: '未登录或登录已失效：请登录后重试' })
+      return
+    }
     try {
-      const server = store.create({ ...parsed.data, source: 'ui' })
+      const server = store.create(
+        isAdmin ? { ...parsed.data, source: 'ui' } : { ...parsed.data, source: 'ui', scope: 'personal' as const, ownerId: user!.id },
+      )
       deps.audit.record({
         actor: 'user',
+        ...actorOf(req),
         action: 'mcp.create',
         resourceType: 'mcp',
         resourceId: server.id,
-        detail: { name: server.name, transport: server.transport },
+        detail: { name: server.name, transport: server.transport, scope: server.scope, ownerId: server.ownerId },
       })
       announce('created', server.id)
       res.json({ server })
@@ -130,6 +177,7 @@ export function createMcpRouter(deps: ApiDeps): Router {
 
   router.put(
     '/mcp/servers/:id',
+    ownerOrAdmin,
     wrap(async (req, res) => {
       const parsed = McpUpdateSchema.safeParse(req.body ?? {})
       if (!parsed.success) {
@@ -173,6 +221,7 @@ export function createMcpRouter(deps: ApiDeps): Router {
       }
       deps.audit.record({
         actor: 'user',
+        ...actorOf(req),
         action: 'mcp.update',
         resourceType: 'mcp',
         resourceId: server.id,
@@ -186,6 +235,7 @@ export function createMcpRouter(deps: ApiDeps): Router {
 
   router.delete(
     '/mcp/servers/:id',
+    ownerOrAdmin,
     wrap(async (req, res) => {
       const existing = store.get(req.params.id)
       if (!existing) {
@@ -202,6 +252,7 @@ export function createMcpRouter(deps: ApiDeps): Router {
       store.remove(existing.id)
       deps.audit.record({
         actor: 'user',
+        ...actorOf(req),
         action: 'mcp.delete',
         resourceType: 'mcp',
         resourceId: existing.id,
@@ -216,6 +267,7 @@ export function createMcpRouter(deps: ApiDeps): Router {
 
   router.post(
     '/mcp/servers/:id/test',
+    ownerOrAdmin,
     wrap(async (req, res) => {
       const existing = store.get(req.params.id)
       if (!existing) {
@@ -225,6 +277,7 @@ export function createMcpRouter(deps: ApiDeps): Router {
       const result = await runtime.test(existing.id)
       deps.audit.record({
         actor: 'user',
+        ...actorOf(req),
         action: 'mcp.test',
         resourceType: 'mcp',
         resourceId: existing.id,
@@ -238,6 +291,7 @@ export function createMcpRouter(deps: ApiDeps): Router {
 
   router.post(
     '/mcp/servers/:id/reconnect',
+    ownerOrAdmin,
     wrap(async (req, res) => {
       const existing = store.get(req.params.id)
       if (!existing) {
@@ -251,6 +305,7 @@ export function createMcpRouter(deps: ApiDeps): Router {
       await runtime.restart(existing.id)
       deps.audit.record({
         actor: 'user',
+        ...actorOf(req),
         action: 'mcp.reconnect',
         resourceType: 'mcp',
         resourceId: existing.id,
@@ -262,6 +317,7 @@ export function createMcpRouter(deps: ApiDeps): Router {
 
   router.post(
     '/mcp/servers/:id/refresh',
+    ownerOrAdmin,
     wrap(async (req, res) => {
       const existing = store.get(req.params.id)
       if (!existing) {
@@ -271,6 +327,7 @@ export function createMcpRouter(deps: ApiDeps): Router {
       await runtime.refreshTools(existing.id)
       deps.audit.record({
         actor: 'user',
+        ...actorOf(req),
         action: 'mcp.refresh',
         resourceType: 'mcp',
         resourceId: existing.id,
@@ -284,7 +341,7 @@ export function createMcpRouter(deps: ApiDeps): Router {
 
   const jsonImportSchema = z.object({ json: z.string().min(2).max(200_000) })
 
-  router.get('/mcp/json-config', (_req, res) => {
+  router.get('/mcp/json-config', adminOnly, (_req, res) => {
     if (!deps.mcpJson) {
       res.status(503).json({ error: 'MCP JSON 配置未装配' })
       return
@@ -294,7 +351,8 @@ export function createMcpRouter(deps: ApiDeps): Router {
 
   router.post(
     '/mcp/json-config/sync',
-    wrap(async (_req, res) => {
+    adminOnly,
+    wrap(async (req, res) => {
       if (!deps.mcpJson) {
         res.status(503).json({ error: 'MCP JSON 配置未装配' })
         return
@@ -302,6 +360,7 @@ export function createMcpRouter(deps: ApiDeps): Router {
       const result = await deps.mcpJson.sync('manual')
       deps.audit.record({
         actor: 'user',
+        ...actorOf(req),
         action: 'mcp.json-sync',
         resourceType: 'mcp',
         ok: result.ok,
@@ -315,6 +374,7 @@ export function createMcpRouter(deps: ApiDeps): Router {
 
   router.post(
     '/mcp/json-config/import',
+    adminOnly,
     wrap(async (req, res) => {
       if (!deps.mcpJson) {
         res.status(503).json({ error: 'MCP JSON 配置未装配' })
@@ -328,6 +388,7 @@ export function createMcpRouter(deps: ApiDeps): Router {
       const outcome = await deps.mcpJson.importAsUi(parsed.data.json)
       deps.audit.record({
         actor: 'user',
+        ...actorOf(req),
         action: 'mcp.json-import',
         resourceType: 'mcp',
         ok: outcome.created.length > 0 || outcome.errors.length === 0,
@@ -340,7 +401,7 @@ export function createMcpRouter(deps: ApiDeps): Router {
 
   // ---------- 工具目录 + 角色可达性矩阵 ----------
 
-  router.get('/mcp/tools', (_req, res) => {
+  router.get('/mcp/tools', adminOnly, (_req, res) => {
     const agents = deps.prompts.list()
     const tools: McpToolDirectoryEntry[] = []
     for (const server of store.list()) {
@@ -374,7 +435,14 @@ export function createMcpRouter(deps: ApiDeps): Router {
       res.status(404).json({ error: '会话不存在' })
       return
     }
-    res.json({ bindings: store.serversOf(req.params.id) })
+    // M57 P3：防御性过滤——他人 personal 服务器不出现在绑定清单
+    const sessionOwner = deps.sessions.getSession(req.params.id)?.ownerId
+    const viewerId = userOf(req)?.id
+    const bindings = store.serversOf(req.params.id).filter(({ server }) => {
+      if ((server.scope ?? 'system') !== 'personal') return true
+      return Boolean(viewerId && (server.ownerId === viewerId || server.ownerId === sessionOwner))
+    })
+    res.json({ bindings })
   })
 
   router.post('/sessions/:id/mcp-servers', (req, res) => {
@@ -392,9 +460,22 @@ export function createMcpRouter(deps: ApiDeps): Router {
       res.status(404).json({ error: 'MCP 服务器不存在' })
       return
     }
+    // M57 P3：成员可绑 —— 全部 system（现状）∪ 本人 personal；他人 personal → 404（不泄漏存在性）
+    const user = userOf(req)
+    if (!isAdminReq(req) && (server.scope ?? 'system') === 'personal') {
+      if (!user || server.ownerId !== user.id) {
+        res.status(404).json({ error: 'MCP 服务器不存在' })
+        return
+      }
+    }
     store.bind(req.params.id, server.id)
+    // M57 P3：personal 服务器绑定即拉起连接（成员无管理台，不能手动重连）
+    if ((server.scope ?? 'system') === 'personal' && server.enabled) {
+      void runtime.connect(server.id).catch(() => undefined)
+    }
     deps.audit.record({
       actor: 'user',
+      ...actorOf(req),
       action: 'mcp.bind',
       resourceType: 'mcp',
       resourceId: server.id,
@@ -410,6 +491,7 @@ export function createMcpRouter(deps: ApiDeps): Router {
     if (removed) {
       deps.audit.record({
         actor: 'user',
+        ...actorOf(req),
         action: 'mcp.unbind',
         resourceType: 'mcp',
         resourceId: req.params.serverId,

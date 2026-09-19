@@ -11,13 +11,17 @@ import type { IncomingMessage, Server as HttpServer } from 'node:http'
 import { WebSocket, WebSocketServer } from 'ws'
 import type { NotifyEnvelope, NotifyListResponse, NotifyType } from '@multi-agent/shared'
 import type { AppConfig } from './config.js'
-import { AUTH_COOKIE, parseCookie, safeEqual } from './middleware.js'
+import type { AccessService } from './auth/access.js'
+import type { AuthService, AuthUser } from './auth/service.js'
+import { AUTH_COOKIE, parseCookie, resolveUserFromHeaders, safeEqual } from './middleware.js'
 
 interface Client {
   id: string
   socket: WebSocket
   subscriptions: Set<string>
   alive: boolean
+  /** M57：登录态（多用户订阅 ACL 依据） */
+  user?: AuthUser
 }
 
 interface ClientMessage {
@@ -40,7 +44,11 @@ export class NotifyHub {
   private buffers = new Map<string, { seq: number; events: NotifyEnvelope[] }>()
   private heartbeatTimer?: ReturnType<typeof setInterval>
 
-  constructor(private readonly cfg: AppConfig) {}
+  constructor(
+    private readonly cfg: AppConfig,
+    /** M57：认证 / 访问控制依赖（惰性读取；缺省 = 旧语义（仅 token 校验，测试兼容）） */
+    private readonly getAuthDeps?: () => { auth: AuthService; access: AccessService },
+  ) {}
 
   attach(server: HttpServer): void {
     // M10：改用 noServer 模式，握手前完成鉴权（浏览器自动携带 cookie；CLI 可用 ?token= 或 Bearer）
@@ -48,32 +56,47 @@ export class NotifyHub {
     server.on('upgrade', (req, socket, head) => {
       const url = new URL(req.url ?? '/', 'http://localhost')
       if (url.pathname !== '/ws') return // 非 /ws 的升级请求交由其他监听器处理（与原 path 过滤行为一致）
-      if (!this.authorized(req, url)) {
+      const verdict = this.authorize(req, url)
+      if (!verdict.ok) {
         socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n')
         socket.destroy()
         return
       }
       this.wss?.handleUpgrade(req, socket, head, (ws) => {
-        this.wss?.emit('connection', ws, req)
+        this.wss?.emit('connection', ws, req, verdict.user)
       })
     })
-    this.wss.on('connection', (socket) => this.onConnection(socket))
+    this.wss.on('connection', (socket: WebSocket, _req: IncomingMessage, user?: AuthUser) =>
+      this.onConnection(socket, user),
+    )
     this.heartbeatTimer = setInterval(() => this.tick(), this.cfg.wsHeartbeatMs)
     this.heartbeatTimer.unref?.()
   }
 
-  /** 握手鉴权：未配置 AUTH_TOKEN 时放行；否则 cookie / query token / Bearer 任一匹配即可 */
-  private authorized(req: IncomingMessage, url: URL): boolean {
-    if (!this.cfg.authToken) return true
-    const header = req.headers.authorization ?? ''
-    const bearer = header.startsWith('Bearer ') ? header.slice(7) : ''
-    const cookieToken = parseCookie(req.headers.cookie ?? '', AUTH_COOKIE)
-    const queryToken = url.searchParams.get('token') ?? ''
-    return (
-      safeEqual(bearer, this.cfg.authToken) ||
-      safeEqual(cookieToken, this.cfg.authToken) ||
-      safeEqual(queryToken, this.cfg.authToken)
-    )
+  /**
+   * 握手鉴权（M57）：
+   * - 已注入认证依赖：登录态解析（sid cookie / Bearer API Key / legacy AUTH_TOKEN / ?token=）；
+   * - 未注入（老测试路径）：沿用 AUTH_TOKEN 校验语义（未配置 token 时放行）。
+   */
+  private authorize(req: IncomingMessage, url: URL): { ok: boolean; user?: AuthUser } {
+    const deps = this.getAuthDeps?.()
+    if (!deps) {
+      if (!this.cfg.authToken) return { ok: true }
+      const header = req.headers.authorization ?? ''
+      const bearer = header.startsWith('Bearer ') ? header.slice(7) : ''
+      const cookieToken = parseCookie(req.headers.cookie ?? '', AUTH_COOKIE)
+      const queryToken = url.searchParams.get('token') ?? ''
+      const ok =
+        safeEqual(bearer, this.cfg.authToken) ||
+        safeEqual(cookieToken, this.cfg.authToken) ||
+        safeEqual(queryToken, this.cfg.authToken)
+      return { ok }
+    }
+    const user = resolveUserFromHeaders(deps.auth, this.cfg, req.headers, url.searchParams.get('token') ?? '')
+    if (user) return { ok: true, user }
+    // 单用户兼容模式（无账号且未配置 AUTH_TOKEN）：放行
+    if (!deps.auth.multiUser && !this.cfg.authToken) return { ok: true }
+    return { ok: false }
   }
 
   close(): void {
@@ -135,12 +158,13 @@ export class NotifyHub {
     return { notifications: all, cursor, truncated: truncated || undefined }
   }
 
-  private onConnection(socket: WebSocket): void {
+  private onConnection(socket: WebSocket, user?: AuthUser): void {
     const client: Client = {
       id: `c_${randomUUID().slice(0, 8)}`,
       socket,
       subscriptions: new Set(),
       alive: true,
+      user,
     }
     this.clients.set(client.id, client)
 
@@ -155,8 +179,10 @@ export class NotifyHub {
       switch (msg.type) {
         case 'subscribe': {
           for (const id of msg.sessionIds ?? []) {
+            // M57：订阅 ACL——全局主题（__mcp__ / __assets__ 等）仅 admin；会话主题需归属可见
+            if (!this.canSubscribe(client, id)) continue
             client.subscriptions.add(id)
-            // 按 since 游标补发（重连恢复）
+            // 按 since 游标补发（重连恢复；补发内容同样受 ACL 约束）
             const cursor = msg.cursors?.[id]
             if (typeof cursor === 'number') {
               const buf = this.buffers.get(id)
@@ -204,6 +230,15 @@ export class NotifyHub {
       client.alive = false
       if (client.socket.readyState === WebSocket.OPEN) client.socket.send(frame)
     }
+  }
+
+  /** 订阅 ACL：全局主题（`__` 前缀）仅 admin；会话主题需归属可见（未注入认证依赖时沿用旧行为） */
+  private canSubscribe(client: Client, topic: string): boolean {
+    const deps = this.getAuthDeps?.()
+    if (!deps) return true
+    if (!deps.auth.multiUser) return true
+    if (topic.startsWith('__')) return client.user?.role === 'admin'
+    return client.user ? deps.access.canAccessSession(client.user, topic) : false
   }
 
   private send(client: Client, data: Record<string, unknown>): void {

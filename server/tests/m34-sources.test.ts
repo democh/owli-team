@@ -10,7 +10,14 @@ import { parseSymbol, type FinSymbol } from '../src/finance/symbol.js'
 import * as eastmoney from '../src/finance/sources/eastmoney.js'
 import * as tencent from '../src/finance/sources/tencent.js'
 import * as sina from '../src/finance/sources/sina.js'
-import { computeNavReturns, parseLsJzPayload, parsePingzhongdata } from '../src/finance/sources/fund.js'
+import {
+  computeNavReturns,
+  parseFundArchive,
+  parseFundDividends,
+  parseFundHoldings,
+  parseLsJzPayload,
+  parsePingzhongdata,
+} from '../src/finance/sources/fund.js'
 import { dedupeNews, parseNoticePayload, parseSinaRollPayload } from '../src/finance/sources/news.js'
 import type { Fetcher } from '../src/finance/fetcher.js'
 
@@ -141,6 +148,55 @@ describe('M34 东财源适配器', () => {
     expect(rows[1]).toMatchObject({ type: 'etf', exchange: 'sz' })
     expect(rows[3]).toMatchObject({ type: 'index', exchange: 'sz' })
   })
+
+  it('searchSymbols：limit → count 参数（clamp 1..20）', async () => {
+    const { fetcher, urls } = replayFetcher({ 'suggest/get': fixture('eastmoney-suggest.json') })
+    await eastmoney.searchSymbols('600519', { fetcher }, 5)
+    expect(urls[0]).toContain('count=5')
+    await eastmoney.searchSymbols('600519', { fetcher }, 99)
+    expect(urls[1]).toContain('count=20')
+  })
+
+  it('fetchSymbolListSweep：pn 分页 + 游标续拉（budget 截断；股票 650 行 / ETF 150 行）', async () => {
+    const urls: string[] = []
+    const paged: Fetcher = async (req) => {
+      urls.push(req.url)
+      const u = new URL(req.url)
+      const pn = Number(u.searchParams.get('pn'))
+      const isEtf = (u.searchParams.get('fs') ?? '').includes('MK00')
+      const total = isEtf ? 150 : 650
+      const prefix = isEtf ? 510000 : 600000
+      const rows: Array<Record<string, unknown>> = []
+      for (let i = (pn - 1) * 100; i < Math.min(pn * 100, total); i++) {
+        rows.push({ f12: String(prefix + i), f13: 1, f14: `标的${i}` })
+      }
+      return {
+        status: 200,
+        ok: true,
+        statusText: 'OK',
+        finalUrl: req.url,
+        headers: new Headers(),
+        text: JSON.stringify({ rc: 0, data: { total, diff: rows } }),
+        setCookies: [],
+      }
+    }
+    // 第一轮：budget=2 → 股票段前 2 页（200 行），游标指向 pn=3
+    const first = await eastmoney.fetchSymbolListSweep(undefined, 2, { fetcher: paged })
+    expect(first.pagesFetched).toBe(2)
+    expect(first.done).toBe(false)
+    expect(first.rows).toHaveLength(200)
+    expect(first.next).toEqual({ seg: 0, page: 3 })
+    // 第二轮：从游标续拉（股票剩余 5 页 + ETF 2 页）→ 完成（共 600 行）
+    const second = await eastmoney.fetchSymbolListSweep(first.next, 10, { fetcher: paged })
+    expect(second.done).toBe(true)
+    expect(second.rows).toHaveLength(600)
+    expect(urls[0]).toContain('pn=1')
+    expect(urls[0]).toContain('pz=100')
+    expect(urls[0]).toContain('ut=bd1d9ddb04089700cf9c27f6f7426281')
+    expect(urls[2]).toContain('pn=3')
+    // ETF 段首次请求（第一轮 2 页后为 urls[2..6]，ETF 起始于 urls[7]）
+    expect(urls[7]).toContain('MK00')
+  })
 })
 
 describe('M34 腾讯 / 新浪源适配器', () => {
@@ -200,11 +256,43 @@ describe('M34 天天基金源适配器', () => {
     expect(() => parseLsJzPayload('{"Data":{}}')).toThrow('响应异常')
   })
 
-  it('parsePingzhongdata：名称 / 费率 / 净值走势提取', () => {
+  it('parsePingzhongdata：名称 / 费率 / 规模 / 净值走势提取', () => {
     const info = parsePingzhongdata(fixture('fund-pingzhongdata.js'))
     expect(info.name).toBe('华夏成长混合')
     expect(info.feeRate).toBe(1.5)
+    expect(info.scale).toBe(39.38)
     expect(info.navTrend).toHaveLength(4)
+    // 无规模序列（旧数据 / 货币基金）→ 缺省不报错
+    const noScale = parsePingzhongdata('var fS_name = "测试基金"; var Data_netWorthTrend = [{"x":1757952000000,"y":1.2}];')
+    expect(noScale.scale).toBeUndefined()
+    expect(noScale.name).toBe('测试基金')
+  })
+
+  it('parseFundArchive：跟踪标的（无则缺省）/ 净资产规模 / 管理费率', () => {
+    const info = parseFundArchive(fixture('fund-jbgk.html'))
+    expect(info.scale).toBe(39.38)
+    expect(info.feeRate).toBe(1.2)
+    expect(info.trackingIndex).toBeUndefined() // 000001 为「该基金无跟踪标的」
+    const etf = parseFundArchive(
+      '<tr><th>业绩比较基准</th><td>沪深300指数</td><th>跟踪标的</th><td>沪深300指数</td></tr>',
+    )
+    expect(etf.trackingIndex).toBe('沪深300指数')
+  })
+
+  it('parseFundHoldings：取最新一期表格（10 行）+ 代码/名称/权重', () => {
+    const rows = parseFundHoldings(fixture('fund-jjcc.html'))
+    expect(rows).toHaveLength(10)
+    expect(rows[0]).toMatchObject({ code: '300308', name: '中际旭创', weightPct: 6.45 })
+    expect(rows[4]).toMatchObject({ code: '600519', name: '贵州茅台' })
+    // 第二期（上期）表格不混入
+    expect(rows.some((row) => row.code === '601899')).toBe(false)
+  })
+
+  it('parseFundDividends：每10份派现金折算每份 + 跳过无分红表格', () => {
+    const rows = parseFundDividends(fixture('fund-fhsp.html'))
+    expect(rows).toHaveLength(3)
+    expect(rows[0]).toMatchObject({ date: '2025-09-22', amount: 0.01 })
+    expect(rows[2].amount).toBeCloseTo(0.23, 4)
   })
 
   it('computeNavReturns：阶段收益计算', () => {

@@ -14,6 +14,7 @@ import { CanvasComposer } from '../src/components/canvas/CanvasComposer'
 import { ConnectionsConsole } from '../src/components/console/ConnectionsConsole'
 import { SettingsView } from '../src/components/settings/SettingsView'
 import { useAgentStore } from '../src/stores/agent-store'
+import { useCanvasStore } from '../src/stores/canvas-store'
 import { useConnectionsStore } from '../src/stores/connections-store'
 import { useMcpStore } from '../src/stores/mcp-store'
 import { useRunStore } from '../src/stores/run-store'
@@ -56,12 +57,13 @@ function makeMediaConnection(overrides: Partial<ConnectionDefinition> = {}): Con
   }
 }
 
-/** 全量运行设置（26 项；含 M34 金融投研 4 项） */
+/** 全量运行设置（27 项；含 M34 金融投研 4 项） */
 const SETTINGS: Record<string, unknown> = {
   llmModel: 'gpt-test',
   summaryModel: '',
   judgeModel: '',
   temperature: 0.3,
+  temperatureOverride: false,
   maxTurnsPerRun: 12,
   contextBudgetTokens: 60000,
   keepRecentTurns: 6,
@@ -86,12 +88,13 @@ const SETTINGS: Record<string, unknown> = {
   financePyTimeoutMs: 30000,
 }
 
-/** 26 项字段标签（顺序与 SettingsView 分组一致） */
+/** 27 项字段标签（顺序与 SettingsView 分组一致） */
 const ALL_LABELS = [
   '主模型',
   '摘要模型',
   '评测模型',
   '温度',
+  '统一温度',
   '上下文预算（tokens）',
   '保留最近回合数',
   '单条工具结果上限（tokens）',
@@ -179,6 +182,7 @@ beforeEach(() => {
     pendingEditId: undefined,
   })
   useMcpStore.setState({ servers: [], tools: [], bindings: [], sessionId: undefined, loading: false })
+  useCanvasStore.setState({ doc: null, selectedIds: [], sessionId: undefined, remoteFlash: undefined })
   useUiStore.setState({ appView: 'workspace' })
 })
 
@@ -187,7 +191,7 @@ afterEach(() => {
 })
 
 describe('M36：设置主区页（SettingsView）', () => {
-  it('26 项设置全量渲染（含金融投研 4 项），分组导航齐全', async () => {
+  it('27 项设置全量渲染（含金融投研 4 项），分组导航齐全', async () => {
     stubSettingsFetch()
     render(<SettingsView />)
 
@@ -242,6 +246,41 @@ describe('M36：设置主区页（SettingsView）', () => {
       expect(body.memoryRecallTopK).toBe(8)
     })
     await waitFor(() => expect(screen.queryByText('未保存改动')).toBeNull())
+  })
+
+  it('统一温度：开关切换后保存回传 temperatureOverride；提示角色覆盖统计', async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = []
+    fetchMock.mockImplementation((url: string, init?: RequestInit) => {
+      calls.push({ url, init })
+      if (url === '/api/settings' && init?.method === 'PUT') return Promise.resolve(jsonResponse({ settings: SETTINGS, applied: true }))
+      if (url === '/api/settings') return Promise.resolve(jsonResponse({ settings: SETTINGS }))
+      if (url === '/api/connections') return Promise.resolve(jsonResponse({ connections: [] }))
+      if (url === '/api/skills') return Promise.resolve(jsonResponse({ skills: [] }))
+      if (url === '/api/health') return Promise.resolve(jsonResponse({ ok: true, model: 'gpt-test' }))
+      if (url === '/api/agents')
+        return Promise.resolve(
+          jsonResponse({
+            agents: [{ ...makeAgent('a1', '甲', '角色'), temperature: 0.3 }, makeAgent('a2', '乙', '角色')],
+          }),
+        )
+      return Promise.resolve(jsonResponse({}, 404))
+    })
+
+    render(<SettingsView />)
+    const box = (await screen.findByRole('checkbox', { name: /统一温度/ })) as HTMLInputElement
+    expect(box.checked).toBe(false)
+    // 覆盖统计提示：1/2 个角色单独配置了温度
+    expect(await screen.findByText(/1\/2 个角色单独配置了温度/)).toBeTruthy()
+
+    await userEvent.click(box)
+    expect(screen.getByText('未保存改动')).toBeTruthy()
+    await userEvent.click(screen.getByRole('button', { name: /保存并生效/ }))
+    await waitFor(() => {
+      const put = calls.find((c) => c.url === '/api/settings' && c.init?.method === 'PUT')
+      expect(put).toBeTruthy()
+      const body = JSON.parse(String(put!.init?.body)) as Record<string, unknown>
+      expect(body.temperatureOverride).toBe(true)
+    })
   })
 
   it('资源与集成：计数概览（连接 / MCP / 角色 / 技能）与直达入口', async () => {
@@ -307,6 +346,40 @@ describe('M36：画布指令条（CanvasComposer）', () => {
 
     await userEvent.click(screen.getByRole('button', { name: /艾达/ }))
     expect((screen.getByRole('textbox') as HTMLTextAreaElement).value).toBe('@艾达 ')
+  })
+
+  it('引用选中（M31 修订）：选中节点时浮现 chip，点击逐行插入引文到输入框', async () => {
+    useAgentStore.setState({ agents: [makeAgent('architect', '艾达', '架构师')] })
+    useCanvasStore.setState({
+      doc: {
+        v: 1,
+        sessionId: 's1',
+        version: 1,
+        updatedAt: new Date().toISOString(),
+        viewport: { x: 0, y: 0, zoom: 1 },
+        nodes: [
+          { id: 'nd_q', type: 'note', position: { x: 0, y: 0 }, data: { text: '待办要点' } },
+          { id: 'nd_r', type: 'note', position: { x: 200, y: 0 }, data: { text: '次要' } },
+        ],
+        edges: [],
+      },
+      selectedIds: ['nd_q'],
+    })
+    render(<CanvasComposer />)
+
+    // 未选中不出现；选中 1 个 → chip 显示计数
+    const chip = screen.getByRole('button', { name: /引用选中 1/ })
+    await userEvent.click(chip)
+    const box = screen.getByRole('textbox') as HTMLTextAreaElement
+    expect(box.value).toContain('[画布便签]')
+    expect(box.value).toContain('待办要点')
+    expect(box.value).not.toContain('次要')
+  })
+
+  it('引用选中：无选中时 chip 不渲染', () => {
+    useAgentStore.setState({ agents: [makeAgent('architect', '艾达', '架构师')] })
+    render(<CanvasComposer />)
+    expect(screen.queryByRole('button', { name: /引用选中/ })).toBeNull()
   })
 })
 

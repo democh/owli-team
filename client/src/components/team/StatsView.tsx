@@ -80,11 +80,13 @@ export function computeStats(
   for (const m of messages) {
     totals.artifacts += m.artifacts?.length ?? 0
     totals.tools += m.toolCalls?.length ?? 0
+    // M77：发言归属按成员键（同角多魂下分身各自计数；存量消息缺省 = agentId）
+    const owner = m.role === 'agent' ? (m.memberKey ?? m.agentId) : undefined
     if (m.role === 'agent') {
       totals.messages += 1
       if (m.status !== 'streaming') totals.turns += 1
-      firstSpeaker ??= m.agentId
-      const own = m.agentId ? acc.get(m.agentId) : undefined
+      firstSpeaker ??= owner
+      const own = owner ? acc.get(owner) : undefined
       if (own) {
         own.messages += 1
         own.artifacts += m.artifacts?.length ?? 0
@@ -93,7 +95,7 @@ export function computeStats(
       }
     }
     for (const target of m.mentions) {
-      if (target === 'user' || target === m.agentId) continue
+      if (target === 'user' || target === owner) continue
       const t = acc.get(target)
       if (t) t.mentioned += 1
     }
@@ -273,7 +275,7 @@ function RankRow({
         >
           {rank}
         </span>
-        <AgentAvatar agent={stat.agent} size={28} animated={false} className="rounded-md" />
+        <AgentAvatar agent={stat.agent} size={28} animated={false} />
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1.5">
             <span className="min-w-0 truncate text-[12.5px] font-medium">{stat.agent.name}</span>

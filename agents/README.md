@@ -13,7 +13,7 @@ agents/
 ├── _presets.yaml             # 快速组队预设（可选；跨场景编制模板，缺失时 UI 自动隐藏）
 └── <场景 id>/                # 一个目录 = 一个场景（group）
     ├── _group.yaml           # 场景元数据（必填）
-    ├── _protocol.md          # 场景协议（可选；本包 29 场景已全量具备，追加在全局协议之后）
+    ├── _protocol.md          # 场景协议（可选；本包 40 场景已全量具备，追加在全局协议之后）
     └── <agent id>/           # 一个目录 = 一个 Agent（id 跨场景全局唯一）
         ├── AGENT.md          # front-matter + 人设正文（必填）
         ├── souls/            # 灵魂变体（可选；不建目录 = 无灵魂，行为与经典模式一致）
@@ -43,19 +43,33 @@ soul: wild                    # 可选：默认灵魂 id（未写时取 souls/de
 handoff: [architect, designer] # 常用交接对象（按需，不限制实际 @）
 tools: [...]                  # 可选：工具白名单（缺省 = 全部已启用工具）
 skills: [...]                 # 可选：预载技能（缺省时若场景 _group.yaml 配了 defaultSkills 则采用）
-model: deepseek-chat          # 可选：仅本角色使用的模型
-temperature: 0.6              # 可选
+model: deepseek/deepseek-chat # 可选：服务名/模型名（前缀 = 「设置 → 模型与生成 → 模型服务」的连接名；如 deepseek/deepseek-flash）
+temperature: 0.6              # 可选；设置面板「统一温度」开启时被忽略
 ---
 ```
 
-正文建议结构：你是谁（一句形象）→ `## 职责`（分点，含职责边界）→ `## 工作方式`（可执行的步骤与决策规则）→ `## 交付契约`（产物路径 + 章节结构 + 完成定义）→ `## 协作接口`（上游输入 / 下游交接 / 升级路径）。
+### 正文规范：专家级六段骨架
+
+正文（front-matter 之后的人设）统一采用六段骨架，**每段均为必含段**；正文目标 1200–2400 字符，由 `npm run check:agents` 质量报告实测（`--strict` 时为 CI 门禁）：
+
+1. `## 职责`——一句形象 + 分点职责（每条以动词开头的闭环）；**末条固定为职责边界**（做什么 / 不做什么 / 什么归谁）。
+2. `## 专业判断`——3–5 条**硬规则**：阈值、取舍口径、分支决策（什么情况走 A、什么情况走 B）、不变量（什么永远不妥协）。写「可判定的规则」，不写泛泛态度。
+3. `## 工作方式`——SOP 化编号步骤：每步可执行、含工具口径（用哪个工具、参数口径、禁止什么）；决策点写明判断依据。
+4. `## 质量与自检`——交付前核对清单（3–5 条可判定项）+ 2–3 条**反模式**（本角色最常见的错误及表现），形成自我 QA 闭环。
+5. `## 交付契约`——产物路径（`docs/<文档类型>-<主题>.md`，须与 mock.ts `artifactFor` 逐字一致）+ 章节结构 + 完成定义。
+6. `## 协作接口`——上游输入 / 下游交接（**交接品质标准**：交棒时必须携带的信息包）/ 升级路径（什么情况找谁、什么情况 @用户 拍板）。
+
+> 段序即建议顺序；升级既有角色时 front-matter 与交付契约中的路径文本不得改动（受测试断言保护）。
+
+正文写作要点（四段骨架时代的通用建议，仍适用）：你是谁（一句形象）→ 职责（含边界）→ 工作方式（可执行步骤与决策规则）→ 交付契约（产物路径 + 章节结构 + 完成定义）→ 协作接口（上游输入 / 下游交接 / 升级路径）。
 
 ## 工具白名单（front-matter `tools`）
 
 - `tools: [...]` 为可选白名单：缺省 = 该角色可用全部已启用工具；写上则仅暴露列出项（最小授权，如 legal 只给 `template_fill` 与检索类）；
 - 业务工具四件套（M21）：`calc`（金额 / 比例 / 利率，禁止心算）、`date_calc`（日期与排期，含工作日）、`csv_analyze`（表格汇总 / 筛选，禁止目测）、`template_fill`（合同 / 报价 / 邮件等模板批量渲染，写类走审批）；
 - 「何时必须用」由协议层约束（`_protocol.md <tool_policy>` 的业务纪律四条），工具授权只解决「能不能用」。
-- 协作基线（M29，v14 扩展至全部角色）：全部 113 业务角色白名单均含 `handoff`（结构化转交为第一通道，ADR 2；`reason` / `expected_output` 随交接注入接收方回合指令）；研发 7 角色均含 `remember`（关键口径固化，对齐协议 `<context_semantics>`）。空场景通用助手 `general` 除外：无 `handoff`，单助手纪律（M50）。
+- 外部 MCP（免 Key 批，`mcp.json` 文件权威）：九台服务器（sequential-thinking / memory / time / weather / markitdown / deepwiki / context7 / arxiv / yfinance）按场景最小授权授予对应角色（`mcp__<slug>__*` 通配，会话绑定后可见）；安装台账见 [design.md §109](../design.md)。
+- 协作基线（M29，v14 扩展至全部角色）：全部 164 业务角色白名单均含 `handoff`（结构化转交为第一通道，ADR 2；`reason` / `expected_output` 随交接注入接收方回合指令）；研发 7 角色均含 `remember`（关键口径固化，对齐协议 `<context_semantics>`）。空场景通用助手 `general` 除外：无 `handoff`，单助手纪律（M50）。
 - 调度（M48）：**不再有「调度官」角色**——未 @ 消息与空编制开场由引擎的**平台路由步（PRS）**自动组队与派发（见 [design.md §57](../design.md) / [ADR 0101](../docs/adr/0101-platform-routing-step.md)）；全部 agent 均为单一业务角色，不存在「平台机制角色」。
 
 ## 研发场景能力基线（M29）
@@ -76,27 +90,27 @@ temperature: 0.6              # 可选
 
 三层加载：**常驻索引**（全部技能的 name + description 注入系统提示 `<available_skills>`，任何角色可按需 `load_skill` 加载正文）→ **预载**（front-matter `skills: [...]`，正文直接进系统提示 L3 层，可裁剪）→ **场景兜底**（`_group.yaml` 的 `defaultSkills`，仅当 agent 未显式配置 skills 时生效）。
 
-- 技能为单文件 `skills/<name>/SKILL.md`：front-matter（`name` 必须等于目录名 / `description` 必填含触发场景 / `tags`）+ 中文正文 60–150 行；库按 mtime 热更新，`npm run check:skills` 校验；
+- 技能为单文件 `skills/<name>/SKILL.md`：front-matter（`name` 必须等于目录名 / `description` 必填含触发场景 / `tags`）+ 中文正文 60–150 行；库按 mtime 热更新，`npm run check:skills` 校验（附行数质量报告；**CI 已启用 `SKILL_STRICT=1` 强制门禁**）；
 - 只引用本仓真实工具与 Markdown 容器（`::: kpi / timeline / mail / option / cols / details`、`chart` / `mermaid`）；角色缺该工具时以「如可用」降级并给替代路径；
-- 外部来源（Anthropic 官方 / 社区职能库 / Vercel 界面指南等）统一改写为「本仓工具可执行」的方法论，规范见 ADR 45。
+- 外部来源（Anthropic 官方 / 社区职能库 / Vercel 界面指南等）统一改写为「本仓工具可执行」的方法论，规范见 ADR 45；安装批新增 8 项外部来源（paper-search / avoid-ai-writing / superpowers / claude-code-owasp / naming / en-zh-translation-polish / claude-persona / Claude-Ally-Health），来源登记见 [design.md §109](../design.md)。
 
-51 技能按 14 组归类：研发工程（api-design / code-review / debugging / test-plan / webapp-testing / release-engineering / system-design / mcp-server-building / incident-response）、产品与设计（prd-authoring / visual-design / design-system / interaction-motion / ui-review / frontend-design / react-performance / brand-system / game-design）、数据与演示（nl2sql / data-visualization / spreadsheet-modeling / deck-authoring）、研究与验证（deep-research / source-verification / red-team）、风暴与元技能（brainstorm-facilitation / skill-authoring）、营销增长（content-marketing / seo-optimizer / sales-outreach）、客户服务（customer-success / support-desk）、财务法务（financial-modeling / contract-review / formal-document）、投资研究（technical-analysis / fundamental-analysis / investment-strategy / market-news-analysis / game-theory-trading）、运营人事（process-improvement / recruiting / procurement）、战略管理（business-review / strategic-planning）、写作沟通（comms-writing / doc-coauthoring）、谈判与辩论（negotiation / debate）、命理占星（chinese-metaphysics / western-astrology）。
+70 技能按 17 组归类：研发工程（api-design / code-review / debugging / test-plan / webapp-testing / release-engineering / system-design / mcp-server-building / incident-response / test-driven-development / secure-coding）、产品与设计（prd-authoring / visual-design / design-system / interaction-motion / ui-review / frontend-design / react-performance / brand-system / game-design / interior-design / 3d-visualization）、数据与演示（nl2sql / data-visualization / spreadsheet-modeling / deck-authoring）、研究与验证（deep-research / source-verification / red-team / academic-writing / literature-search / user-persona）、风暴与元技能（brainstorm-facilitation / skill-authoring）、营销增长（content-marketing / seo-optimizer / sales-outreach / brand-naming）、客户服务（customer-success / support-desk）、财务法务（financial-modeling / contract-review / formal-document）、投资研究（technical-analysis / fundamental-analysis / investment-strategy / market-news-analysis / game-theory-trading）、运营人事（process-improvement / recruiting / procurement）、战略管理（business-review / strategic-planning）、写作沟通（comms-writing / doc-coauthoring / natural-writing / translation-quality / report-authoring）、谈判与辩论（negotiation / debate）、 命理占星（chinese-metaphysics / western-astrology / fengshui）、场景玩法（trpg-hosting / tarot-reading / philosophy-dialogue）、经营创作（ecommerce-operations / creator-economy）、生活沟通（relationship-communication / health-metrics）；academic-writing 并入「研究与验证」组。
 
 各角色预载一览（业务角色显式配置；技能库均为工作向方法论，生活场景角色不硬配，按需 `load_skill`）：
 
 | 场景 | 角色（预载技能） |
 | --- | --- |
 | blank | general（按需 `load_skill`） |
-| strategy | chief（business-review / deck-authoring）· strategist（strategic-planning / deck-authoring）· insight（data-visualization / spreadsheet-modeling）· pricing（financial-modeling / spreadsheet-modeling） |
-| research | lead（deep-research / doc-coauthoring）· scout（deep-research / source-verification）· analyst（deep-research / data-visualization）· verifier（deep-research / source-verification） |
+| strategy | chief（business-review / deck-authoring / report-authoring）· strategist（strategic-planning / deck-authoring / report-authoring）· insight（data-visualization / spreadsheet-modeling / report-authoring）· pricing（financial-modeling / spreadsheet-modeling / report-authoring） |
+| research | lead（deep-research / doc-coauthoring / report-authoring）· scout（deep-research / source-verification / literature-search / report-authoring）· analyst（deep-research / data-visualization / report-authoring）· verifier（deep-research / source-verification / report-authoring） |
 | brainstorm | facilitator（brainstorm-facilitation / skill-authoring）· ideator（brainstorm-facilitation / visual-design）· challenger（brainstorm-facilitation / red-team）· refiner（brainstorm-facilitation / doc-coauthoring） |
-| development | pm（prd-authoring）· architect（system-design）· designer（visual-design / design-system / interaction-motion / ui-review）· ux-researcher（deep-research / ui-review）· ux-writer（comms-writing / doc-coauthoring）· frontend（frontend-design / react-performance / ui-review / debugging）· backend（api-design / mcp-server-building / debugging）· ai-engineer（mcp-server-building / system-design）· data-engineer（spreadsheet-modeling）· security（code-review / red-team）· tech-writer（api-design / doc-coauthoring）· qa（test-plan / webapp-testing / ui-review / debugging）· devops（release-engineering） |
+| development | pm（prd-authoring）· architect（system-design）· designer（visual-design / design-system / interaction-motion / ui-review）· ux-researcher（deep-research / ui-review / user-persona）· ux-writer（comms-writing / doc-coauthoring / translation-quality）· frontend（frontend-design / react-performance / ui-review / debugging）· backend（api-design / mcp-server-building / debugging / test-driven-development）· ai-engineer（mcp-server-building / system-design / secure-coding）· data-engineer（spreadsheet-modeling）· security（code-review / red-team / secure-coding）· tech-writer（api-design / doc-coauthoring）· qa（test-plan / webapp-testing / ui-review / debugging）· devops（release-engineering） |
 | sre | sre（incident-response / debugging） |
-| marketing | growth（content-marketing / spreadsheet-modeling）· content（content-marketing / doc-coauthoring）· seo（content-marketing / seo-optimizer）· ads（content-marketing / spreadsheet-modeling）· social（content-marketing）· video（content-marketing）· influencer（sales-outreach / content-marketing）· pr（comms-writing / formal-document）· localizer（doc-coauthoring / comms-writing）· brand（brand-system / visual-design） |
+| marketing | growth（content-marketing / spreadsheet-modeling）· content（content-marketing / doc-coauthoring / natural-writing）· seo（content-marketing / seo-optimizer）· ads（content-marketing / spreadsheet-modeling）· social（content-marketing）· video（content-marketing）· influencer（sales-outreach / content-marketing / user-persona）· pr（comms-writing / formal-document）· localizer（doc-coauthoring / comms-writing / translation-quality）· brand（brand-system / visual-design / brand-naming） |
 | sales | sales（sales-outreach / deck-authoring）· bd（sales-outreach / deck-authoring）· success（customer-success / spreadsheet-modeling）· support（support-desk / comms-writing） |
 | finance | finance（financial-modeling / spreadsheet-modeling）· tax（financial-modeling / spreadsheet-modeling）· legal（contract-review / formal-document）· compliance（formal-document / contract-review）· ip（formal-document / contract-review） |
-| invest | invest-lead（按需 `load_skill`）· analyst-fa（fundamental-analysis）· analyst-ta（technical-analysis）· analyst-news（market-news-analysis）· quant（investment-strategy / game-theory-trading） |
-| bi | bi（nl2sql / data-visualization / spreadsheet-modeling） |
+| invest | invest-lead（report-authoring）· analyst-fa（fundamental-analysis / report-authoring）· analyst-ta（technical-analysis / report-authoring）· analyst-news（market-news-analysis / report-authoring）· quant（investment-strategy / game-theory-trading / report-authoring） |
+| bi | bi（nl2sql / data-visualization / spreadsheet-modeling / report-authoring）· metric-governor（nl2sql / data-visualization / report-authoring）· viz-designer（data-visualization / design-system / report-authoring） |
 | ops | ops（formal-document / process-improvement）· hr（recruiting / formal-document）· recruiter（recruiting / comms-writing）· trainer（doc-coauthoring / process-improvement）· assistant（comms-writing / formal-document）· supply（procurement / spreadsheet-modeling） |
 | funding | fundraiser（deck-authoring / spreadsheet-modeling）· ir（deck-authoring / comms-writing） |
 | health | fitness · nutrition · wellness（按需 `load_skill`） |
@@ -109,12 +123,23 @@ temperature: 0.6              # 可选
 | negotiation | negotiator · counterpart · tactician（negotiation） |
 | society | moderator（formal-document）· fact-checker（source-verification）· stakeholder（deep-research）· policy-advisor（formal-document） |
 | gamedesign | game-designer（game-design / doc-coauthoring）· balance-designer（game-design / spreadsheet-modeling）· narrative-designer（game-design / doc-coauthoring）· playtester（game-design / test-plan） |
-| writing | storyline（doc-coauthoring / deep-research）· author（comms-writing / doc-coauthoring）· editor（comms-writing / formal-document）· publisher（formal-document / deck-authoring） |
+| writing | storyline（doc-coauthoring / deep-research）· author（comms-writing / doc-coauthoring）· editor（comms-writing / formal-document / natural-writing）· publisher（formal-document / deck-authoring） |
 | career | career-advisor（strategic-planning / deep-research）· resume-coach（comms-writing / doc-coauthoring）· interview-coach（recruiting / comms-writing）· comp-advisor（negotiation / spreadsheet-modeling） |
 | housing | home-finder（deep-research / spreadsheet-modeling）· mortgage-advisor（financial-modeling / spreadsheet-modeling）· reno-designer（spreadsheet-modeling / visual-design） |
 | care | care-planner（process-improvement / doc-coauthoring）· care-escort（doc-coauthoring / formal-document）· elder-advisor（source-verification / doc-coauthoring） |
 | metaphysics | bazi（chinese-metaphysics / data-visualization）· ziwei（chinese-metaphysics / doc-coauthoring）· liuyao（chinese-metaphysics / formal-document）· meihua（chinese-metaphysics / doc-coauthoring）· qizheng（chinese-metaphysics / data-visualization）· daliuren（chinese-metaphysics / doc-coauthoring）· qimen（chinese-metaphysics / formal-document） |
 | astrology | natal（western-astrology / data-visualization）· transit（western-astrology / data-visualization）· synastry（western-astrology / doc-coauthoring）· horary（western-astrology / formal-document） |
+| interior | interior-designer（interior-design）· space-planner（interior-design）· visualizer（3d-visualization） |
+| ecommerce | category-scout · listing-optimizer · store-operator · shop-support（ecommerce-operations） |
+| creator | account-strategist（creator-economy / brand-naming）· script-writer · growth-editor · monetizer（creator-economy） |
+| legal-personal | rights-advisor（formal-document / contract-review）· labor-advisor（contract-review / formal-document）· contract-checker（contract-review / formal-document） |
+| academic | lit-reviewer（academic-writing / deep-research / literature-search）· methodologist（academic-writing）· paper-editor（academic-writing / doc-coauthoring / natural-writing）· submit-advisor（academic-writing / formal-document） |
+| relationship | rel-coach · date-coach · mediator（relationship-communication） |
+| trpg | gm-host · npc-player · rule-keeper（trpg-hosting）· scenario-writer（trpg-hosting / doc-coauthoring） |
+| tarot | tarot-reader · symbol-narrator（tarot-reading）· tarot-historian（tarot-reading / source-verification） |
+| moot-court | plaintiff-counsel · defense-counsel · presiding-judge（debate / formal-document） |
+| business-sim | sim-host（strategic-planning / financial-modeling）· market-referee（game-theory-trading / financial-modeling）· review-coach（strategic-planning / business-review） |
+| philosophy | socratic-host · thought-experimenter · ethics-moderator（philosophy-dialogue） |
 
 ## 交付件命名规范
 
@@ -122,6 +147,12 @@ temperature: 0.6              # 可选
 - 部署交付件落 `deploy/部署说明-<主题>.md`；前端实现说明落 `web/src/README-实现说明.md`；来源清单等跨任务共用件落 `docs/来源清单.md`。
 - 每个角色的具体交付路径、章节结构与完成定义见其 `AGENT.md` 的「交付契约」一节；mock 演示剧本（`server/src/llm/mock.ts`）与本规范保持一致。
 - 上述一致性由 `server/tests/mock-coverage.test.ts` 全量守护（每角色四件套：演示剧本 / 交付件路径 / 显示名 / 转交首选；断言动态取角色库全量，新增角色自动纳入覆盖）；`e2e/helpers.ts` 的 `AGENT_NAME` 与之同步（E2E 转交断言的中文名单一事实源）。
+
+## 交付规格与报告写作（report-authoring）
+
+- 全局协议 `<deliverable_spec>` 定义四档交付规格（速览 ≤800 字 / 标准 1500–4000 / 深度 ≥4000 / 专项多件套），档位优先级：用户显式指定 > 计划验收标准 > 角色契约默认档。
+- 方法论统一收敛在 `skills/report-authoring`（四档规格表 / 分章撰写流程 / 领域章节库 / 量化自检清单）；报告密集角色（research / invest / strategy / bi 共 16 个）已预载，其余角色经 `<available_skills>` 索引按需 `load_skill`。
+- 报告密集角色在「交付契约」中声明默认档与量化下限（字数 / 章节数 / 证据密度），并附降档规则（用户要「速览 / 简报」时的裁剪口径）；长报告按「骨架占位 → edit_file 逐节填充」撰写，禁止单次成文。
 
 ## 灵魂层（souls/，可选人格变体）
 
@@ -145,6 +176,7 @@ quirks: [开口先来一句「兄弟们」, 激动时连发三条短句, 点子�
 - 装配优先级：**会话内换装 > 角色默认 `soul` > `souls/default.md` > 无灵魂**；
 - 灵魂只影响表达风格与互动方式；职责、事实与协作规则的优先级始终更高（协议中有护栏句）；
 - 会话内可随时换装（成员卡点击灵魂徽标），无需改文件。把某风格固化为独立「变体角色」：复制 agent 目录并调整默认 `soul` 即可。
+- **同角多魂（M77 成员分身）**：同一角色的不同人格可**同时 入编**——成员身份为「成员键」：经典实例 = `agentId`（换装走会话覆盖 `memberSouls`），分身实例 = `agentId~soulId`（灵魂内嵌键中、自描述；分身换装 = 键替换）。通径：组队台编制行「参与性格」多选（首人格自动走经典键、其余生成分身键）或邀请卡「+ 分身」；同角有效灵魂不可重复、实例上限 4；`@名字` 只召集该角色主实例（编制首位），`@名字·灵魂名` 点名单个分身，全员需逐一点名（Composer 候选「名字（全部 N 位）」一键插入；多实例在场时展示统一为 `名字 · 灵魂名`）。资产侧无需任何新约定。
 
 ## 场景元数据 `_group.yaml`
 
@@ -193,7 +225,7 @@ presets:
 
 | 命令 | 用途 |
 | --- | --- |
-| `npm run check:agents` | 校验目录结构 / `_group.yaml` / id 唯一 / handoff / 灵魂引用 / `_presets.yaml`（成员存在 / id 唯一；CI 常驻，并打印预设清单） |
+| `npm run check:agents` | 校验目录结构 / `_group.yaml` / id 唯一 / handoff / 灵魂引用 / `_presets.yaml`（成员存在 / id 唯一；CI 常驻，并打印预设清单）；附双质量报告：**专家级六段骨架 + 正文 ≥1200 字符**（角色）与**协议 ≥28 行 + 质量红线 / 典型失败模式两段**（场景）；**CI 已启用 `QUALITY_STRICT=1` 强制门禁**——未达标即失败；本地默认报告模式，`--strict` / `QUALITY_STRICT=1` 可手动切门禁 |
 | `npm run migrate:agents` | 从旧 `prompts/` 平铺目录幂等迁移（`--prune` 清理源文件） |
 | `AGENTS_DIR` / `PROMPTS_DIR` | 资产目录 env；`agents/` 缺失而 `prompts/` 存在时自动按旧逻辑回退加载并告警 |
 | `PARALLEL_MAX` | 并行波次单波人数上限（默认 3；=1 关闭并行） |

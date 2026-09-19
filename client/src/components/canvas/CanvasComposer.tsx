@@ -8,10 +8,14 @@
  */
 import * as React from 'react'
 import { toast } from 'sonner'
-import { ChevronDown, CornerDownLeft, Loader2, Send, ShieldAlert, Square } from 'lucide-react'
+import { ChevronDown, CornerDownLeft, Loader2, Quote, Send, ShieldAlert, Square } from 'lucide-react'
 import type { ChatMessage, TurnMode } from '@multi-agent/shared'
+import { baseAgentId } from '@multi-agent/shared'
+import { quoteForComposer } from '../../lib/canvas'
+import { labelOfMemberKey, memberViews } from '../../lib/members'
 import { cn } from '../../lib/utils'
 import { useAgentStore } from '../../stores/agent-store'
+import { useCanvasStore } from '../../stores/canvas-store'
 import { useRunStore } from '../../stores/run-store'
 import { useSessionStore } from '../../stores/session-store'
 import { useUiStore } from '../../stores/ui-store'
@@ -50,11 +54,13 @@ export function CanvasComposer(): React.JSX.Element {
   const [mode, setMode] = React.useState<TurnMode>('execute')
   const ref = React.useRef<HTMLTextAreaElement>(null)
   const listRef = React.useRef<HTMLDivElement>(null)
+  /** M31 修订：画布选中节点数（引用选中 chip） */
+  const selectedCount = useCanvasStore((s) => s.selectedIds.length)
 
   const session = sessions.find((s) => s.id === currentId)
+  // M77：成员实例投影（id = 成员键、name = 标签）——召唤条按实例展示、插入 `@名字·灵魂名`（点名到具体分身）
   const pool = React.useMemo(() => {
-    const ids = session?.participantIds ?? []
-    const inSession = ids.map((id) => agents.find((a) => a.id === id)).filter(Boolean) as typeof agents
+    const inSession = memberViews(agents, session).map((m) => ({ ...m.agent, id: m.key, name: m.label }))
     return inSession.length > 0 ? inSession : agents
   }, [agents, session])
 
@@ -77,9 +83,11 @@ export function CanvasComposer(): React.JSX.Element {
     return undefined
   }, [recent])
 
-  const speaker = queue[0] ? agents.find((a) => a.id === queue[0]) : undefined
+  // M77：当前发言人按成员实例署名（分身 = 名字·灵魂名）；键无法解析时回退「协作进行中」
+  const speakerKey = queue[0]
+  const speakerLabel = speakerKey ? labelOfMemberKey(agents, session, speakerKey) : ''
   const pendingApprovals = approvals.filter((a) => a.status === 'pending').length
-  const statusText = active ? (speaker ? `${speaker.name} 正在发言` : '协作进行中') : '待命中'
+  const statusText = active ? (speakerLabel ? `${speakerLabel} 正在发言` : '协作进行中') : '待命中'
 
   // 草稿：切会话时恢复 / 清空（范式选择不持久化，同复位）
   React.useEffect(() => {
@@ -127,6 +135,24 @@ export function CanvasComposer(): React.JSX.Element {
         el.setSelectionRange(el.value.length, el.value.length)
       }
     })
+  }
+
+  /** M31 修订：把画布选中的节点引用到本输入框（逐行 quoteForComposer；与右键「引用到对话」同一文案管线） */
+  const insertSelectionQuote = (): void => {
+    const { doc, selectedIds } = useCanvasStore.getState()
+    if (!doc || selectedIds.length === 0) return
+    const picked = doc.nodes.filter((n) => selectedIds.includes(n.id))
+    if (picked.length === 0) return
+    const block = picked.map((n) => quoteForComposer(n)).join('\n')
+    setValue((v) => (v ? `${v}\n${block}` : block))
+    requestAnimationFrame(() => {
+      const el = ref.current
+      if (el) {
+        el.focus()
+        el.setSelectionRange(el.value.length, el.value.length)
+      }
+    })
+    toast(`已引用 ${picked.length} 个选中节点`)
   }
 
   const submit = async (): Promise<void> => {
@@ -182,7 +208,8 @@ export function CanvasComposer(): React.JSX.Element {
           )}
           {lastAgent && (
             <span className="min-w-0 flex-1 truncate text-[10.5px] text-foreground/70">
-              {agents.find((a) => a.id === lastAgent.agentId)?.name ?? '成员'}：{lastAgent.content.slice(0, 160)}
+              {labelOfMemberKey(agents, session, lastAgent.memberKey ?? lastAgent.agentId ?? '') || '成员'}：
+              {lastAgent.content.slice(0, 160)}
               {lastAgent.status === 'streaming' ? ' …' : ''}
             </span>
           )}
@@ -194,7 +221,9 @@ export function CanvasComposer(): React.JSX.Element {
           <div ref={listRef} className="max-h-56 space-y-1.5 overflow-y-auto border-b bg-muted/20 px-2.5 py-2">
             {recent.length === 0 && <p className="py-3 text-center text-[11px] text-muted-foreground">本会话还没有消息</p>}
             {recent.map((m) => {
-              const agent = m.agentId ? agents.find((a) => a.id === m.agentId) : undefined
+              // M77：署名按成员实例（分身 = 名字·灵魂名）；头像 / 运行态取基础角色与成员键
+              const key = m.memberKey ?? m.agentId
+              const agent = key ? agents.find((a) => a.id === baseAgentId(key)) : undefined
               const streaming = m.status === 'streaming'
               return (
                 <div key={m.id} className="flex items-start gap-1.5">
@@ -203,11 +232,13 @@ export function CanvasComposer(): React.JSX.Element {
                       你
                     </span>
                   ) : (
-                    <AgentAvatar agent={agent} size={20} state={statuses[m.agentId ?? ''] ?? 'idle'} animated={false} className="mt-px rounded" />
+                    <AgentAvatar agent={agent} size={20} state={statuses[key ?? ''] ?? 'idle'} animated={false} className="mt-px" />
                   )}
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
-                      <span className="font-medium text-foreground/80">{m.role === 'user' ? '你' : (agent?.name ?? m.agentId ?? '成员')}</span>
+                      <span className="font-medium text-foreground/80">
+                        {m.role === 'user' ? '你' : key ? labelOfMemberKey(agents, session, key) : '成员'}
+                      </span>
                       {streaming && <Loader2 className="size-2.5 animate-spin text-primary" aria-hidden />}
                     </div>
                     <div className="max-h-28 overflow-hidden text-[11.5px] leading-5 text-foreground/85">
@@ -232,7 +263,7 @@ export function CanvasComposer(): React.JSX.Element {
                 onClick={() => insert(`@${a.name} `)}
                 className="flex shrink-0 items-center gap-1 rounded-full border border-transparent bg-muted/70 py-0.5 pl-0.5 pr-2 text-[11px] text-muted-foreground transition-colors hover:border-primary/25 hover:bg-primary/5 hover:text-primary"
               >
-                <AgentAvatar agent={a} size={16} animated={false} className="rounded-full" />
+                <AgentAvatar agent={a} size={16} animated={false} />
                 {a.name}
               </button>
             ))}
@@ -290,6 +321,17 @@ export function CanvasComposer(): React.JSX.Element {
           </span>
           {mode !== 'execute' && (
             <span className="text-primary/80">本条以「{MODE_CHIPS.find((c) => c.mode === mode)?.label}」发送，仅生效一次</span>
+          )}
+          {selectedCount > 0 && (
+            <button
+              type="button"
+              title="把画布上选中的节点引用到输入框（发送时随消息给 Agent）"
+              className="flex items-center gap-1 rounded-full border border-primary/30 bg-primary/5 px-1.5 py-px text-[10.5px] text-primary transition-colors hover:bg-primary/10"
+              onClick={insertSelectionQuote}
+            >
+              <Quote className="size-3" aria-hidden />
+              引用选中 {selectedCount}
+            </button>
           )}
           <span className="ml-auto flex items-center gap-1">
             <CornerDownLeft className="size-3" aria-hidden />

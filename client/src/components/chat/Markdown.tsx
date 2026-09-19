@@ -1,13 +1,13 @@
 /**
  * Markdown 渲染（§10.5 + M8 性能 + 扩展套件）：
- * - remark-gfm + 自写插件：@mention / ::: 容器（分栏·callout·details·kpi·timeline·mail·option·checklist·choice·verdict·pan·meeting·minutes·findings·claim·offer·debate）/
+ * - remark-gfm + 自写插件：@mention / ::: 容器（分栏·callout·details·kpi·timeline·mail·option·checklist·choice·verdict·pan·meeting·minutes·findings·claim·offer·debate·idea·phase·score·sources·decision·postmortem）/
  *   代码块 meta（title+行高亮）；
  * - 代码块 → CodeBlock（shiki + 工具条）；```mermaid → MermaidBlock；```chart → ChartBlock（懒加载）；
  *   ```kline → KlineBlock / ```game → GameBlock（M34 金融投研，同懒加载模式）；
  * - 图片灯箱（img → ZoomableImage）、表格横向滚动包裹（table → MdTable）；
  * - 完成态渲染结果按内容哈希 LRU 缓存（≤200），流式不缓存；
  * - 流式期间代码块/图表一律纯文本（StreamingContext），完成后再高亮/渲染；
- *   轻结构容器（callout/分栏/kpi/timeline/mail/option/verdict/pan/meeting/minutes/findings/claim/offer/debate）流式期间直接渲染。
+ *   轻结构容器（callout/分栏/kpi/timeline/mail/option/verdict/pan/meeting/minutes/findings/claim/offer/debate/idea/phase/score/sources/decision/postmortem）流式期间直接渲染。
  */
 import * as React from 'react'
 import ReactMarkdown from 'react-markdown'
@@ -16,15 +16,19 @@ import { useAgentStore } from '../../stores/agent-store'
 import { renderCache } from '../../lib/md-cache'
 import { MentionChip } from './MentionChip'
 import { CalloutCard } from './md-ext/CalloutCard'
+import { CardsCard } from './md-ext/CardsCard'
 import { ChartBlock } from './md-ext/ChartBlock'
 import { ChecklistCard } from './md-ext/ChecklistCard'
 import { ChoiceCard } from './md-ext/ChoiceCard'
 import { ClaimCard } from './md-ext/ClaimCard'
 import { CodeBlock } from './md-ext/CodeBlock'
 import { DebateCard } from './md-ext/DebateCard'
+import { DecisionCard } from './md-ext/DecisionCard'
 import { FindingsCard } from './md-ext/FindingsCard'
 import { GameBlock } from './md-ext/GameBlock'
+import { IdeaCard } from './md-ext/IdeaCard'
 import { KlineBlock } from './md-ext/KlineBlock'
+import { LayoutCard } from './md-ext/LayoutCard'
 import { KpiGroup, KpiItem } from './md-ext/KpiGroup'
 import { MailCard } from './md-ext/MailCard'
 import { MeetingCard } from './md-ext/MeetingCard'
@@ -33,8 +37,30 @@ import { MinutesCard } from './md-ext/MinutesCard'
 import { OfferCard } from './md-ext/OfferCard'
 import { OptionCard } from './md-ext/OptionCard'
 import { PanCard } from './md-ext/PanCard'
+import { PhaseBar } from './md-ext/PhaseBar'
+import { FiguresCard } from './md-ext/FiguresCard'
+import { PipelineCard } from './md-ext/PipelineCard'
+import { PostmortemCard } from './md-ext/PostmortemCard'
+import { ProgressCard } from './md-ext/ProgressCard'
+import { QaCard } from './md-ext/QaCard'
+import { TracksCard } from './md-ext/TracksCard'
+import { QuizCard } from './md-ext/QuizCard'
+import { MoodCard } from './md-ext/MoodCard'
+import { GoalsCard } from './md-ext/GoalsCard'
+import { LedgerCard } from './md-ext/LedgerCard'
+import { ItineraryCard } from './md-ext/ItineraryCard'
+import { RenderCard } from './md-ext/RenderCard'
 import { parseLinesAttr, remarkCodeMeta, remarkContainers } from './md-ext/remark-ext'
+import { RulingCard } from './md-ext/RulingCard'
+import { RollCard } from './md-ext/RollCard'
+import { RiskBand } from './md-ext/RiskBand'
+import { ScoreCard } from './md-ext/ScoreCard'
+import { SimCard } from './md-ext/SimCard'
+import { SourcesCard } from './md-ext/SourcesCard'
 import { StreamingContext } from './md-ext/streaming'
+import { StanceCard } from './md-ext/StanceCard'
+import { StyleBoardCard } from './md-ext/StyleBoardCard'
+import { SplitCard } from './md-ext/SplitCard'
 import { Timeline, TimelineItem } from './md-ext/Timeline'
 import { VerdictCard } from './md-ext/VerdictCard'
 import { ZoomableImage } from './md-ext/ZoomableImage'
@@ -184,6 +210,11 @@ interface MdDivProps extends React.HTMLAttributes<HTMLDivElement> {
   'data-checklist'?: string
   'data-choice'?: string
   'data-verdict'?: string
+  'data-ruling'?: string
+  'data-head'?: string
+  'data-stance-card'?: string
+  'data-split'?: string
+  'data-scope'?: string
   'data-pan'?: string
   'data-meeting'?: string
   'data-minutes'?: string
@@ -191,13 +222,46 @@ interface MdDivProps extends React.HTMLAttributes<HTMLDivElement> {
   'data-claim'?: string
   'data-detail'?: string
   'data-reasons'?: string
+  'data-perspective'?: string
+  'data-stance'?: string
+  'data-confidence'?: string
   'data-offer'?: string
   'data-debate'?: string
+  'data-idea'?: string
+  'data-no'?: string
+  'data-phase'?: string
+  'data-tone'?: string
+  'data-score'?: string
+  'data-scores'?: string
+  'data-sources'?: string
+  'data-decision'?: string
+  'data-roll'?: string
+  'data-cards'?: string
+  'data-sim'?: string
+  'data-postmortem'?: string
+  'data-pipeline'?: string
+  'data-figures'?: string
+  'data-risk'?: string
+  'data-progress'?: string
+  'data-qa'?: string
+  'data-tracks'?: string
+  'data-quiz'?: string
+  'data-mood'?: string
+  'data-goals'?: string
+  'data-ledger'?: string
+  'data-itinerary'?: string
+  'data-rows'?: string
   'data-kind'?: string
   'data-fields'?: string
   'data-items'?: string
   'data-options'?: string
   'data-count'?: string
+  // M65-C：设计容器族
+  'data-layout'?: string
+  'data-styleboard'?: string
+  'data-render'?: string
+  'data-source'?: string
+  'data-texture'?: string
 }
 
 function attr(value: string | undefined): string {
@@ -214,6 +278,7 @@ function MdDiv({ node: _node, children, 'data-callout': callout, 'data-title': t
         value={attr(rest['data-value'])}
         delta={attr(rest['data-delta'])}
         target={attr(rest['data-target'])}
+        scope={rest['data-scope']}
         raw={attr(rest['data-raw'])}
       />
     )
@@ -258,6 +323,38 @@ function MdDiv({ node: _node, children, 'data-callout': callout, 'data-title': t
       </VerdictCard>
     )
   }
+  if (rest['data-ruling'] !== undefined) {
+    return (
+      <RulingCard
+        status={rest['data-status']}
+        head={rest['data-head']}
+        title={title}
+        items={rest['data-items']}
+        raw={rest['data-raw']}
+      >
+        {children}
+      </RulingCard>
+    )
+  }
+  if (rest['data-stance-card'] !== undefined) {
+    return (
+      <StanceCard
+        title={title}
+        fields={rest['data-fields']}
+        items={rest['data-items']}
+        raw={rest['data-raw']}
+      >
+        {children}
+      </StanceCard>
+    )
+  }
+  if (rest['data-split'] !== undefined) {
+    return (
+      <SplitCard title={title} items={rest['data-items']} raw={rest['data-raw']}>
+        {children}
+      </SplitCard>
+    )
+  }
   if (rest['data-pan'] !== undefined) {
     return (
       <PanCard
@@ -292,9 +389,38 @@ function MdDiv({ node: _node, children, 'data-callout': callout, 'data-title': t
       </FindingsCard>
     )
   }
+  if (rest['data-layout'] !== undefined) {
+    return (
+      <LayoutCard title={title} items={rest['data-items']} source={rest['data-source']}>
+        {children}
+      </LayoutCard>
+    )
+  }
+  if (rest['data-styleboard'] !== undefined) {
+    return (
+      <StyleBoardCard title={title} items={rest['data-items']} texture={rest['data-texture']}>
+        {children}
+      </StyleBoardCard>
+    )
+  }
+  if (rest['data-render'] !== undefined) {
+    return (
+      <RenderCard title={title} items={rest['data-items']}>
+        {children}
+      </RenderCard>
+    )
+  }
   if (rest['data-claim'] !== undefined) {
     return (
-      <ClaimCard title={title} detail={rest['data-detail']} reasons={rest['data-reasons']} raw={rest['data-raw']}>
+      <ClaimCard
+        title={title}
+        detail={rest['data-detail']}
+        reasons={rest['data-reasons']}
+        perspective={rest['data-perspective']}
+        stance={rest['data-stance']}
+        confidence={rest['data-confidence']}
+        raw={rest['data-raw']}
+      >
         {children}
       </ClaimCard>
     )
@@ -311,6 +437,142 @@ function MdDiv({ node: _node, children, 'data-callout': callout, 'data-title': t
       <DebateCard title={title} items={rest['data-items']} raw={rest['data-raw']}>
         {children}
       </DebateCard>
+    )
+  }
+  if (rest['data-idea'] !== undefined) {
+    return (
+      <IdeaCard no={rest['data-no']} title={title} fields={rest['data-fields']} status={rest['data-status']} raw={rest['data-raw']}>
+        {children}
+      </IdeaCard>
+    )
+  }
+  if (rest['data-phase'] !== undefined) {
+    return (
+      <PhaseBar title={title} tone={rest['data-tone']}>
+        {children}
+      </PhaseBar>
+    )
+  }
+  if (rest['data-score'] !== undefined) {
+    return (
+      <ScoreCard title={title} scores={rest['data-scores']} raw={rest['data-raw']}>
+        {children}
+      </ScoreCard>
+    )
+  }
+  if (rest['data-sources'] !== undefined) {
+    return (
+      <SourcesCard title={title} sources={rest['data-sources']} raw={rest['data-raw']}>
+        {children}
+      </SourcesCard>
+    )
+  }
+  if (rest['data-decision'] !== undefined) {
+    return (
+      <DecisionCard title={title} fields={rest['data-fields']} raw={rest['data-raw']}>
+        {children}
+      </DecisionCard>
+    )
+  }
+  if (rest['data-roll'] !== undefined) {
+    return (
+      <RollCard title={title} fields={rest['data-fields']} raw={rest['data-raw']}>
+        {children}
+      </RollCard>
+    )
+  }
+  if (rest['data-cards'] !== undefined) {
+    return (
+      <CardsCard title={title} items={rest['data-items']} raw={rest['data-raw']}>
+        {children}
+      </CardsCard>
+    )
+  }
+  if (rest['data-sim'] !== undefined) {
+    return (
+      <SimCard title={title} items={rest['data-items']} raw={rest['data-raw']}>
+        {children}
+      </SimCard>
+    )
+  }
+  if (rest['data-postmortem'] !== undefined) {
+    return (
+      <PostmortemCard title={title} fields={rest['data-fields']} items={rest['data-items']} raw={rest['data-raw']}>
+        {children}
+      </PostmortemCard>
+    )
+  }
+  if (rest['data-pipeline'] !== undefined) {
+    return (
+      <PipelineCard title={title} rows={rest['data-rows']} raw={rest['data-raw']}>
+        {children}
+      </PipelineCard>
+    )
+  }
+  if (rest['data-figures'] !== undefined) {
+    return (
+      <FiguresCard title={title} rows={rest['data-rows']} raw={rest['data-raw']}>
+        {children}
+      </FiguresCard>
+    )
+  }
+  if (rest['data-risk'] !== undefined) {
+    return (
+      <RiskBand title={title} level={rest['data-risk']}>
+        {children}
+      </RiskBand>
+    )
+  }
+  if (rest['data-progress'] !== undefined) {
+    return (
+      <ProgressCard title={title} rows={rest['data-rows']} raw={rest['data-raw']}>
+        {children}
+      </ProgressCard>
+    )
+  }
+  if (rest['data-qa'] !== undefined) {
+    return (
+      <QaCard title={title} rows={rest['data-rows']} raw={rest['data-raw']}>
+        {children}
+      </QaCard>
+    )
+  }
+  if (rest['data-tracks'] !== undefined) {
+    return (
+      <TracksCard title={title} rows={rest['data-rows']} raw={rest['data-raw']}>
+        {children}
+      </TracksCard>
+    )
+  }
+  if (rest['data-quiz'] !== undefined) {
+    return (
+      <QuizCard title={title} rows={rest['data-rows']} raw={rest['data-raw']}>
+        {children}
+      </QuizCard>
+    )
+  }
+  if (rest['data-mood'] !== undefined) {
+    return <MoodCard title={title}>{children}</MoodCard>
+  }
+  if (rest['data-goals'] !== undefined) {
+    return (
+      <GoalsCard title={title} rows={rest['data-rows']} raw={rest['data-raw']}>
+        {children}
+      </GoalsCard>
+    )
+  }
+  if (rest['data-ledger'] !== undefined) {
+    return (
+      <LedgerCard title={title} rows={rest['data-rows']} raw={rest['data-raw']}>
+        {children}
+      </LedgerCard>
+    )
+  }
+  if (rest['data-itinerary'] !== undefined) {
+    return (
+      <ItineraryCard title={title} rows={rest['data-rows']} raw={rest['data-raw']}>
+        {children}
+      </ItineraryCard>
     )
   }
   return (

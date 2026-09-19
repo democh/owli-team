@@ -86,7 +86,8 @@ export function buildGraph(
   let lastTo = new Set<string>()
   for (const m of messages) {
     if (m.role !== 'agent' || !m.agentId || m.status === 'streaming') continue
-    const from = m.agentId
+    // M77：出手者为成员键（分身实例；存量消息缺省 = agentId）
+    const from = m.memberKey ?? m.agentId
     const targets = m.mentions.filter((x) => x !== 'user' && x !== from && ids.has(x))
     if (targets.length > 0) {
       lastFrom = from
@@ -139,7 +140,9 @@ export function buildGraph(
   // ---- 待你指示：最近一条完成发言交还用户，且当前空闲 ----
   const lastAgent = [...messages].reverse().find((m) => m.role === 'agent' && m.status !== 'streaming')
   const awaitingUser =
-    !(live?.active ?? false) && lastAgent?.mentions.includes('user') ? lastAgent.agentId : undefined
+    !(live?.active ?? false) && lastAgent?.mentions.includes('user')
+      ? (lastAgent.memberKey ?? lastAgent.agentId)
+      : undefined
 
   // ---- 节点（participants 顺序 = 会话编制顺序）----
   const queue = live?.queue ?? []

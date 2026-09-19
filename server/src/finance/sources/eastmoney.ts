@@ -4,7 +4,8 @@
  * 接口（实施时逐个实测验证；解析函数为纯函数，fixture 回放测试）：
  *   - 批量快照：push2.eastmoney.com/api/qt/ulist.np/get（secids 批量，fltt=2 浮点）
  *   - K 线：push2his.eastmoney.com/api/qt/stock/kline/get（klt/fqt/fields2）
- *   - 全市场列表：push2.eastmoney.com/api/qt/clist/get（fs 过滤段；股票 / ETF 两请求）
+ *   - 全市场列表：push2.eastmoney.com/api/qt/clist/get（fs 过滤段 × 股票/ETF；pz 实测上限
+ *     100 行，超量必须 pn 分页——分页 sweep + 游标续拉见 fetch*Sweep）
  *   - 搜索建议：searchapi.eastmoney.com/api/suggest/get（支持代码 / 名称 / 拼音）
  *
  * 约束：不直接 fetch，统一走注入 Fetcher（默认 antiBotFetch）；解析失败抛错由网关降级。
@@ -31,6 +32,13 @@ const QUOTE_FIELDS = 'f1,f2,f3,f4,f5,f6,f8,f9,f10,f12,f13,f14,f15,f16,f17,f18,f2
 /** 全市场列表 fs 过滤段（实施时实测校准；股票：沪深京 A；ETF：场内基金） */
 export const CLIST_FS_STOCK = 'm:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23,m:0+t:81+s:2048'
 export const CLIST_FS_ETF = 'b:MK0021,b:MK0022,b:MK0023,b:MK0024'
+
+/** clist 单页行数上限（实测 pz 超过 100 只返回前 100 行，全量必须 pn 分页） */
+export const CLIST_PAGE_SIZE = 100
+/** clist ut 参数（东财前端公开常量；部分边缘节点缺失该参数会返回空 data） */
+const CLIST_UT = 'bd1d9ddb04089700cf9c27f6f7426281'
+/** sweep 段序：先股票后 ETF（游标 seg 即此数组下标） */
+const CLIST_SEGMENTS = [CLIST_FS_STOCK, CLIST_FS_ETF] as const
 
 interface EmDiffRaw {
   f2?: unknown
@@ -217,40 +225,82 @@ export async function fetchKline(
   }
 }
 
-/** 解析全市场列表（clist）→ 主数据行（纯函数） */
-export function parseClistPayload(text: string): SymbolMasterRow[] {
+/** 单页 clist 解析（纯函数）：原始行 + total + 空页标记（末页 data 为 null → empty） */
+function clistPageOf(text: string): { rows: EmDiffRaw[]; total?: number; empty: boolean } {
   const payload = parseJsonLoose<EmClistPayload>(text)
-  const rows = diffRows(payload.data?.diff)
-  const out: SymbolMasterRow[] = []
-  for (const row of rows) {
-    const code = str(row.f12 ?? row.code)
-    const name = str(row.f14 ?? row.name)
-    if (!/^\d{6}$/.test(code) || !name) continue
-    const type = inferAssetType(code) ?? 'stock'
-    const market = num(row.f13 ?? row.market)
-    let exchange: Exchange | undefined = market === 1 ? 'sh' : market === 0 ? 'sz' : undefined
-    if (type === 'stock' && /^(43|83|87|88|92)/.test(code)) exchange = 'bj'
-    if (!exchange) exchange = inferExchange(code, type)
-    out.push({ code, name, type, exchange })
-  }
-  return out
+  const data = payload.data
+  if (!data || typeof data !== 'object') return { rows: [], empty: true }
+  const rows = diffRows(data.diff)
+  return { rows, total: num(data.total), empty: rows.length === 0 }
 }
 
-/** 全市场列表（股票 + ETF 两请求合并；每类分页 ≤5000 一条请求，po/np 控制排序） */
-export async function fetchSymbolList(ctx: SourceCtx = {}): Promise<SymbolMasterRow[]> {
+/** 主数据行映射（纯函数；无效行返回 undefined） */
+function symbolRowOf(row: EmDiffRaw): SymbolMasterRow | undefined {
+  const code = str(row.f12 ?? row.code)
+  const name = str(row.f14 ?? row.name)
+  if (!/^\d{6}$/.test(code) || !name) return undefined
+  const type = inferAssetType(code) ?? 'stock'
+  const market = num(row.f13 ?? row.market)
+  let exchange: Exchange | undefined = market === 1 ? 'sh' : market === 0 ? 'sz' : undefined
+  if (type === 'stock' && /^(43|83|87|88|92)/.test(code)) exchange = 'bj'
+  if (!exchange) exchange = inferExchange(code, type)
+  return { code, name, type, exchange }
+}
+
+/** 解析全市场列表（clist）→ 主数据行（纯函数） */
+export function parseClistPayload(text: string): SymbolMasterRow[] {
+  return clistPageOf(text)
+    .rows.map(symbolRowOf)
+    .filter((row): row is SymbolMasterRow => row !== undefined)
+}
+
+/** clist sweep 游标（网关持久化续拉）：seg 段索引（0=股票 1=ETF），page 段内页码（1-based） */
+export interface ClistCursor {
+  seg: number
+  page: number
+}
+
+/** 单次 sweep 结果：rows 为本批新增行；done=true 表示全量已拉完 */
+export interface ClistSweepResult<T> {
+  rows: T[]
+  done: boolean
+  /** 续拉起点（done=true 时忽略） */
+  next: ClistCursor
+  /** 本次实际请求页数（观测 / 测试用） */
+  pagesFetched: number
+}
+
+/**
+ * clist 分页 sweep（股票 → ETF 顺序；每页 ≤CLIST_PAGE_SIZE 行）。
+ * - 页间依赖 antiBotFetch 域级限速（默认 1.2s）自然拉开间隔，不额外突发；
+ * - 段结束判定：空页（含末页 data:null）或 pn 达到 ceil(total/pz)；
+ * - 首段首页即空 → 抛错（有效 fs 不可能全空：接口变更或软性风控，交由网关降级）。
+ */
+async function sweepClist<T>(
+  fields: string,
+  mapRow: (row: EmDiffRaw) => T | undefined,
+  start: ClistCursor | undefined,
+  budget: number,
+  ctx: SourceCtx,
+): Promise<ClistSweepResult<T>> {
   const fetcher = resolveFetcher(ctx)
-  const out: SymbolMasterRow[] = []
-  for (const fs of [CLIST_FS_STOCK, CLIST_FS_ETF]) {
+  const out: T[] = []
+  let seg = Math.max(0, start?.seg ?? 0)
+  let page = Math.max(1, start?.page ?? 1)
+  let fetched = 0
+  let segTotalPages: number | undefined
+  while (seg < CLIST_SEGMENTS.length && fetched < budget) {
     const params = new URLSearchParams({
-      pn: '1',
-      pz: '6000',
+      pn: String(page),
+      pz: String(CLIST_PAGE_SIZE),
       po: '0',
       np: '1',
+      ut: CLIST_UT,
       fltt: '2',
       invt: '2',
       fid: 'f12',
-      fs,
-      fields: 'f12,f13,f14',
+      fs: CLIST_SEGMENTS[seg],
+      fields,
     })
     const res = await fetcher({
       url: `${PUSH2}/api/qt/clist/get?${params.toString()}`,
@@ -260,76 +310,88 @@ export async function fetchSymbolList(ctx: SourceCtx = {}): Promise<SymbolMaster
       timeoutMs: ctx.timeoutMs,
       userAgent: ctx.userAgent,
     })
-    out.push(...parseClistPayload(res.text))
+    fetched += 1
+    const pageData = clistPageOf(res.text)
+    if (pageData.empty) {
+      if (page === 1 && seg === 0 && out.length === 0 && fetched === 1) {
+        throw new Error('东财 clist 返回空数据（接口变更或触发风控）')
+      }
+      seg += 1 // 末页（data:null）或该段无数据 → 进入下一段
+      page = 1
+      segTotalPages = undefined
+      continue
+    }
+    for (const raw of pageData.rows) {
+      const row = mapRow(raw)
+      if (row !== undefined) out.push(row)
+    }
+    if (pageData.total !== undefined) {
+      segTotalPages = Math.max(1, Math.ceil(pageData.total / CLIST_PAGE_SIZE))
+    }
+    if (segTotalPages !== undefined && page >= segTotalPages) {
+      seg += 1
+      page = 1
+      segTotalPages = undefined
+    } else {
+      page += 1
+    }
   }
-  if (out.length === 0) throw new Error('东财全市场列表为空（接口可能已变更或被限流）')
-  return out
+  return { rows: out, done: seg >= CLIST_SEGMENTS.length, next: { seg, page }, pagesFetched: fetched }
+}
+
+/** 主数据 sweep（网关增量游标续拉；budget = 本次最多请求页数） */
+export async function fetchSymbolListSweep(
+  start: ClistCursor | undefined,
+  budget: number,
+  ctx: SourceCtx = {},
+): Promise<ClistSweepResult<SymbolMasterRow>> {
+  return sweepClist('f12,f13,f14', symbolRowOf, start, Math.max(1, budget), ctx)
 }
 
 /** 筛选底表行情列（f2 最新价 … f23 市净率） */
 const SCREEN_COLS = 'f2,f3,f5,f6,f8,f9,f12,f13,f14,f20,f21,f23'
 
-/** 解析筛选底表（clist 行情列）→ ScreenRow[]（纯函数；缺列自动跳过） */
-export function parseScreenPayload(text: string): ScreenRow[] {
-  const payload = parseJsonLoose<EmClistPayload>(text)
-  const rows = diffRows(payload.data?.diff)
-  const out: ScreenRow[] = []
-  for (const row of rows) {
-    const code = str(row.f12 ?? row.code)
-    const name = str(row.f14 ?? row.name)
-    if (!/^\d{6}$/.test(code) || !name) continue
-    const type = inferAssetType(code) ?? 'stock'
-    const market = num(row.f13 ?? row.market)
-    let exchange: Exchange | undefined = market === 1 ? 'sh' : market === 0 ? 'sz' : undefined
-    if (type === 'stock' && /^(43|83|87|88|92)/.test(code)) exchange = 'bj'
-    if (!exchange) exchange = inferExchange(code, type)
-    const item: ScreenRow = { code, name, type, ...(exchange ? { exchange } : {}) }
-    const put = (key: keyof ScreenRow, value: unknown): void => {
-      const n = num(value)
-      if (n !== undefined) (item as unknown as Record<string, number>)[key] = n
-    }
-    put('price', row.f2)
-    put('changePct', row.f3)
-    put('volume', row.f5)
-    put('turnover', row.f6)
-    put('turnoverRate', row.f8)
-    put('pe', row.f9)
-    put('marketCap', row.f20)
-    put('floatMarketCap', row.f21)
-    put('pb', row.f23)
-    out.push(item)
+/** 筛选底表行映射（纯函数；缺列自动跳过） */
+function screenRowOf(row: EmDiffRaw): ScreenRow | undefined {
+  const code = str(row.f12 ?? row.code)
+  const name = str(row.f14 ?? row.name)
+  if (!/^\d{6}$/.test(code) || !name) return undefined
+  const type = inferAssetType(code) ?? 'stock'
+  const market = num(row.f13 ?? row.market)
+  let exchange: Exchange | undefined = market === 1 ? 'sh' : market === 0 ? 'sz' : undefined
+  if (type === 'stock' && /^(43|83|87|88|92)/.test(code)) exchange = 'bj'
+  if (!exchange) exchange = inferExchange(code, type)
+  const item: ScreenRow = { code, name, type, ...(exchange ? { exchange } : {}) }
+  const put = (key: keyof ScreenRow, value: unknown): void => {
+    const n = num(value)
+    if (n !== undefined) (item as unknown as Record<string, number>)[key] = n
   }
-  return out
+  put('price', row.f2)
+  put('changePct', row.f3)
+  put('volume', row.f5)
+  put('turnover', row.f6)
+  put('turnoverRate', row.f8)
+  put('pe', row.f9)
+  put('marketCap', row.f20)
+  put('floatMarketCap', row.f21)
+  put('pb', row.f23)
+  return item
 }
 
-/** 筛选底表（股票 + ETF 两请求合并，含行情列；一次拉全，网关缓存 10 分钟） */
-export async function fetchScreenRows(ctx: SourceCtx = {}): Promise<ScreenRow[]> {
-  const fetcher = resolveFetcher(ctx)
-  const out: ScreenRow[] = []
-  for (const fs of [CLIST_FS_STOCK, CLIST_FS_ETF]) {
-    const params = new URLSearchParams({
-      pn: '1',
-      pz: '6000',
-      po: '0',
-      np: '1',
-      fltt: '2',
-      invt: '2',
-      fid: 'f12',
-      fs,
-      fields: SCREEN_COLS,
-    })
-    const res = await fetcher({
-      url: `${PUSH2}/api/qt/clist/get?${params.toString()}`,
-      accept: 'application/json',
-      signal: ctx.signal,
-      minIntervalMs: ctx.minIntervalMs,
-      timeoutMs: ctx.timeoutMs,
-      userAgent: ctx.userAgent,
-    })
-    out.push(...parseScreenPayload(res.text))
-  }
-  if (out.length === 0) throw new Error('东财筛选底表为空（接口可能已变更或被限流）')
-  return out
+/** 解析筛选底表（clist 行情列）→ ScreenRow[]（纯函数；缺列自动跳过） */
+export function parseScreenPayload(text: string): ScreenRow[] {
+  return clistPageOf(text)
+    .rows.map(screenRowOf)
+    .filter((row): row is ScreenRow => row !== undefined)
+}
+
+/** 筛选底表 sweep（股票 + ETF，含行情列；网关增量游标续拉，TTL 10 分钟） */
+export async function fetchScreenRowsSweep(
+  start: ClistCursor | undefined,
+  budget: number,
+  ctx: SourceCtx = {},
+): Promise<ClistSweepResult<ScreenRow>> {
+  return sweepClist(SCREEN_COLS, screenRowOf, start, Math.max(1, budget), ctx)
 }
 
 /** 解析搜索建议（suggest）→ 候选行（纯函数） */
@@ -366,13 +428,14 @@ export function parseSuggestPayload(text: string): SymbolMasterRow[] {
   })
 }
 
-/** 搜索（代码 / 名称 / 拼音首字母；token 为东财前端公开常量） */
-export async function searchSymbols(query: string, ctx: SourceCtx = {}): Promise<SymbolMasterRow[]> {
+/** 搜索（代码 / 名称 / 拼音首字母；token 为东财前端公开常量；count 上限 20） */
+export async function searchSymbols(query: string, ctx: SourceCtx = {}, limit = 10): Promise<SymbolMasterRow[]> {
   const fetcher = resolveFetcher(ctx)
+  const count = Math.min(Math.max(Math.floor(limit), 1), 20)
   const params = new URLSearchParams({
     input: query,
     type: '14',
-    count: '10',
+    count: String(count),
     token: 'D43BF722C8E33BDC906FB84D85E326E8',
   })
   const res = await fetcher({

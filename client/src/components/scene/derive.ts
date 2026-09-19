@@ -5,6 +5,7 @@
  */
 import type { ChatMessage } from '@multi-agent/shared'
 import { parseVerdictArg, verdictStatusFromItems, type VerdictStatus } from '../../lib/verdict'
+import { parseGameSpec, type GameModelName } from '../../lib/game-spec'
 
 // ---------- ::: 容器块 ----------
 
@@ -61,7 +62,10 @@ export function containersOf(messages: ChatMessage[]): SceneContainer[] {
   for (const msg of messages) {
     if (msg.role === 'user' || !msg.content.includes(':::')) continue
     const blocks = parseContainers(msg.content)
-    blocks.forEach((b, seq) => out.push({ ...b, messageId: msg.id, messageAgentId: msg.agentId, seq }))
+    // M77：作者归属用成员键（分身实例；消费端 ctx.agentOf 已成员键容忍 → 显示名字·灵魂名）
+    blocks.forEach((b, seq) =>
+      out.push({ ...b, messageId: msg.id, messageAgentId: msg.memberKey ?? msg.agentId, seq }),
+    )
   }
   return out
 }
@@ -238,6 +242,130 @@ export function verdictsOf(messages: ChatMessage[]): SceneVerdict[] {
     out.push({ status, title, items, messageId: c.messageId })
   }
   return out
+}
+
+// ---------- 轮次判定（M63 A4：::: ruling） ----------
+
+export interface SceneRuling {
+  side: SceneVerdictStatus
+  title: string
+  items: SceneRow[]
+  messageId: string
+}
+
+/**
+ * `::: ruling <正方|反方|多方|空方|僵持> [第 N 轮小结]` 容器 → 轮次判定实例（保序）。
+ * 口径同 verdictsOf（首词词表复用 lib/verdict；未命中 → none 中性判定条），
+ * 不做条目兜底（判定为过程件，标题即语义）。
+ */
+export function rulingsOf(messages: ChatMessage[]): SceneRuling[] {
+  const out: SceneRuling[] = []
+  for (const c of containersOf(messages)) {
+    if (c.name !== 'ruling') continue
+    const items = panRowsOf(c.lines).items
+    const { status, title } = parseVerdictArg(c.arg)
+    out.push({ side: status, title, items, messageId: c.messageId })
+  }
+  return out
+}
+
+// ---------- 博弈走子（M63 G4：```game 围栏扫描） ----------
+
+export interface SceneGameMove {
+  messageId: string
+  /** 模型名（解析失败 → 缺省，渲染降级「推演」） */
+  model?: GameModelName
+  title: string
+  /** 快照路径（src；渲染取 basename） */
+  src?: string
+  seed?: number
+  turnIndex?: number
+}
+
+const GAME_FENCE_RE = /^```game\b([^\n]*)\n([\s\S]*?)^```\s*$/gm
+
+/**
+ * 成员消息中的 ```game 围栏 → 走子条目（保序；解析走 lib/game-spec 单一实现）。
+ * JSON 解析失败仍产出条目（model / src 缺省，渲染降级「推演（快照）」），保证可定位不报错。
+ */
+export function gameMovesOf(messages: ChatMessage[]): SceneGameMove[] {
+  const out: SceneGameMove[] = []
+  for (const msg of messages) {
+    if (msg.role !== 'agent' || !msg.content.includes('```game')) continue
+    const re = new RegExp(GAME_FENCE_RE.source, 'gm')
+    let m: RegExpExecArray | null
+    while ((m = re.exec(msg.content)) !== null) {
+      const meta = m[1] ?? ''
+      const body = (m[2] ?? '').trim()
+      const parsed = parseGameSpec(body)
+      const metaTitle = /title\s*=\s*"([^"]*)"/.exec(meta)?.[1]
+      const spec = parsed.ok ? parsed.spec : undefined
+      const seed = spec?.data && typeof spec.data.seed === 'number' ? spec.data.seed : undefined
+      out.push({
+        messageId: msg.id,
+        ...(spec?.model !== undefined ? { model: spec.model } : {}),
+        title: spec?.title ?? metaTitle ?? '',
+        ...(spec?.src !== undefined ? { src: spec.src } : {}),
+        ...(seed !== undefined ? { seed } : {}),
+        ...(msg.turnIndex != null && msg.turnIndex >= 0 ? { turnIndex: msg.turnIndex } : {}),
+      })
+    }
+  }
+  return out
+}
+
+// ---------- 取数链（M66 N2：```sql 围栏扫描） ----------
+
+export interface SqlRun {
+  messageId: string
+  agentId?: string
+  /** 本条消息内的 SQL 围栏数 */
+  sqlCount: number
+  /** 消息首行摘要（excerptOf 口径） */
+  excerpt: string
+  turnIndex?: number
+}
+
+const SQL_FENCE_RE = /^```sql\b/gm
+
+/** 成员消息中的 ```sql 围栏 → 取数链条目（保序；SQL 正文不复制渲染——消息内代码块为唯一全文通道） */
+export function sqlRunsOf(messages: ChatMessage[]): SqlRun[] {
+  const out: SqlRun[] = []
+  for (const msg of messages) {
+    if (msg.role !== 'agent' || !msg.content.includes('```sql')) continue
+    const re = new RegExp(SQL_FENCE_RE.source, 'gm')
+    let n = 0
+    while (re.exec(msg.content) !== null) n++
+    if (n === 0) continue
+    out.push({
+      messageId: msg.id,
+      // M77：成员键归属（取数链作者按实例署名）
+      ...(msg.memberKey !== undefined || msg.agentId !== undefined
+        ? { agentId: msg.memberKey ?? msg.agentId }
+        : {}),
+      sqlCount: n,
+      excerpt: excerptOf(msg.content, 48),
+      ...(msg.turnIndex != null && msg.turnIndex >= 0 ? { turnIndex: msg.turnIndex } : {}),
+    })
+  }
+  return out
+}
+
+// ---------- 事故分级（M66 N3：sre 场景 timeline 第三列语义 = 等级） ----------
+
+export type SceneIncidentLevel = 'p0' | 'p1' | 'p2' | 'other'
+
+/**
+ * 等级词 → 语义键（大小写不敏感；容忍 严重 / 高 / 中 / 低 等中文档位）：
+ * P0|严重|紧急 → p0；P1|高 → p1；P2|中 → p2；其余（含 低 / 观察 / 空）→ other。
+ */
+export function incidentLevelOf(value: string): SceneIncidentLevel {
+  const v = value.trim().toLowerCase()
+  if (v === '') return 'other'
+  if (/p0|严重|紧急/.test(v)) return 'p0'
+  if (/p1|高/.test(v)) return 'p1'
+  if (/p2|中/.test(v)) return 'p2'
+  return 'other'
 }
 
 // ---------- checklist（coach 面板数据源） ----------

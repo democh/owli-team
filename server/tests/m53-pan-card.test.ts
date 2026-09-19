@@ -54,7 +54,7 @@ async function panCard(toolName: string, args: Record<string, unknown>): Promise
   expect(m, '卡头须为 `::: pan <kind> [标题]`').toBeTruthy()
   const kind = m![1]!.toLowerCase()
   const title = (m![2] ?? '').trim()
-  expect(['bazi', 'ziwei', 'natal', 'gua']).toContain(kind)
+  expect(['bazi', 'ziwei', 'natal', 'gua', 'transit', 'synastry', 'daliuren', 'qizheng', 'qimen']).toContain(kind)
   expect(title.length, '卡标题非空（盘面板 tab 显示用）').toBeGreaterThan(0)
   const body = lines.slice(1)
   const items = body.filter((l) => l.startsWith('- '))
@@ -158,5 +158,175 @@ describe('M53 契约：专业排盘卡（::: pan 容器）', () => {
     // 摇卦卡附六爻数（6/7/8/9）
     const coin = await panCard('gua_pan', { method: 'coin', seed: 12345, date: '2026-01-01' })
     expect(fieldKeys(coin)).toContain('六爻数')
+  })
+
+  it('M63-A 八字深化卡：神煞 / 柱间 / 运岁 / 小运 字段 + 流月请求追加 12 条', async () => {
+    const card = await panCard('bazi_pan', {
+      birth: '1990-05-12 14:30',
+      calendar: 'solar',
+      gender: 'male',
+      trueSolarTime: false,
+    })
+    const keys = fieldKeys(card)
+    for (const k of ['神煞', '柱间', '运岁', '小运']) {
+      expect(keys, `八字深化卡缺字段「${k}」`).toContain(k)
+    }
+    expect(card.fields.find((f) => f.startsWith('神煞：'))).toContain('禄神（日干→年）')
+    expect(card.fields.find((f) => f.startsWith('柱间：'))).toContain('午未合（年时）')
+    const withYue = await panCard('bazi_pan', {
+      birth: '1990-05-12 14:30',
+      calendar: 'solar',
+      gender: 'male',
+      trueSolarTime: false,
+      liuYueOf: '2026',
+    })
+    expect(fieldKeys(withYue)).toContain('流月')
+    expect(withYue.items.filter((l) => l.startsWith('- 流月 '))).toHaveLength(12)
+  })
+
+  it('M63-A 紫微流年卡：流年字段（干支 / 流年命宫 / 流年四化）', async () => {
+    const card = await panCard('ziwei_pan', {
+      birth: '1990-05-12 14:30',
+      calendar: 'solar',
+      gender: 'male',
+      trueSolarTime: false,
+      horoscopeYear: '2026',
+    })
+    const line = card.fields.find((f) => f.startsWith('流年：'))
+    expect(line, '紫微卡缺「流年」字段').toBeTruthy()
+    expect(line).toContain('2026 丙午')
+    expect(line).toContain('流年命宫 财帛')
+    expect(line).toContain('流年四化 禄 天同')
+  })
+
+  it('M63-A 卦深化卡：伏神 / 月日 / 回头生克尾注（旧断言零改动）', async () => {
+    const card = await panCard('gua_pan', { method: 'number', numbers: [6, 3], date: '2026-01-01' })
+    expect(card.kind).toBe('gua')
+    expect(card.title).toBe('水火既济 → 水雷屯')
+    expect(card.items.some((l) => l.includes('伏神 妻财 戊午'))).toBe(true)
+    expect(card.items.some((l) => l.includes('｜ 月日 '))).toBe(true)
+    expect(card.items.some((l) => l.includes('· 回头克'))).toBe(true)
+  })
+
+  it('M63-B 行运卡：本命 / 行运 / 扫描 / 口径 + 行运十星与 cross / 时点条目', async () => {
+    const card = await panCard('transit_pan', {
+      birth: '1990-05-12 14:30',
+      timezone: 'Asia/Shanghai',
+      latitude: 31.23,
+      longitude: 121.47,
+      at: '2026-11-05 14:30',
+      scanFrom: '2026-01',
+      scanTo: '2026-06',
+    })
+    expect(card.kind).toBe('transit')
+    expect(card.title).toBe('行运 2026-11-05')
+    const keys = fieldKeys(card)
+    for (const k of ['本命', '行运', '扫描', '口径']) {
+      expect(keys, `行运卡缺字段「${k}」`).toContain(k)
+    }
+    // 行运十星（中文名条目；cross 条目名含 `-`）
+    expect(card.items.filter((l) => /^- 行运[\u4e00-\u9fa5]+ \| /u.test(l))).toHaveLength(10)
+    // M63 续完善（v2 双环）：本命十星行（内环基准；位于行运行星前）
+    expect(card.items.filter((l) => /^- 本命[\u4e00-\u9fa5]+ \| /u.test(l))).toHaveLength(10)
+    expect(card.items.findIndex((l) => l.startsWith('- 本命太阳'))).toBeLessThan(card.items.findIndex((l) => l.startsWith('- 行运太阳')))
+    expect(card.items.some((l) => /^- 行运\S+-本命\S+ \| \S+ \d/.test(l))).toBe(true)
+    // 扫描时点条目（含影响窗）
+    const hits = card.items.filter((l) => l.includes('| 精确 '))
+    expect(hits.length).toBeGreaterThan(0)
+    expect(hits.every((l) => /影响窗 ±\d+ 天/.test(l))).toBe(true)
+  })
+
+  it('M63-B 合盘卡：A / B / 知情 / 元素 / 口径 + 双侧行星与 cross 条目', async () => {
+    const card = await panCard('synastry_pan', {
+      a: { birth: '1990-05-12 14:30', timezone: 'Asia/Shanghai', latitude: 31.23, longitude: 121.47 },
+      b: { birth: '1992-09-03 08:10', timezone: 'Asia/Shanghai', latitude: 31.23, longitude: 121.47 },
+      mode: 'composite',
+    })
+    expect(card.kind).toBe('synastry')
+    expect(card.title).toBe('合盘 A×B')
+    const keys = fieldKeys(card)
+    for (const k of ['A', 'B', '知情', '元素', '口径']) {
+      expect(keys, `合盘卡缺字段「${k}」`).toContain(k)
+    }
+    expect(card.fields.find((f) => f.startsWith('知情：'))).toContain('双方出生数据')
+    expect(card.items.filter((l) => /^- A[\u4e00-\u9fa5]+ \| /u.test(l))).toHaveLength(10)
+    expect(card.items.filter((l) => /^- B[\u4e00-\u9fa5]+ \| /u.test(l))).toHaveLength(10)
+    expect(card.items.filter((l) => l.startsWith('- 组合'))).toHaveLength(10)
+    expect(card.items.some((l) => /^- A\S+?-B\S+? \| /u.test(l))).toBe(true)
+  })
+
+  it('M63-C 大六壬卡：起课 / 月将 / 天地盘 / 课体 / 贵人 / 天将 / 口径 + 四课 4 条与三传 3 条', async () => {
+    const card = await panCard('daliuren_pan', { at: '2026-11-05 14:30' })
+    expect(card.kind).toBe('daliuren')
+    expect(card.title).toBe('大六壬 涉害课')
+    const keys = fieldKeys(card)
+    for (const k of ['起课', '月将', '天地盘', '课体', '贵人', '天将', '口径']) {
+      expect(keys, `大六壬卡缺字段「${k}」`).toContain(k)
+    }
+    // 四课恰 4 条 + 三传恰 3 条（条目区连续，共 7 条）
+    expect(card.items.filter((l) => /^- [一二三四]课 \| /u.test(l))).toHaveLength(4)
+    expect(card.items.filter((l) => /^- (初|中|末)传 \| /u.test(l))).toHaveLength(3)
+    expect(card.items).toHaveLength(7)
+    // 三传条目含遁干与天将（初传卯遁己贵人）
+    expect(card.items.find((l) => l.startsWith('- 初传'))).toContain('遁干 己')
+    expect(card.items.find((l) => l.startsWith('- 初传'))).toContain('天将 贵人')
+    // 天地盘 12 组
+    expect((card.fields.find((f) => f.startsWith('天地盘：'))!.match(/→/gu) ?? []).length).toBe(12)
+  })
+
+  it('M63-E 七政四余卡：出生 / 庙旺 / 口径 + 七政四余 11 条与十二宫 12 条', async () => {
+    const card = await panCard('qizheng_pan', {
+      birth: '1990-05-12 14:30',
+      timezone: 'Asia/Shanghai',
+      latitude: 31.23,
+      longitude: 121.47,
+    })
+    expect(card.kind).toBe('qizheng')
+    expect(card.title).toBe('七政 命宫巳')
+    const keys = fieldKeys(card)
+    for (const k of ['出生', '庙旺', '口径']) {
+      expect(keys, `七政卡缺字段「${k}」`).toContain(k)
+    }
+    // 七政 7 + 四余 4 = 11 政余条目 + 十二宫 12 条目 = 23（连续）
+    expect(card.items).toHaveLength(23)
+    for (const name of ['太阳', '太阴', '水星', '金星', '火星', '木星', '土星', '罗睺', '计都', '月孛', '紫炁']) {
+      expect(card.items.filter((l) => l.startsWith(`- ${name} |`)), `缺政余条目：${name}`).toHaveLength(1)
+    }
+    // 四余近似标注（平交点 / 平远地点 / 争议口径）
+    expect(card.items.find((l) => l.startsWith('- 罗睺'))).toContain('平交点')
+    expect(card.items.find((l) => l.startsWith('- 月孛'))).toContain('平远地点')
+    expect(card.items.find((l) => l.startsWith('- 紫炁'))).toContain('争议口径')
+    // 十二宫（命宫起）
+    expect(card.items.filter((l) => /^- (命宫|财帛|兄弟|田宅|男女|奴仆|夫妻|疾厄|迁移|官禄|福德|相貌) \S \| /u.test(l))).toHaveLength(12)
+    expect(card.fields.find((f) => f.startsWith('口径：'))).toContain('不列二十八宿度')
+  })
+
+  it('M63-D 奇门卡：定局 / 值符值使 / 旬空 / 口径 + 九宫 9 条（洛书序）', async () => {
+    const card = await panCard('qimen_pan', { at: '2026-11-05 14:30' })
+    expect(card.kind).toBe('qimen')
+    expect(card.title).toBe('奇门 阴五局')
+    const keys = fieldKeys(card)
+    for (const k of ['定局', '值符', '旬空', '口径']) {
+      expect(keys, `奇门卡缺字段「${k}」`).toContain(k)
+    }
+    // 九宫恰 9 条（洛书序），值符 / 值使 / 旬首字段在
+    expect(card.items).toHaveLength(9)
+    expect(card.items.filter((l) => /^- (巽4|离9|坤2|震3|中5|兑7|艮8|坎1|乾6) \| /u.test(l))).toHaveLength(9)
+    expect(card.fields.find((f) => f.startsWith('定局：'))).toContain('阴遁五局')
+    expect(card.fields.find((f) => f.startsWith('定局：'))).toContain('霜降')
+    expect(card.fields.find((f) => f.startsWith('值符：'))).toContain('天英')
+    expect(card.fields.find((f) => f.startsWith('旬空：'))).toContain('子 丑')
+    // 空亡宫标注（坎 / 艮）
+    expect(card.items.filter((l) => l.includes('｜ 空'))).toHaveLength(2)
+    // 中宫行
+    expect(card.items.find((l) => l.startsWith('- 中5'))).toContain('天禽（寄坤）')
+  })
+
+  it('M63 续完善 置闰对照：窗口日卡含「对照」字段行；基准日无（零回归）', async () => {
+    const leapCard = await panCard('qimen_pan', { at: '2022-06-25 10:00' })
+    expect(fieldKeys(leapCard)).toContain('对照')
+    expect(leapCard.fields.find((f) => f.startsWith('对照：'))).toContain('置闰法')
+    const baseCard = await panCard('qimen_pan', { at: '2026-11-05 14:30' })
+    expect(fieldKeys(baseCard)).not.toContain('对照')
   })
 })

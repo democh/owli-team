@@ -16,6 +16,8 @@ export interface UsageRecordInput {
   promptTokens: number
   completionTokens: number
   kind: UsageSnapshot['kind']
+  /** M57：用户归因（users.id；缺省 = 单用户兼容模式） */
+  userId?: string
 }
 
 export interface UsageSum {
@@ -46,8 +48,8 @@ export class UsageStore {
   record(input: UsageRecordInput): number {
     const costUsd = this.costOf(input.model, input.promptTokens, input.completionTokens)
     this.db.run(
-      `INSERT INTO usage (run_id, session_id, agent_id, model, prompt_tokens, completion_tokens, cost_usd, kind, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO usage (run_id, session_id, agent_id, model, prompt_tokens, completion_tokens, cost_usd, kind, user_id, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       input.runId,
       input.sessionId,
       input.agentId ?? null,
@@ -56,6 +58,7 @@ export class UsageStore {
       input.completionTokens,
       costUsd,
       input.kind,
+      input.userId ?? null,
       nowIso(),
     )
     return costUsd
@@ -105,6 +108,24 @@ export class UsageStore {
       sessionId,
     )
     return {
+      promptTokens: row?.prompt_tokens ?? 0,
+      completionTokens: row?.completion_tokens ?? 0,
+      costUsd: row?.cost_usd ?? 0,
+    }
+  }
+
+  /** M57 P3：用户维度时间窗聚合（配额校验 / 用量看板；sinceIso 缺省 = 不限时间） */
+  sumByUser(userId: string, sinceIso?: string): UsageSum & { calls: number } {
+    const row = this.db.get<UsageRow & { calls: number }>(
+      `SELECT COUNT(*) AS calls,
+              COALESCE(SUM(prompt_tokens), 0) AS prompt_tokens,
+              COALESCE(SUM(completion_tokens), 0) AS completion_tokens,
+              COALESCE(SUM(cost_usd), 0) AS cost_usd
+       FROM usage WHERE user_id = ?${sinceIso ? ' AND created_at >= ?' : ''}`,
+      ...(sinceIso ? [userId, sinceIso] : [userId]),
+    )
+    return {
+      calls: Number(row?.calls ?? 0),
       promptTokens: row?.prompt_tokens ?? 0,
       completionTokens: row?.completion_tokens ?? 0,
       costUsd: row?.cost_usd ?? 0,

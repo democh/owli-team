@@ -31,8 +31,26 @@ function modelOf(e: ArchiveEntry): PanModel | null {
 function diffRowsOf(pair: [ArchiveEntry, ArchiveEntry]): PanDiffRow[] | null {
   const ma = modelOf(pair[0])
   const mb = modelOf(pair[1])
-  if (!ma || !mb) return null
-  return diffPan(ma, mb)
+  if (ma && mb) {
+    const d = diffPan(ma, mb)
+    if (d) return d
+  }
+  // M63-F：新 kind（diffPan 仅覆盖四旧盘）→ 条目级通用 diff（卡契约「单一列表」：同 kind 逐行可比；行数不同多出侧标缺）
+  if (pair[0].kind === pair[1].kind) {
+    const a = parsePanRows(pair[0].items)
+    const b = parsePanRows(pair[1].items)
+    if (a.length > 0 && b.length > 0) {
+      const n = Math.max(a.length, b.length)
+      const rows: PanDiffRow[] = []
+      for (let i = 0; i < n; i++) {
+        const x = a[i]
+        const y = b[i]
+        rows.push({ label: x?.label ?? y?.label ?? `#${i + 1}`, a: x?.value ?? '—', b: y?.value ?? '—', diff: (x?.value ?? '—') !== (y?.value ?? '—') })
+      }
+      return rows
+    }
+  }
+  return null
 }
 
 /** 回看 / 对照的盘面卡（档案内不设 ⭐ 与视图记忆——PanCard 缺省无会话上下文即静默） */
@@ -93,7 +111,7 @@ export function ArchiveDrawer({
       </button>
       {open ? (
         list.length === 0 ? (
-          <div className="pn-arch-empty">尚无档案——聊天中的盘面卡点 ⭐，或在上方点「存为档案」即可收藏（本地保存）。</div>
+          <div className="pn-arch-empty">尚无档案——在盘面卡点 ⭐，或点上方「存为档案」收藏。</div>
         ) : (
           <>
             <ul className="pn-arch-list" aria-label="盘面档案列表">

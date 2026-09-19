@@ -12,7 +12,12 @@
  *    带箭头（→ / -> / =>）的日志列表行时整块删除；无日志行保持原文（流式半截不误删，
  *    待后续分片补齐再整体命中）；无标题行时单靠箭头不剥离（正文正常箭头列表不受影响）；
  * 2. 协议标记行（整行匹配 `</?｜…DSML…`；半截不匹配 → 待补齐）：整行删除；
- * 3. 删除造成的多余空行归一（连续 ≥3 换行压缩为 2），尾部空白去除。
+ * 3. 删除造成的多余空行归一（连续 ≥3 换行压缩为 2），尾部空白去除；
+ * 4. 粘连块起始拆分——子轮边界（工具结果回灌后）模型未输出前置换行时，`:::` 容器头 /
+ *    `# 标题` 直接贴在前文句尾（实测 `…tool.::: pan bazi …` / `…cards.# 十字阵…`）：
+ *    行级容器解析（remark-ext / scene derive 均按行首 `:::` 匹配）整体失配——卡片退化为
+ *    纯文本、场景工作区因无容器而不渲染。此处把粘连块起始拆为独立行（不拆反引号包裹的
+ *    代码示例与行首正常块；`#` 仅当前一字符为句读符，避免「C# 语言」误伤）。
  */
 
 const DSML_LINE_RE = /^\s*<\/?\s*｜+\s*DSML\b.*$/iu
@@ -24,12 +29,29 @@ const LOG_ARROW_RE = /→|->|=>/
 /** 列表续行（≥2 空格 / Tab 缩进） */
 const INDENT_LINE_RE = /^[ \t]{2,}\S/
 
+/** 规则 4：粘连容器头（非行首、非反引号内；`:::` 后须为空格 + ASCII 容器名形态） */
+const GLUED_CONTAINER_RE = /(?<=[^\n\s`])[ \t]*(?=:::(?!:)[ \t]+[a-zA-Z])/g
+/** 规则 4：粘连标题（前一字符为句读符、`#` 后须为空格 + 内容） */
+const GLUED_HEADING_RE = /(?<=[.。!！?？;；:：…）)】\]])[ \t]*(?=#{1,6}[ \t]+\S)/g
+
+/** 规则 4 快速探针（未命中不做全量替换，保持零拷贝路径） */
+function hasGluedBlockStart(text: string): boolean {
+  return (
+    /[^\n\s`][ \t]*:::(?!:)[ \t]+[a-zA-Z]/.test(text) ||
+    /[.。!！?？;；:：…）)】\]][ \t]*#{1,6}[ \t]+\S/.test(text)
+  )
+}
+
 /** 净化模型正文：返回剥离后的文本（内容未变化时返回原文引用） */
 export function sanitizeModelText(text: string): string {
   if (!text) return text
-  if (!text.includes(TOOL_SECTION_LINE) && !text.includes('｜')) return text
+  // 规则 4 先行（改变行结构；幂等——已拆行的文本再次进入不匹配 lookbehind）
+  const source = hasGluedBlockStart(text)
+    ? text.replace(GLUED_CONTAINER_RE, '\n').replace(GLUED_HEADING_RE, '\n')
+    : text
+  if (!source.includes(TOOL_SECTION_LINE) && !source.includes('｜')) return source
 
-  const lines = text.split('\n')
+  const lines = source.split('\n')
   const drop = new Array<boolean>(lines.length).fill(false)
   let changed = false
 
@@ -59,7 +81,7 @@ export function sanitizeModelText(text: string): string {
     for (let k = i; k < end; k++) drop[k] = true
     changed = true
   }
-  if (!changed) return text
+  if (!changed) return source
 
   return lines
     .filter((_, index) => !drop[index])

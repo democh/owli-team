@@ -6,13 +6,15 @@
  * - 上传：拖拽 / 粘贴 / 选择 → POST uploads → 插入 @file:path 引用（多模态引用走同一通道）；
  * - 引用插入：ui-store.composerInsert（消息菜单 / 交付件 / 任务 / ⌘K 共用）；
  * - 运行中发送显示「将插话」语义（服务端在回合边界消费，不新建 Run）；
+ * - 底栏右侧常驻上下文电池格条（ContextBar：token / 预算分段水位，点击打开上下文抽屉）；
  * - 支持 IME 组合输入。
  */
 import * as React from 'react'
 import { toast } from 'sonner'
 import { CornerDownLeft, Loader2, Paperclip, Send, Square } from 'lucide-react'
 import type { AgentDefinition, AgentRunState, Artifact, MessageAttachment, SkillMeta, TurnMode } from '@multi-agent/shared'
-import { apiGet, apiPost, apiUpload } from '../../lib/api'
+import { apiGet, apiUpload } from '../../lib/api'
+import { memberViews } from '../../lib/members'
 import {
   ATTACHMENT_ACCEPT,
   ATTACHMENT_MAX_BYTES,
@@ -25,14 +27,13 @@ import {
 } from '../../lib/attachments'
 import { useAgentStore } from '../../stores/agent-store'
 import { useRunStore } from '../../stores/run-store'
-import { useSceneStore } from '../../stores/scene-store'
 import { useSessionStore } from '../../stores/session-store'
 import { useUiStore } from '../../stores/ui-store'
-import { resolveStage } from '../scene/resolve'
 import { Button } from '../ui/button'
 import { AgentAvatar } from '../agents/AgentAvatar'
 import { AttachmentLightbox, type LightboxItem } from './AttachmentLightbox'
 import { AttachmentTray, type TrayItem } from './AttachmentTray'
+import { ContextBar } from '../context/ContextBar'
 import { cn } from '../../lib/utils'
 
 interface MentionState {
@@ -109,12 +110,14 @@ interface Candidate {
   label: string
   hint: string
   agent?: AgentDefinition
+  /** M77：自定义插入文本（「全部 N 位」全伞条目 = 逐一点名多 token；缺省 = `@标签 `） */
+  insertText?: string
 }
 
-/** 从光标处回扫，探测未闭合的 @token */
+/** 从光标处回扫，探测未闭合的 @token（M77：字符集含 `·` 与 `~`——实例标签与分身机器键可连续输入） */
 function detectMention(value: string, caret: number): { start: number; query: string } | null {
   let i = caret - 1
-  while (i >= 0 && /[\p{L}\p{N}_]/u.test(value[i])) i--
+  while (i >= 0 && /[\p{L}\p{N}_·~]/u.test(value[i])) i--
   if (i < 0 || value[i] !== '@') return null
   // '@' 前必须是行首或空白（避免邮箱等误触发）
   if (i > 0 && !/[\s(（[【"']/.test(value[i - 1])) return null
@@ -135,9 +138,13 @@ function draftKey(sessionId?: string): string | undefined {
 export interface ComposerProps {
   /** ChatArea 注入快捷插入能力（空状态提示 chips） */
   onReady?: (insert: (text: string) => void) => void
+  /** M57 P2：只读共享（viewer）→ 输入锁定（仅观阅，服务端另有写闸门兜底） */
+  locked?: boolean
+  /** 锁定提示（缺省文案见 placeholder） */
+  lockedHint?: string
 }
 
-export function Composer({ onReady }: ComposerProps): React.JSX.Element {
+export function Composer({ onReady, locked = false, lockedHint }: ComposerProps): React.JSX.Element {
   const [value, setValue] = React.useState('')
   const [mention, setMention] = React.useState<MentionState>(CLOSED)
   const [slashIndex, setSlashIndex] = React.useState(0)
@@ -165,7 +172,6 @@ export function Composer({ onReady }: ComposerProps): React.JSX.Element {
   const composerInsert = useUiStore((s) => s.composerInsert)
 
   const session = sessions.find((s) => s.id === currentId)
-  const listMode = useSceneStore((s) => s.listMode)
   // M33：上传进行中（托盘三态派生；用于按钮 spinner / 发送拦截）
   const uploading = tray.some((t) => t.status === 'uploading')
   const trayRef = React.useRef<TrayItem[]>([])
@@ -183,34 +189,27 @@ export function Composer({ onReady }: ComposerProps): React.JSX.Element {
     },
     [],
   )
-  const pool = React.useMemo(() => {
-    const ids = session?.participantIds ?? []
-    const inSession = ids.map((id) => agents.find((a) => a.id === id)).filter(Boolean) as AgentDefinition[]
-    return inSession.length > 0 ? inSession : agents
-  }, [agents, session])
+  // M77：在场成员实例（同角多魂 = 各自一条召唤条目 / 一个候选；@ 插入「名字·灵魂名」点名具体分身）
+  const poolMembers = React.useMemo(() => memberViews(agents, session), [agents, session])
+  /** 召唤条条目（空会话回退全量角色） */
+  const stripItems = React.useMemo(
+    () =>
+      poolMembers.length > 0
+        ? poolMembers.map((m) => ({ key: m.key, label: m.label, agent: m.agent }))
+        : agents.map((a) => ({ key: a.id, label: a.name, agent: a })),
+    [poolMembers, agents],
+  )
 
-  // M52-G：成员展示去重——场景席位已覆盖全员时，输入条成员条让位（席位同样承载「点击 @ 召唤 +
-  // 发言/等待状态」）。roundtable 席位环 / 席位横条恒展示全员；arena 仅当参与者全部入席才让位
-  // （有未入席成员时保留，保证新成员可见可召唤）；stream / dock / 纯列表无席位载体，照常展示。
-  const poolHidden = React.useMemo(() => {
-    const ids = session?.participantIds ?? []
-    if (ids.length === 0) return false
-    const first = agents.find((a) => a.id === ids[0])
-    const group = first ? groups.find((g) => g.id === first.group) : undefined
-    const stage = resolveStage(group?.stage, { listMode })
-    if (listMode || stage.fallback) return false
-    if (stage.layout === 'roundtable') return true
-    if (stage.layout !== 'arena' || !stage.seats) return false
-    const seated = new Set([...(stage.seats.left ?? []), ...(stage.seats.right ?? []), ...(stage.seats.center ?? [])])
-    return ids.every((id) => seated.has(id))
-  }, [session, agents, groups, listMode])
+  // 成员条统一常驻（ADR 0135，修订 M52-G）：输入条成员条是 Composer 的常驻主入口，全场景一致展示——
+  // 席位（arena / roundtable）负责「谁在哪个席」的结构可视化且随消息滚动区离场，成员条承载常驻
+  // 快捷召唤与实时状态（@ / 发言与等待状态点 / 排队序号 / 新成员高亮），不再按场景让位。
 
   // M16：指挥台按场景分组排序（groups 顺序，组内保持编制顺序），组间以组色圆点分隔
   const poolSorted = React.useMemo(() => {
-    if (groups.length === 0) return pool
+    if (groups.length === 0) return stripItems
     const rank = new Map(groups.map((g, i) => [g.id, i]))
-    return [...pool].sort((x, y) => (rank.get(x.group) ?? 99) - (rank.get(y.group) ?? 99))
-  }, [pool, groups])
+    return [...stripItems].sort((x, y) => (rank.get(x.agent.group) ?? 99) - (rank.get(y.agent.group) ?? 99))
+  }, [stripItems, groups])
 
   // M16：新加入成员短暂高亮（participantIds diff；安静模式/reduced-motion 由 CSS 关闭动画）
   const [freshIds, setFreshIds] = React.useState<Set<string>>(new Set())
@@ -237,9 +236,36 @@ export function Composer({ onReady }: ComposerProps): React.JSX.Element {
   const candidates = React.useMemo<Candidate[]>(() => {
     if (!mention.open) return []
     const q = mention.query.toLowerCase()
-    const people: Candidate[] = pool
-      .filter((a) => a.name.toLowerCase().includes(q) || a.id.toLowerCase().includes(q))
-      .map((a) => ({ kind: 'agent', key: `a:${a.id}`, label: a.name, hint: a.role, agent: a }))
+    const people: Candidate[] = []
+    // M77：多实例角色加「全部 N 位」显式全伞条目（裸名只召集主实例；全伞 = 逐一点名一键插入）
+    const byAgent = new Map<string, typeof poolSorted>()
+    for (const x of poolSorted) {
+      const list = byAgent.get(x.agent.id) ?? []
+      list.push(x)
+      byAgent.set(x.agent.id, list)
+    }
+    for (const [agentId, list] of byAgent) {
+      const hits = list.filter(
+        (x) =>
+          x.label.toLowerCase().includes(q) ||
+          x.agent.name.toLowerCase().includes(q) ||
+          x.key.toLowerCase().includes(q),
+      )
+      if (hits.length === 0) continue
+      if (list.length >= 2) {
+        people.push({
+          kind: 'agent',
+          key: `a:all:${agentId}`,
+          label: `${list[0]!.agent.name}（全部 ${list.length} 位）`,
+          hint: '同角多魂 · 一次召集全部实例',
+          agent: list[0]!.agent,
+          insertText: `${list.map((x) => `@${x.label}`).join(' ')} `,
+        })
+      }
+      for (const x of hits) {
+        people.push({ kind: 'agent', key: `a:${x.key}`, label: x.label, hint: x.agent.role, agent: x.agent })
+      }
+    }
     // 文件 / 技能候选仅在输入了查询词时展示（避免默认菜单过噪）
     const fileHits: Candidate[] =
       q.length > 0
@@ -256,7 +282,7 @@ export function Composer({ onReady }: ComposerProps): React.JSX.Element {
             .map((s) => ({ kind: 'skill', key: `s:${s.name}`, label: s.name, hint: s.description }))
         : []
     return [...people, ...fileHits, ...skillHits]
-  }, [mention.open, mention.query, pool, files, skills])
+  }, [mention.open, mention.query, poolSorted, files, skills])
 
   // 提及菜单打开时拉取文件候选（30s 内复用缓存）
   const filesFetchedAtRef = React.useRef(0)
@@ -369,11 +395,13 @@ export function Composer({ onReady }: ComposerProps): React.JSX.Element {
     const before = value.slice(0, mention.start)
     const after = value.slice(caret)
     const inserted =
-      candidate.kind === 'agent'
-        ? `@${candidate.label} `
-        : candidate.kind === 'file'
-          ? `@file:${candidate.hint} `
-          : `@skill:${candidate.label} `
+      candidate.insertText !== undefined
+        ? candidate.insertText
+        : candidate.kind === 'agent'
+          ? `@${candidate.label} `
+          : candidate.kind === 'file'
+            ? `@file:${candidate.hint} `
+            : `@skill:${candidate.label} `
     const next = before + inserted + after
     applyValue(next, before.length + inserted.length)
     setMention(CLOSED)
@@ -607,7 +635,7 @@ export function Composer({ onReady }: ComposerProps): React.JSX.Element {
     }
   }
 
-  const disabled = !currentId
+  const disabled = !currentId || locked
   const insertHint = active ? '运行中发送将作为插话，在回合结束后生效' : null
 
   return (
@@ -684,7 +712,7 @@ export function Composer({ onReady }: ComposerProps): React.JSX.Element {
                   onClick={() => selectCandidate(c)}
                 >
                   {c.kind === 'agent' && c.agent ? (
-                    <AgentAvatar agent={c.agent} size={22} animated={false} className="rounded" />
+                    <AgentAvatar agent={c.agent} size={22} animated={false} />
                   ) : (
                     <span className="w-[22px] shrink-0 text-center text-[11px]" aria-hidden>
                       {c.kind === 'file' ? '📄' : '🧩'}
@@ -703,19 +731,20 @@ export function Composer({ onReady }: ComposerProps): React.JSX.Element {
           </div>
         )}
         {/* M11 指挥台：成员快捷召唤条（点击插入 @；实时状态点与排队序号）；M16：按场景分组、组色圆点分隔、新成员高亮；
-            M52-G：场景席位已覆盖全员时让位隐藏（poolHidden） */}
-        {!disabled && poolSorted.length > 0 && !poolHidden && (
+            ADR 0135：全场景统一常驻（M52-G 席位让位判定已撤销——席位与成员条同屏并存） */}
+        {!disabled && poolSorted.length > 0 && (
           <div className="flex items-center gap-1 overflow-x-auto px-2.5 pb-0.5 pt-2">
-            {poolSorted.map((a, i) => {
-              const st = statuses[a.id] ?? 'idle'
+            {poolSorted.map((x, i) => {
+              const a = x.agent
+              const st = statuses[x.key] ?? 'idle'
               const busy = st === 'speaking' || st === 'thinking'
-              const qIdx = queue.indexOf(a.id)
+              const qIdx = queue.indexOf(x.key)
               const queueHint = qIdx === 0 ? (busy ? ' · 正在发言' : ' · 即将接棒') : qIdx > 0 ? ` · 排队第 ${qIdx + 1} 位` : ''
               const prev = poolSorted[i - 1]
               const group = groups.find((g) => g.id === a.group)
-              const showDivider = Boolean(prev && prev.group !== a.group && group)
+              const showDivider = Boolean(prev && prev.agent.group !== a.group && group)
               return (
-                <React.Fragment key={a.id}>
+                <React.Fragment key={x.key}>
                   {showDivider && (
                     <span
                       className="mx-0.5 size-1.5 shrink-0 rounded-full"
@@ -725,19 +754,19 @@ export function Composer({ onReady }: ComposerProps): React.JSX.Element {
                   )}
                   <button
                     type="button"
-                    title={`召唤 ${a.name}（${a.role}）${queueHint}`}
-                    onClick={() => insert(`@${a.name} `)}
+                    title={`召唤 ${x.label}（${a.role}）${queueHint}`}
+                    onClick={() => insert(`@${x.label} `)}
                     className={cn(
                       'group relative flex shrink-0 items-center gap-1 rounded-full border py-0.5 pl-0.5 pr-2 text-[11.5px] transition-all',
                       busy
                         ? 'border-primary/45 bg-primary/5 text-primary shadow-sm shadow-primary/10'
                         : 'border-transparent bg-muted/70 text-muted-foreground hover:border-primary/25 hover:bg-primary/5 hover:text-primary',
                       qIdx > 0 && 'border-primary/30 bg-primary/5 text-primary',
-                      freshIds.has(a.id) && 'member-enter',
+                      freshIds.has(x.key) && 'member-enter',
                     )}
                   >
-                    <AgentAvatar agent={a} size={18} animated={false} className="rounded-full" />
-                    <span className="font-medium">{a.name}</span>
+                    <AgentAvatar agent={a} size={18} animated={false} />
+                    <span className="font-medium">{x.label}</span>
                     <span className={cn('size-1.5 rounded-full', STATE_DOT[st], busy && 'animate-pulse')} />
                     {qIdx > 0 && (
                       <span className="absolute -right-1 -top-1 flex size-3.5 items-center justify-center rounded-full bg-primary text-[8.5px] font-bold text-primary-foreground shadow-sm">
@@ -762,9 +791,11 @@ export function Composer({ onReady }: ComposerProps): React.JSX.Element {
           disabled={disabled}
           rows={1}
           placeholder={
-            disabled
-              ? '先创建或选择一个会话…'
-              : '输入消息，@ 召唤成员 / 文件 / 技能，/ 使用命令，可直接拖拽或粘贴图片 / 文档…'
+            locked
+              ? (lockedHint ?? '只读共享（viewer）：无写权限')
+              : disabled
+                ? '先创建或选择一个会话…'
+                : '输入消息，@ 召唤成员 / 文件 / 技能，/ 使用命令，可直接拖拽或粘贴图片 / 文档…'
           }
           className="block w-full resize-none bg-transparent px-3.5 py-3 pr-28 text-[13.5px] leading-6 placeholder:text-muted-foreground focus:outline-none"
           onChange={onChange}
@@ -813,7 +844,7 @@ export function Composer({ onReady }: ComposerProps): React.JSX.Element {
           >
             {uploading ? <Loader2 className="size-3.5 animate-spin" /> : <Paperclip className="size-3.5" />}
           </Button>
-          {active && (
+          {active && !locked && (
             <Button
               variant="outline"
               size="sm"
@@ -893,6 +924,10 @@ export function Composer({ onReady }: ComposerProps): React.JSX.Element {
             {queued ? ' · 已排队' : ''}
           </span>
         )}
+        {/* 上下文电池格条（M8/M9→M25）：分段水位右对齐常驻；本 Run 费用 / 轨迹入口同排 */}
+        <span className="ml-auto inline-flex items-center gap-1.5">
+          <ContextBar />
+        </span>
       </div>
 
       {/* M33：附件预览浮层（托盘图片 / 视频；多张时左右切换） */}

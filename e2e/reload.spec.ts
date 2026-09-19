@@ -12,9 +12,10 @@ test('刷新重附着：执行中刷新页面，会话恢复且运行继续', as
   await createSession(page, { title })
   await sendMessage(page, '请团队接力完成消息能力的交付，产出落工作区。')
 
-  // 等运行确实启动且已有产出，再刷新
+  // 等运行确实启动且已有产出（消息区范围——v66 起 Composer 成员条常驻，page 级「费利」会提前命中成员条），再刷新
+  const log = page.locator('[role="log"]')
   await expect(stopButton(page)).toBeVisible()
-  await expect(page.getByText('费利').first()).toBeVisible()
+  await expect(log.getByText('费利').first()).toBeVisible()
 
   await page.reload()
 
@@ -25,8 +26,7 @@ test('刷新重附着：执行中刷新页面，会话恢复且运行继续', as
   // exact：避免与消息导航条（MessageRail）的用户条目「你：…」双匹配（strict mode）
   await expect(stopButton(page)).toBeVisible()
   // M52-D：重进后视口贴底跟随运行，首条用户消息可能已被虚拟列表剪枝（不在 DOM，toBeVisible 落空）；
-  // 循环「滚顶 + 短断言」直至首条消息进入渲染窗口（重试覆盖消息加载 / 贴底补正竞态，与 M14/M37 同口径）
-  const log = page.locator('[role="log"]')
+  // 循环「滚顶 + 短断言」直至首条消息进入渲染窗口（重试覆盖消息加载 / 贴底补正 竞态，与 M14/M37 同口径）
   const first = page.getByText('请团队接力完成消息能力的交付，产出落工作区。', { exact: true })
   await expect(async () => {
     await log.evaluate((el) => {

@@ -11,10 +11,11 @@
  * 元数据（kind / size）经会话级共享缓存补齐：stub fetch 应答 /api/sessions/:id/artifacts。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { act, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { AgentDefinition, AgentGroup, ChatMessage } from '@multi-agent/shared'
 import { CloseoutCard } from '../src/components/chat/CloseoutCard'
+import { TooltipProvider } from '../src/components/ui/tooltip'
 import { useArtifactMetaStore } from '../src/lib/use-artifact-meta'
 import { useAgentStore } from '../src/stores/agent-store'
 import { useLivePanelStore } from '../src/stores/live-panel-store'
@@ -109,13 +110,22 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
+/** M39：交付明细行含 Tooltip（预览 popover）——测试需 TooltipProvider 包裹（m26/m27 同类先例） */
+function renderCard(): ReturnType<typeof render> {
+  return render(
+    <TooltipProvider delayDuration={0}>
+      <CloseoutCard />
+    </TooltipProvider>,
+  )
+}
+
 describe('收尾交付清单（CloseoutCard）', () => {
   it('无交付件：不渲染收尾卡（固定收尾文案已移除）', () => {
     stubArtifacts([])
     const tail = agentMsg('m2', 'architect', { turnIndex: 1, mentions: ['user'], content: '本轮到此' })
     useSessionStore.setState({ byId: new Map([[tail.id, tail]]), order: [tail.id] })
 
-    const { container } = render(<CloseoutCard />)
+    const { container } = renderCard()
     expect(container.firstChild).toBeNull()
     expect(screen.queryByText('本轮已交还')).toBeNull()
   })
@@ -129,7 +139,7 @@ describe('收尾交付清单（CloseoutCard）', () => {
     const m2 = agentMsg('m2', 'architect', { turnIndex: 1, mentions: ['user'], artifacts: ['src/app.ts'] })
     useSessionStore.setState({ byId: new Map([['m1', m1], ['m2', m2]]), order: ['m1', 'm2'] })
 
-    const { container } = render(<CloseoutCard />)
+    const { container } = renderCard()
 
     expect(screen.getByText('本轮交付')).toBeInTheDocument()
     expect(screen.getByText('2 件')).toBeInTheDocument()
@@ -146,7 +156,8 @@ describe('收尾交付清单（CloseoutCard）', () => {
     expect(screen.getByText('1.0KB')).toBeInTheDocument()
 
     // 点击行 → 右栏实况 · 交付件面钉住选中（M49：深度工作台经「展开」进入，主 tab 保持对话）
-    await userEvent.click(screen.getByTitle('打开交付件：src/app.ts'))
+    // M39：行名按钮包在 Tooltip 触发器内——用 fireEvent 直点（userEvent 指针模拟在负载下易抖动）
+    fireEvent.click(screen.getByTitle('打开交付件：src/app.ts'))
     expect(useUiStore.getState().requestedArtifactPath).toBe('src/app.ts')
     expect(useUiStore.getState().mainTab).toBe('chat')
     expect(useUiStore.getState().rightView).toBe('live')
@@ -160,7 +171,7 @@ describe('收尾交付清单（CloseoutCard）', () => {
     useSessionStore.setState({ byId: new Map([[tail.id, tail]]), order: [tail.id] })
     useRunStore.setState({ active: true })
 
-    const { container } = render(<CloseoutCard />)
+    const { container } = renderCard()
     expect(container.firstChild).toBeNull()
   })
 
@@ -171,7 +182,7 @@ describe('收尾交付清单（CloseoutCard）', () => {
     const tail = agentMsg('m1', 'pm', { turnIndex: 0, mentions: ['user'], artifacts: [...docs, ...charts] })
     useSessionStore.setState({ byId: new Map([[tail.id, tail]]), order: [tail.id] })
 
-    const { container } = render(<CloseoutCard />)
+    const { container } = renderCard()
     expect(screen.getByText('13 件')).toBeInTheDocument()
     // 默认：5 行最终交付；过程产物不占默认视图
     expect(container.querySelectorAll('[data-delivery-row]')).toHaveLength(5)
@@ -193,7 +204,7 @@ describe('收尾交付清单（CloseoutCard）', () => {
     const tail = agentMsg('m1', 'pm', { turnIndex: 0, mentions: ['user'], artifacts: [...docs, ...charts] })
     useSessionStore.setState({ byId: new Map([[tail.id, tail]]), order: [tail.id] })
 
-    const { container } = render(<CloseoutCard />)
+    const { container } = renderCard()
     const collapse = screen.getByRole('button', { name: '收起交付清单' })
     expect(container.querySelectorAll('[data-delivery-row]')).toHaveLength(3)
     // 「其他」先展开：验证整体折叠将其暂时隐藏且状态保留
@@ -226,7 +237,7 @@ describe('收尾交付清单（CloseoutCard）', () => {
     const tail = agentMsg('m1', 'pm', { turnIndex: 0, mentions: ['user'], artifacts: paths })
     useSessionStore.setState({ byId: new Map([[tail.id, tail]]), order: [tail.id] })
 
-    const { container } = render(<CloseoutCard />)
+    const { container } = renderCard()
     const rows = [...container.querySelectorAll('[data-delivery-row]')].map((el) => el.getAttribute('data-delivery-row'))
     expect(rows).toEqual(['docs/基本面分析-增长主线.md', 'docs/技术面分析-增长主线.md', 'src/app.ts', '回测数据.csv'])
     // 元数据补齐（kind / size）后体积就位（同时收敛 fetch 异步更新）
@@ -240,7 +251,7 @@ describe('收尾交付清单（CloseoutCard）', () => {
     const tail = agentMsg('m1', 'pm', { turnIndex: 0, mentions: ['user'], artifacts: paths })
     useSessionStore.setState({ byId: new Map([[tail.id, tail]]), order: [tail.id] })
 
-    const { container } = render(<CloseoutCard />)
+    const { container } = renderCard()
     expect(container.querySelectorAll('[data-delivery-group="primary"]')).toHaveLength(0)
     expect(container.querySelectorAll('[data-delivery-row]')).toHaveLength(2)
     expect(screen.getByRole('button', { name: '其他 2 件' })).toHaveAttribute('aria-expanded', 'true')
@@ -255,7 +266,7 @@ describe('收尾交付清单（CloseoutCard）', () => {
     const before = agentMsg('m1', 'pm', { turnIndex: 0, mentions: ['user'] })
     useSessionStore.setState({ byId: new Map([['m1', before]]), order: ['m1'] })
 
-    const { container } = render(<CloseoutCard />)
+    const { container } = renderCard()
     expect(container.querySelector('[data-delivery-manifest]')).toBeNull()
 
     // run:end → refreshMessages：同一批消息以新对象回填（id / 状态不变 → 指纹仅计数位变化）

@@ -124,7 +124,7 @@ export function SkillEditor({ name, onClose }: { name: string; onClose: () => vo
                 修改正文后对正在运行的会话下一回合生效。
               </div>
             )}
-            <FieldRow label="正文（Markdown）" hint="保存前做 zod / front-matter 自检，写出的文件必可被技能库加载">
+            <FieldRow label="正文（Markdown）" hint="保存前自动校验，写出的文件必可被技能库加载">
               <MarkdownField
                 value={draft.body}
                 rows={20}

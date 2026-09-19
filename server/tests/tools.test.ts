@@ -56,8 +56,7 @@ function makeRuntime(): {
     allowRunCommand: false,
     allowedCommands: [],
     allowSensitive: false,
-    webFetchAllowedDomains: [],
-    webSearch: { enabled: false, apiKey: '', apiUrl: '', htmlUrl: '' },
+    webSearch: { apiKey: '', apiUrl: '', htmlUrl: '' },
     httpUserAgent: '',
     httpMinIntervalMs: 0,
     httpTimeoutMs: 15_000,
@@ -110,6 +109,40 @@ describe('tools：文件工具', () => {
     expect(list[0].path).toBe('docs/方案.md')
     expect(list[0].authorAgentId).toBe('pm')
     expect(list[0].kind).toBe('markdown')
+  })
+
+  it('write_file append：分节追加（空行衔接）与新建等价；md 落盘回灌体检', async () => {
+    const { registry, runtime } = makeRuntime()
+    const first = await registry.execute(
+      'write_file',
+      { path: 'docs/报告.md', content: '# 报告\n\n<!-- §1 待填 -->' },
+      runtime,
+    )
+    expect(first.ok).toBe(true)
+    expect(first.detail).toContain('体检：')
+    // 占位残留提示（真实模型探针实测：交付前清理）
+    expect(first.detail).toContain('占位残留')
+
+    const second = await registry.execute(
+      'write_file',
+      { path: 'docs/报告.md', content: '## 结论\n\n- 要点一', mode: 'append' },
+      runtime,
+    )
+    expect(second.ok).toBe(true)
+    expect(second.summary).toContain('已追加到')
+    const read = await registry.execute('read_file', { path: 'docs/报告.md' }, runtime)
+    expect(read.detail).toContain('# 报告')
+    expect(read.detail).toContain('## 结论')
+    expect(read.detail).toMatch(/# 报告[\s\S]*## 结论/)
+
+    // append 到不存在文件 = 等价新建
+    const created = await registry.execute(
+      'write_file',
+      { path: 'docs/新.md', content: '# 新文档', mode: 'append' },
+      runtime,
+    )
+    expect(created.ok).toBe(true)
+    expect(created.summary).toContain('已写入')
   })
 
   it('read_file 读回内容；不存在 → 失败', async () => {
@@ -253,18 +286,25 @@ describe('tools：角色白名单过滤', () => {
     // + 4（M31 画布创作：canvas_read/canvas_write/media_generate/media_video）
     // + 3（M35 定时任务：schedule_task/list_schedules/manage_schedule）
     // + 4（M51-E 命理排盘：bazi_pan/ziwei_pan/natal_pan/gua_pan）
+    // + 2（M63-B 行运/合盘：transit_pan/synastry_pan）
+    // + 1（M63-C 大六壬：daliuren_pan）
+    // + 1（M63-D 奇门遁甲：qimen_pan）
+    // + 1（M63-E 七政四余：qizheng_pan）
+    // + 2（M69 场景玩法并发批：dice_roll/tarot_draw）
+    // + 1（M66-A 罗盘排盘：luopan_pan）
+    // + 1（M66 续完善择日：zeri_pan）
     // M48：invite_members 随调度官角色撤销（召集上收平台路由步），总数 56 → 55
-    expect(all.length).toBe(59)
+    expect(all.length).toBe(68)
   })
 
-  it('M28 tier：核心常驻 21 个（含 tool_search / 范式三件套）；重型连接与创作工具 38 个延迟', () => {
+  it('M28 tier：核心常驻 21 个（含 tool_search / 范式三件套）；重型连接与创作工具 47 个延迟', () => {
     const cfg = loadConfig()
     const registry = createToolRegistry(cfg)
     const all = registry.forAgent({})
     const deferred = all.filter((t) => t.tier === 'deferred').map((t) => t.name)
     const core = all.filter((t) => t.tier !== 'deferred').map((t) => t.name)
     expect(core).toHaveLength(21)
-    expect(deferred).toHaveLength(38)
+    expect(deferred).toHaveLength(47)
     expect(core).toContain('tool_search')
     expect(core).toContain('write_plan')
     expect(core).toContain('update_plan_step')

@@ -11,19 +11,37 @@
  * 指纹末位含「本轮交付件计数」：流式期消息不带 artifacts（run:end 时 refreshMessages 才回填），
  * 若不入指纹，补全后的刷新不改变指纹 → useMemo 停留在空态（清单卡不出现）。
  * 元数据 hook 下沉至 DeliveryManifest：隐藏态不发起拉取（与「无交付件不渲染」同口径）。
+ * M39（§97，DEV-3）：验收单——development 场景追加验收区：qa 判定徽章（通过 / 有条件通过 /
+ * 未通过，acceptanceOf 启发式派生）+ 未决项列表；无 qa 内容 → 仅列交付件（降级不变）。
+ * M44（AF-5）：签收区——development 场景且锚点存在时，追加「核心交付签收」行：锚点名 + vN +
+ * 闭环统计（已回应 / 未闭环）+ 「签收」（本地态 sessionStorage；签收时回填「已签收 <名> vN。」草稿）。
  */
 import * as React from 'react'
-import { ChevronRight, MessageSquarePlus, Package, PackageOpen } from 'lucide-react'
-import type { AgentDefinition } from '@multi-agent/shared'
+import { ChevronRight, MessageSquarePlus, Package, PackageCheck, PackageOpen } from 'lucide-react'
+import type { AgentDefinition, ChatMessage } from '@multi-agent/shared'
 import { useAgentStore } from '../../stores/agent-store'
 import { useRunStore } from '../../stores/run-store'
 import { useSessionStore } from '../../stores/session-store'
 import { useUiStore } from '../../stores/ui-store'
 import { useArtifactMeta } from '../../lib/use-artifact-meta'
+import { useArtifactVersions } from '../../lib/artifact-versions'
+import { acceptanceOf, type AcceptanceInfo } from '../../lib/acceptance'
+import { baseName } from '../../lib/artifacts'
 import { partitionDelivery } from '../../lib/delivery'
+import {
+  closureOf,
+  loadPinnedPath,
+  loadSignoffs,
+  pickFocusPath,
+  saveSignoffs,
+  signoffDraft,
+  signoffTag,
+} from '../../lib/focus-artifact'
+import { stageOf } from '../../lib/stage-map'
 import { cn } from '../../lib/utils'
 import { AgentAvatar } from '../agents/AgentAvatar'
 import { ConfettiBurst } from '../ui/confetti'
+import { useSceneCtx } from '../scene/context'
 import { ArtifactRow } from './DeliveryList'
 
 /** 彩纸触发窗口：仅新近完成的本轮播放，重挂载 / 打开旧会话不重放 */
@@ -39,9 +57,17 @@ interface DeliveryEntry {
 
 interface CloseoutInfo {
   tailId: string
+  runId?: string
   waves: number
   entries: DeliveryEntry[]
   createdAt: string
+}
+
+/** M39：验收判定徽章色调 */
+const VERDICT_TONE: Record<AcceptanceInfo['verdict'], string> = {
+  通过: 'bg-emerald-500/10 text-emerald-600',
+  有条件通过: 'bg-amber-500/10 text-amber-600',
+  未通过: 'bg-rose-500/10 text-rose-600',
 }
 
 /** 快捷继续 chips：回填草稿由用户确认发送（ADR 0064） */
@@ -54,6 +80,7 @@ const QUICK_CHIPS: { label: string; prompt: string }[] = [
 function DeliveryManifest({ info }: { info: CloseoutInfo }): React.JSX.Element {
   const agents = useAgentStore((s) => s.agents)
   const meta = useArtifactMeta()
+  const ctx = useSceneCtx()
   const insertToComposer = useUiStore((s) => s.insertToComposer)
   const expandWorkspace = useUiStore((s) => s.expandWorkspace)
   const [burst, setBurst] = React.useState(0)
@@ -61,6 +88,58 @@ function DeliveryManifest({ info }: { info: CloseoutInfo }): React.JSX.Element {
   const [othersOpen, setOthersOpen] = React.useState<boolean | null>(null)
   // 整清单折叠态：默认展开（收起后仅留概要行与快捷继续）
   const [listOpen, setListOpen] = React.useState(true)
+
+  // M39（DEV-3）：development 场景验收区（qa 判定 + 未决项；无 qa 内容 → 不渲染）
+  const groupId = ctx?.group?.id
+  const acceptance = React.useMemo<AcceptanceInfo | undefined>(() => {
+    if (groupId !== 'development') return undefined
+    const s = useSessionStore.getState()
+    const messages: ChatMessage[] = []
+    for (const id of s.order) {
+      const m = s.byId.get(id)
+      if (m) messages.push(m)
+    }
+    return acceptanceOf(messages, info.runId)
+    // tailId 变化 = 新一轮收尾（同轮内消息不变化）
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [groupId, info.runId, info.tailId])
+
+  // M44（AF-5）：签收区（development）——锚点（钉选优先）+ vN + 闭环统计 + 本地签收态
+  const sessionId = useSessionStore((s) => s.currentId ?? '')
+  const paths = React.useMemo(() => info.entries.map((e) => e.path), [info.entries])
+  const anchor = React.useMemo(
+    () => pickFocusPath(paths, sessionId ? loadPinnedPath(sessionId) : undefined),
+    [paths, sessionId],
+  )
+  const anchorVersions = useArtifactVersions(groupId === 'development' ? anchor : undefined)
+  const latestVersion = anchorVersions && anchorVersions.length > 0 ? anchorVersions[0]!.version : undefined
+  const [signoffs, setSignoffs] = React.useState<Set<string>>(() => (sessionId ? loadSignoffs(sessionId) : new Set()))
+  React.useEffect(() => {
+    setSignoffs(sessionId ? loadSignoffs(sessionId) : new Set())
+  }, [sessionId, info.tailId])
+  const closure = React.useMemo(() => {
+    const s = useSessionStore.getState()
+    const messages: ChatMessage[] = []
+    for (const id of s.order) {
+      const m = s.byId.get(id)
+      if (m) messages.push(m)
+    }
+    return closureOf(messages, paths)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [info.tailId, paths])
+  const signed = anchor !== undefined && latestVersion !== undefined && signoffs.has(signoffTag(anchor, latestVersion))
+  const toggleSignoff = (): void => {
+    if (!anchor || latestVersion === undefined) return
+    const tag = signoffTag(anchor, latestVersion)
+    const next = new Set(signoffs)
+    if (next.has(tag)) next.delete(tag)
+    else {
+      next.add(tag)
+      insertToComposer(signoffDraft(anchor, latestVersion))
+    }
+    setSignoffs(next)
+    saveSignoffs(sessionId, next)
+  }
 
   // 彩纸：挂载一拍内仅新近完成播放（同一条尾消息的重复挂载由 celebrateId 收敛；quiet 在 ConfettiBurst 内部）
   const celebratedRef = React.useRef('')
@@ -107,6 +186,15 @@ function DeliveryManifest({ info }: { info: CloseoutInfo }): React.JSX.Element {
           <span className="shrink-0 rounded-full bg-primary/10 px-1.5 py-px text-[10.5px] font-medium tabular-nums text-primary">
             {info.entries.length} 件
           </span>
+          {acceptance ? (
+            <span
+              data-qa-verdict={acceptance.verdict}
+              title="验收判定（来自 qa 本轮发言）"
+              className={cn('shrink-0 rounded-full px-1.5 py-px text-[10.5px] font-medium', VERDICT_TONE[acceptance.verdict])}
+            >
+              验收 · {acceptance.verdict}
+            </span>
+          ) : null}
           {info.waves > 0 && <span className="truncate text-[11px] text-muted-foreground">收束于第 {info.waves} 波</span>}
           <ChevronRight
             className={cn('size-3 shrink-0 text-muted-foreground transition-transform group-hover:text-primary', listOpen && 'rotate-90')}
@@ -115,7 +203,7 @@ function DeliveryManifest({ info }: { info: CloseoutInfo }): React.JSX.Element {
         <span className="ml-auto flex shrink-0 items-center gap-1.5">
           <span className="flex -space-x-1.5">
             {authors.slice(0, MAX_AUTHORS).map((a) => (
-              <AgentAvatar key={a.id} agent={a} size={18} animated={false} className="rounded-full ring-1 ring-card" />
+              <AgentAvatar key={a.id} agent={a} size={18} animated={false} className="ring-1 ring-card" />
             ))}
           </span>
           {authors.length > MAX_AUTHORS && (
@@ -138,7 +226,13 @@ function DeliveryManifest({ info }: { info: CloseoutInfo }): React.JSX.Element {
           {primary.length > 0 && (
             <div data-delivery-group="primary" className="mt-1.5 space-y-0.5 border-t border-primary/10 pt-1.5">
               {primary.map((e) => (
-                <ArtifactRow key={e.path} path={e.path} meta={meta.get(e.path)} author={agents.find((a) => a.id === e.agentId)} />
+                <ArtifactRow
+                  key={e.path}
+                  path={e.path}
+                  meta={meta.get(e.path)}
+                  author={agents.find((a) => a.id === e.agentId)}
+                  stage={stageOf(groupId, e.agentId)}
+                />
               ))}
             </div>
           )}
@@ -159,7 +253,13 @@ function DeliveryManifest({ info }: { info: CloseoutInfo }): React.JSX.Element {
               {othersShown && (
                 <div data-delivery-group="others" className="mt-0.5 space-y-0.5">
                   {others.map((e) => (
-                    <ArtifactRow key={e.path} path={e.path} meta={meta.get(e.path)} author={agents.find((a) => a.id === e.agentId)} />
+                    <ArtifactRow
+                      key={e.path}
+                      path={e.path}
+                      meta={meta.get(e.path)}
+                      author={agents.find((a) => a.id === e.agentId)}
+                      stage={stageOf(groupId, e.agentId)}
+                    />
                   ))}
                 </div>
               )}
@@ -167,6 +267,68 @@ function DeliveryManifest({ info }: { info: CloseoutInfo }): React.JSX.Element {
           )}
         </>
       )}
+
+      {acceptance && acceptance.unresolved.length > 0 ? (
+        <div data-qa-unresolved="" className="mt-1.5 border-t border-primary/10 pt-1.5">
+          <div className="px-0.5 text-[11px] text-muted-foreground">验收未决 · {acceptance.unresolved.length} 项</div>
+          <ul className="mt-0.5 space-y-0.5">
+            {acceptance.unresolved.map((u, i) => (
+              <li key={i} className="flex items-start gap-1.5 px-0.5 text-[11.5px] leading-5">
+                <span className="mt-1.5 size-1 shrink-0 rounded-full bg-amber-500/70" aria-hidden />
+                <span className="min-w-0">{u}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+
+      {groupId === 'development' && anchor ? (
+        <div
+          data-signoff={anchor}
+          className="mt-1.5 flex flex-wrap items-center gap-1.5 border-t border-primary/10 pt-1.5"
+        >
+          <span className="inline-flex items-center gap-1 text-[11px] text-muted-foreground">
+            <PackageCheck className="size-3.5 text-primary/70" />
+            核心交付签收
+          </span>
+          <span className="min-w-0 max-w-[42%] truncate text-[11.5px] font-medium" title={anchor}>
+            {baseName(anchor)}
+          </span>
+          {typeof latestVersion === 'number' ? (
+            <span
+              data-signoff-version={latestVersion}
+              className="shrink-0 rounded-full bg-muted px-1.5 text-[10px] font-medium tabular-nums leading-[1.7] text-muted-foreground"
+            >
+              v{latestVersion}
+            </span>
+          ) : null}
+          <span className="shrink-0 text-[10.5px] text-muted-foreground">
+            已回应 {closure.pairs.length} · 未闭环 {closure.openOpinions.length}
+          </span>
+          <button
+            type="button"
+            data-signoff-btn=""
+            disabled={latestVersion === undefined}
+            title={
+              latestVersion === undefined
+                ? '等待版本信息'
+                : signed
+                  ? '取消签收（本地）'
+                  : '签收并回填「已签收 <名> vN」草稿'
+            }
+            onClick={toggleSignoff}
+            className={cn(
+              'ml-auto shrink-0 rounded-full border px-2 py-0.5 text-[11px] transition-colors',
+              signed
+                ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-600'
+                : 'text-muted-foreground hover:border-primary/40 hover:text-primary',
+              latestVersion === undefined && 'cursor-not-allowed opacity-50',
+            )}
+          >
+            {signed ? `已签收 v${latestVersion}` : '签收'}
+          </button>
+        </div>
+      ) : null}
 
       <div className="mt-2 flex flex-wrap items-center gap-1.5 border-t border-primary/10 pt-2">
         <span className="inline-flex items-center gap-1 text-[11px] text-muted-foreground">
@@ -234,7 +396,7 @@ export function CloseoutCard(): React.JSX.Element | null {
     // 无交付件：不渲染收尾卡（每轮固定收尾文案已移除）
     if (entries.length === 0) return null
     if (waves === 0 && typeof tail.turnIndex === 'number' && tail.turnIndex >= 0) waves = tail.turnIndex + 1
-    return { tailId: id, waves, entries, createdAt: tail.createdAt }
+    return { tailId: id, ...(tail.runId ? { runId: tail.runId } : {}), waves, entries, createdAt: tail.createdAt }
   }, [tailKey])
 
   if (active || !info) return null

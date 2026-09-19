@@ -41,6 +41,25 @@ export interface ZiweiPalaceRef {
   ganZhi: string
 }
 
+/** 流年层（M63-A：horoscopeYear 指定时输出） */
+export interface ZiweiHoroscope {
+  year: number
+  /** 流年干支（如「丙午」） */
+  ganZhi: string
+  /** 流年命宫落在的本命宫名（如「财帛」） */
+  soulPalaceName: string
+  /** 流年命宫宫干支（如「壬午」） */
+  soulPalaceGanZhi: string
+  /** 流年四化（禄 / 权 / 科 / 忌 → 星名；按序四项） */
+  mutagenStars: Array<{ mutagen: string; star: string }>
+}
+
+/** computeZiwei 可选项（M63-A） */
+export interface ZiweiOptions {
+  /** 流年年份（如 '2026'）——输出流年层（流年命宫 / 流年四化） */
+  horoscopeYear?: string
+}
+
 export interface ZiweiResult {
   input: { birth: string; calendar: string; gender: string; corrected: string; correction: number | null }
   solar: string
@@ -61,6 +80,8 @@ export interface ZiweiResult {
   laiYinPalace: ZiweiPalaceRef | null
   /** 生年四化（禄 / 权 / 科 / 忌 → 星名列表；按禄权科忌排序，仅含有星项） */
   mutagenStars: Array<{ mutagen: string; stars: string[] }>
+  /** 流年层（horoscopeYear 指定时输出；缺省 null） */
+  horoscope: ZiweiHoroscope | null
   palaces: ZiweiPalace[]
   warnings: string[]
 }
@@ -96,7 +117,7 @@ function pickStars(stars: Array<{ name: string; brightness?: string; mutagen?: s
 const MUTAGEN_ORDER = ['禄', '权', '科', '忌']
 
 /** 计算紫微斗数盘（golden 测试入口） */
-export function computeZiwei(input: BirthInput): ZiweiResult {
+export function computeZiwei(input: BirthInput, opts?: ZiweiOptions): ZiweiResult {
   const { lunar, corrected, warnings, correction } = toLunar(input)
   const t = parseDateTime(corrected, '校正后时间')
   const ti = timeToIndex(t.hh, t.mm)
@@ -149,6 +170,26 @@ export function computeZiwei(input: BirthInput): ZiweiResult {
     stars: collected[m]!,
   }))
 
+  // M63-A：流年层（iztro horoscope；流年命宫按 yearly.index 落到本命宫，流年四化按禄权科忌序）
+  let horoscope: ZiweiHoroscope | null = null
+  if (opts?.horoscopeYear) {
+    const yearNum = Number(opts.horoscopeYear)
+    if (!Number.isInteger(yearNum) || yearNum < 1900 || yearNum > 2200) {
+      throw new PanError(`流年年份非法：「${opts.horoscopeYear}」`, 'horoscopeYear 用四位公历年份，如 2026')
+    }
+    const h = chart.horoscope(`${yearNum}-7-1`)
+    const soul = chart.palaces[h.yearly.index]
+    horoscope = {
+      year: yearNum,
+      ganZhi: `${h.yearly.heavenlyStem}${h.yearly.earthlyBranch}`,
+      soulPalaceName: soul ? `${soul.name}` : '',
+      soulPalaceGanZhi: soul ? `${soul.heavenlyStem}${soul.earthlyBranch}` : '',
+      mutagenStars: MUTAGEN_ORDER.map((m, i) => ({ mutagen: m, star: `${h.yearly.mutagen[i] ?? ''}` })).filter(
+        (x) => x.star,
+      ),
+    }
+  }
+
   return {
     input: {
       birth: input.birth,
@@ -171,6 +212,7 @@ export function computeZiwei(input: BirthInput): ZiweiResult {
     bodyPalace: bodyPalace ? ref(bodyPalace.name, `${bodyPalace.heavenlyStem}${bodyPalace.earthlyBranch}`) : ref('', ''),
     laiYinPalace: laiYinRaw ? ref(laiYinRaw.name, `${laiYinRaw.heavenlyStem}${laiYinRaw.earthlyBranch}`) : null,
     mutagenStars,
+    horoscope,
     palaces,
     warnings,
   }

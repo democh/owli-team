@@ -12,6 +12,7 @@
  * - 依赖由调用方显式注入（引擎 / 路由），无工具运行期依赖。
  */
 import type { ChatMessage, NotifyType, Session } from '@multi-agent/shared'
+import { baseAgentId } from '@multi-agent/shared'
 import type { PromptLibrary } from '../store/prompts.js'
 import type { SessionStore } from '../store/sessions.js'
 
@@ -31,7 +32,7 @@ export interface InviteMembersCoreDeps {
 
 export interface InviteMembersCoreInput {
   sessionId: string
-  /** 角色 id 列表（同批新成员按编制链排序追加） */
+  /** 角色 id / 成员键列表（M77：分身 = `agentId~soulId`；同批新成员按编制链排序追加） */
   agentIds?: string[]
   /** 场景 id：整链召集该场景默认编制（chain；脏链条目静默跳过） */
   sceneId?: string
@@ -72,7 +73,8 @@ export function inviteMembersCore(deps: InviteMembersCoreDeps, input: InviteMemb
     ids.push(...scene.chain.filter((id) => byId.has(id)))
   }
   const unique = [...new Set(ids)]
-  const unknown = unique.filter((id) => !byId.has(id))
+  // M77：未知校验按基础角色；分身键须角色存在且带该灵魂
+  const unknown = unique.filter((id) => !byId.has(baseAgentId(id)))
   if (unknown.length > 0) return { ok: false, error: `角色不存在：${unknown.join('、')}`, unknown }
   const already = unique.filter((id) => session.participantIds.includes(id))
   const added = unique.filter((id) => !session.participantIds.includes(id))
@@ -84,9 +86,12 @@ export function inviteMembersCore(deps: InviteMembersCoreDeps, input: InviteMemb
       unknown: [],
     }
   }
-  // 追加顺序确定性：同批新成员按编制链（list() 顺序）排序，既有成员顺序不变
+  // 追加顺序确定性：同批新成员按编制链（list() 顺序）排序（分身与经典实例同链位，稳定保持原序），既有成员顺序不变
   const order = new Map(deps.prompts.list().map((a, i) => [a.id, i]))
-  added.sort((a, b) => (order.get(a) ?? Number.MAX_SAFE_INTEGER) - (order.get(b) ?? Number.MAX_SAFE_INTEGER))
+  added.sort(
+    (a, b) =>
+      (order.get(baseAgentId(a)) ?? Number.MAX_SAFE_INTEGER) - (order.get(baseAgentId(b)) ?? Number.MAX_SAFE_INTEGER),
+  )
   const soulErr = input.validateSouls?.(added)
   if (soulErr) return { ok: false, error: soulErr, unknown: [] }
 
@@ -94,13 +99,23 @@ export function inviteMembersCore(deps: InviteMembersCoreDeps, input: InviteMemb
   if (input.souls && Object.keys(input.souls).length > 0) {
     deps.sessions.setMemberSouls(session.id, { ...(session.memberSouls ?? {}), ...input.souls })
   }
-  const inviter = input.actorName ?? byId.get(session.participantIds[0])?.name ?? '成员'
-  const names = added.map((id) => byId.get(id)?.name ?? id).join('、')
+  const inviter = input.actorName ?? byId.get(session.participantIds[0] ?? '')?.name ?? '成员'
+  // M77：事件条展示成员标签（分身 = 名字·灵魂名；经典实例保持角色名——与成员卡命名口径一致）
+  const labelOf = (key: string): string => {
+    const agent = byId.get(baseAgentId(key))
+    if (!agent) return key
+    if (key.includes('~')) {
+      const soul = deps.prompts.soul(key)
+      if (soul) return `${agent.name}·${soul.meta.name}`
+    }
+    return agent.name
+  }
+  const names = added.map((id) => labelOf(id)).join('、')
   const reason = input.reason?.trim()
   const message = deps.sessions.appendMessage({
     sessionId: session.id,
     role: 'system',
-    agentId: added[0],
+    agentId: baseAgentId(added[0] ?? ''),
     content: `${inviter} ${input.verb ?? '邀请了'} ${names} 加入协作${reason ? `（${reason}）` : ''}`,
     mentions: [],
     status: 'complete',

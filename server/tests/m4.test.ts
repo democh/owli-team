@@ -387,3 +387,92 @@ describe('M4：继续生成（resumeMessage）', () => {
     await waitRunFinished(env.engine, runId)
   })
 })
+
+describe('输出截断治理（finish_reason=length）', () => {
+  function systemMessages(env: ReturnType<typeof makeEnv>, sessionId: string) {
+    return env.sessions.messages(sessionId).filter((m) => m.role === 'system')
+  }
+
+  it('末轮截断（truncated 事件）→ 落系统事件条提示，正文保留且消息状态不变', async () => {
+    const env = makeEnv({})
+    const session = env.sessions.create(['pm'])
+    probeScript(env, () => [
+      { type: 'text', text: '前半句被截断的正文' },
+      { type: 'truncated' },
+      usageChunk(20, 900),
+      { type: 'done' },
+    ])
+    const m1 = appendUserMessage(env, session.id, '输出一篇长文')
+    const { runId } = env.engine.launch(session.id, m1.id)
+    await waitRunFinished(env.engine, runId)
+
+    const agents = agentMessages(env, session.id)
+    expect(agents).toHaveLength(1)
+    expect(agents[0].content).toContain('前半句被截断的正文')
+    expect(agents[0].status).toBe('complete')
+    const sys = systemMessages(env, session.id)
+    expect(sys).toHaveLength(1)
+    expect(sys[0].content).toContain('单次输出上限被截断')
+    expect(env.published.some((n) => n.type === 'notify:plan-updated')).toBe(true)
+  })
+
+  it('截断后模型自行发起工具轮补齐（末轮无截断）→ 不提示', async () => {
+    const env = makeEnv({})
+    const session = env.sessions.create(['pm'])
+    probeScript(env, (_req, round) => {
+      if (round === 0) {
+        return [
+          { type: 'text', text: '先查目录。' },
+          { type: 'truncated' },
+          { type: 'tool_calls', calls: [{ id: 'call_1', name: 'list_dir', arguments: '{"path":"."}' }] },
+          usageChunk(20, 300),
+          { type: 'done' },
+        ]
+      }
+      return textReply('补齐完成。\n@用户')
+    })
+    const m1 = appendUserMessage(env, session.id, '先查再写')
+    const { runId } = env.engine.launch(session.id, m1.id)
+    await waitRunFinished(env.engine, runId)
+
+    const agents = agentMessages(env, session.id)
+    expect(agents[0].content).toContain('补齐完成')
+    expect(systemMessages(env, session.id)).toHaveLength(0)
+  })
+})
+
+describe('M4：静默中止兜底（SDK 吞并 abort——exit without throwing）', () => {
+  it('已产出内容后被停止（迭代器静默结束）→ 消息标记 stopped 而非 complete', async () => {
+    const env = makeEnv({})
+    const session = env.sessions.create(['pm'])
+    const provider = env.provider as unknown as {
+      chatStream: (req: ChatRequest, signal: AbortSignal) => AsyncIterable<LlmChunk>
+    }
+    provider.chatStream = async function* (req: ChatRequest, signal: AbortSignal) {
+      const route = routePassThrough(req)
+      if (route) {
+        for (const chunk of route) yield chunk
+        return
+      }
+      yield { type: 'text', text: '被截断的半截正文' }
+      // 模拟真实 OpenAI SDK 的 abort 语义：信号中止后静默结束迭代器（不抛 AbortError）
+      await new Promise<void>((resolve) => signal.addEventListener('abort', () => resolve(), { once: true }))
+    }
+    const m1 = appendUserMessage(env, session.id, '一段会被中断的任务')
+    const { runId } = env.engine.launch(session.id, m1.id)
+    // 等正文落入消息（保证中断发生在已产出内容之后，复现「半截正文 + 静默结束」）
+    const start = Date.now()
+    while (!(agentMessages(env, session.id)[0]?.content ?? '').includes('被截断的半截正文')) {
+      if (Date.now() - start > 2_000) throw new Error('等待首个增量超时')
+      await new Promise((r) => setTimeout(r, 5))
+    }
+    env.engine.stop(runId)
+    await waitRunFinished(env.engine, runId)
+
+    const agents = agentMessages(env, session.id)
+    expect(agents).toHaveLength(1)
+    expect(agents[0].content).toContain('被截断的半截正文')
+    // 兜底前：静默结束被误判 complete（无「已停止」标记、不可续写）；兜底后必须按中断收尾
+    expect(agents[0].status).toBe('stopped')
+  })
+})

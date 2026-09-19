@@ -12,6 +12,7 @@ import { GridComponent, LegendComponent, TitleComponent, TooltipComponent } from
 import { CanvasRenderer } from 'echarts/renderers'
 import type { EChartsCoreOption } from 'echarts/core'
 import type { ChartSpec } from './chart-spec'
+import { FONT_SANS } from './fonts'
 
 const PALETTE = ['#2563eb', '#0ea5e9', '#8b5cf6', '#10b981', '#f59e0b', '#f43f5e', '#14b8a6', '#f97316']
 
@@ -110,7 +111,7 @@ let themeRegistered = false
 function ensureTheme(): void {
   if (themeRegistered) return
   echarts.registerTheme('md-light', {
-    textStyle: { fontFamily: 'ui-sans-serif, system-ui, -apple-system, "PingFang SC", sans-serif' },
+    textStyle: { fontFamily: FONT_SANS },
   })
   themeRegistered = true
 }

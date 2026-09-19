@@ -131,6 +131,8 @@ function endRunLocally(sessionId: string, reason?: RunEndReason): void {
   if (sessions.currentId === sessionId) void sessions.refreshMessages()
   if (reason === 'stopped') toast('已停止本次协作')
   else if (reason === 'turn-limit') toast('达到回合上限，运行已收束，可继续补充指令')
+  // M57 P3：配额超限收束（系统条已同时落库；此处仅轻提示）
+  else if (reason === 'quota') toast('用量配额已超限，本次运行已收束（详情见系统消息）')
 }
 
 /** 运行事件归约（SSE 流与测试共用入口） */
@@ -175,6 +177,8 @@ export function handleRunEvent(event: RunEvent): void {
           runId: run.runId,
           role: 'agent',
           agentId: event.agentId,
+          // M77：说话成员键（分身实例；经典实例 = agentId）
+          memberKey: event.memberKey ?? event.agentId,
           // M52-D：运行中即回填回合号（计分板 / 回合轴 / 侧栏发言流随消息推进，不再等 run:end 回填）
           turnIndex: event.turnIndex,
           // M24：本回合范式（规划 / 评审徽章）；execute 缺省不落
@@ -186,7 +190,7 @@ export function handleRunEvent(event: RunEvent): void {
           toolCalls: [],
         })
       }
-      agents.setStatus(event.agentId, 'speaking')
+      agents.setStatus(event.memberKey ?? event.agentId, 'speaking')
       break
     }
 
@@ -255,7 +259,7 @@ export function handleRunEvent(event: RunEvent): void {
       break
     }
 
-    // M8：上下文压缩（用量条/上下文抽屉重拉快照）
+    // M8：上下文压缩（上下文电池/上下文抽屉重拉快照）
     case 'context:compressed': {
       useRunStore.setState((s) => ({ compressionCount: s.compressionCount + 1 }))
       if (sameSession) {
@@ -274,7 +278,7 @@ export function handleRunEvent(event: RunEvent): void {
       const delivered = message?.toolCalls?.some(
         (c) => c.status === 'ok' && (c.name === 'write_file' || c.name === 'edit_file'),
       )
-      agents.setStatus(event.agentId, delivered ? 'done' : 'idle')
+      agents.setStatus(event.memberKey ?? event.agentId, delivered ? 'done' : 'idle')
       break
     }
 

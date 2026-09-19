@@ -6,6 +6,7 @@
  */
 import { beforeEach, describe, expect, it } from 'vitest'
 import type { ChatMessage } from '@multi-agent/shared'
+import { parseContainers } from '../src/components/scene/derive'
 import { messagesOf, useSessionStore } from '../src/stores/session-store'
 
 /** 全角竖线运行时拼接：源码不出现字面协议标记序列 */
@@ -94,5 +95,19 @@ describe('M55 session-store 流式净化', () => {
     store.appendDelta('m5', `${BLOCK_HEAD}${LOG_ZIWEI}`)
     store.appendDelta('m5', '第二版回复')
     expect(messagesOf(useSessionStore.getState())[0].content).toBe('第二版回复')
+  })
+
+  it('子轮边界漏换行的粘连容器头：展示净化后拆行，场景派生可解析出容器', () => {
+    const store = useSessionStore.getState()
+    // 真实样本：工具 preamble 与 `::: pan` 卡头之间无换行（子轮边界）
+    const glued = [
+      "I'll cast the chart.::: pan ziwei 紫微 金四局 ｜ 命宫 壬寅",
+      '- 命宫 壬寅 | 武曲(得)忌 天相(庙)',
+      ':::',
+    ].join('\n')
+    store.upsertMessage(agentMsg('m6', glued, 'complete'))
+    const content = messagesOf(useSessionStore.getState())[0].content
+    expect(content.startsWith("I'll cast the chart.\n::: pan")).toBe(true)
+    expect(parseContainers(content).map((b) => b.name)).toEqual(['pan'])
   })
 })

@@ -1,0 +1,21 @@
+id: creator
+name: 自媒体工作室
+description: 个人 IP 经营闭环：账号定位 → 内容生产 → 发布节奏 → 数据复盘 → 商业化；与市场增长（企业营销）区隔——创作者视角，账号是一份资产
+icon: megaphone
+theme: ["#86198f", "#e879f9"]
+objective: 把个人表达做成可持续经营的账号资产：定位不漂移、内容有节奏、变现走得稳
+chain: [account-strategist, script-writer, growth-editor, monetizer]
+order: 124
+guide: 说说你的账号或想做的内容方向
+agenda:
+  - label: 账号定位
+    prompt: 帮我做账号定位：目标人群 / 内容方向 / 差异化与一句话 BIOS（含对标账号拆解）：
+  - label: 选题与脚本
+    prompt: 围绕这个主题出选题与脚本（短视频口播 / 图文结构，含开头 3 秒设计与结尾引导）：
+  - label: 发布节奏
+    prompt: 帮我规划发布节奏与互动运营：更新频率 / 时间窗 / 评论区策略 / 数据复盘口径：
+  - label: 变现设计
+    prompt: 帮我设计商业化路径：广告 / 带货 / 知识付费 / 私域选型与定价（含红线自查）：
+stage:
+  layout: dock
+  panel: board

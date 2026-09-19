@@ -43,6 +43,8 @@ export interface SshExecInput {
   actor: string
   sessionId?: string
   runId?: string
+  /** M57 P2：触发者用户 id（审计归因；兼容模式缺省） */
+  actorUserId?: string
 }
 
 export class SshConnectionManager {
@@ -218,6 +220,7 @@ export class SshConnectionManager {
       this.audit.record({
         actor: input.actor,
         action: 'ssh.exec',
+        userId: input.actorUserId,
         resourceType: 'connection',
         resourceId: connection.id,
         sessionId: input.sessionId,
@@ -235,6 +238,7 @@ export class SshConnectionManager {
       this.audit.record({
         actor: input.actor,
         action: 'ssh.exec',
+        userId: input.actorUserId,
         resourceType: 'connection',
         resourceId: input.connectionId,
         sessionId: input.sessionId,

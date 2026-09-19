@@ -18,7 +18,7 @@ export function McpToolList({
   if (tools.length === 0) {
     return (
       <div className="rounded-md border border-dashed px-3 py-4 text-center text-[11.5px] text-muted-foreground">
-        暂无工具快照：连接成功后自动同步（tools/list + tools/list_changed 通知）。
+        暂无工具快照：连接成功后自动同步。
       </div>
     )
   }

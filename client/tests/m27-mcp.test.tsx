@@ -18,6 +18,7 @@ import { McpConsole } from '../src/components/mcp/McpConsole'
 import { McpServerEditor } from '../src/components/mcp/McpServerEditor'
 import { TooltipProvider } from '../src/components/ui/tooltip'
 import { useAgentStore } from '../src/stores/agent-store'
+import { useAuthStore } from '../src/stores/auth-store'
 import { useMcpStore } from '../src/stores/mcp-store'
 import { useSessionStore } from '../src/stores/session-store'
 import { useUiStore } from '../src/stores/ui-store'
@@ -351,6 +352,8 @@ describe('M27：McpServerEditor', () => {
 
 describe('M27：ActivityRail', () => {
   it('「MCP 管理」入口：切换 appView 并持久化 ma:appView', async () => {
+    // M57：MCP 入口仅 admin 可见——本用例验证 admin 视角
+    useAuthStore.setState({ isAdmin: true })
     render(
       <TooltipProvider>
         <ActivityRail />

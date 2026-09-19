@@ -1,12 +1,15 @@
 /**
- * 上下文档（M8/M9 → M25）：
- * - 顶部用量条：当前 token / 预算（超 70% 变色）+ 本 Run 费用 + 运行轨迹入口；
- * - 点击打开「上下文抽屉」：L0–L5 分层 token、语义召回明细（L1.5）、滚动摘要、记忆摘要、降级提示。
+ * 上下文电池格条（M8/M9 → M25；原顶部用量条收编至 Composer 底栏）：
+ * - 电池格条（参考图样式）：5 段横条纵向堆叠、自下而上逐格点亮（无壳体 / 无触点）；
+ *   点亮段颜色分级（绿 → 琥珀 → 玫瑰），超 70% 百分比变色、超 90% 整组呼吸提示；
+ *   title 给出精确 token 数（保留「查看上下文分层与摘要」语义，⌘K / /context 入口不变）；
+ * - 同排保留「本 Run 费用」与「轨迹」入口；点击电池格条打开「上下文抽屉」：
+ *   L0–L5 分层 token、语义召回明细（L1.5）、滚动摘要、记忆摘要、降级提示。
  * 数据源：GET /api/sessions/:id/context（M25 含 recalled 召回明细）、GET /api/runs/:id/usage；
  * 刷新时机：会话切换 / 运行结束 / 压缩事件（run-store.compressionCount）/ 手动刷新。
  */
 import * as React from 'react'
-import { Activity, Layers, Loader2, RefreshCw } from 'lucide-react'
+import { Activity, Loader2, RefreshCw } from 'lucide-react'
 import type { ContextSnapshot } from '@multi-agent/shared'
 import { apiGet } from '../../lib/api'
 import { cn } from '../../lib/utils'
@@ -36,10 +39,27 @@ function fmtTokens(n: number): string {
   return String(n)
 }
 
-function ratioClass(ratio: number): string {
+/** 电池格条段数（参考图：5 段横条堆叠） */
+const SEGMENTS = 5
+
+/** 点亮段数：按水位向上取整，非零水位至少点亮 1 段（对应参考图「底部亮 1 格」的低水位态） */
+function litSegments(ratio: number): number {
+  if (ratio <= 0) return 0
+  return Math.min(SEGMENTS, Math.max(1, Math.ceil(ratio * SEGMENTS)))
+}
+
+/** 点亮段颜色（水位 → 色阶）：常态绿 / 偏高琥珀 / 危险玫瑰（≥ 90% 整组呼吸提示） */
+function segmentOn(ratio: number): string {
   if (ratio >= 0.9) return 'bg-rose-500'
   if (ratio >= 0.7) return 'bg-amber-500'
   return 'bg-emerald-500'
+}
+
+/** 电池水位文字（百分比）：与点亮段同色阶；正常态低调融入底栏 */
+function levelText(ratio: number): string {
+  if (ratio >= 0.9) return 'text-rose-600'
+  if (ratio >= 0.7) return 'text-amber-600'
+  return 'text-foreground/70'
 }
 
 export function ContextBar(): React.JSX.Element | null {
@@ -92,63 +112,71 @@ export function ContextBar(): React.JSX.Element | null {
   if (!currentId) return null
   const ratio = Math.min(1, Math.max(0, snapshot?.usageRatio ?? 0))
   const pct = Math.round(ratio * 100)
+  const lit = litSegments(ratio)
 
   return (
     <>
-      <button
-        type="button"
-        title="查看上下文分层与摘要"
-        onClick={() => {
-          setContextOpen(true)
-          void loadContext()
-        }}
-        className="flex h-7 w-full shrink-0 items-center gap-2 border-b bg-muted/40 px-3 text-left text-[10.5px] text-muted-foreground transition-colors hover:bg-muted/70"
-      >
-        <Layers className="size-3 shrink-0" />
-        <span className="shrink-0">上下文</span>
-        <span className="relative h-1.5 w-28 shrink-0 overflow-hidden rounded-full bg-border">
+      {/* 电池座（Composer 底栏右侧；本 Run 费用 / 轨迹入口同排常驻） */}
+      <span className="inline-flex shrink-0 items-center gap-1.5">
+        <button
+          type="button"
+          title={
+            snapshot
+              ? `上下文 ${pct}%（${fmtTokens(snapshot.estimatedTokens)} / ${fmtTokens(
+                  snapshot.budgetTokens,
+                )} tokens）· 查看上下文分层与摘要`
+              : '查看上下文分层与摘要'
+          }
+          onClick={() => {
+            setContextOpen(true)
+            void loadContext()
+          }}
+          className="group inline-flex shrink-0 items-center gap-2 rounded-full px-1.5 py-0.5 text-left transition-colors hover:bg-accent/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/25"
+        >
+          {/* 电池格条（参考图样式）：5 段横条堆叠、自下而上逐格点亮（flex-col-reverse），无壳体无触点 */}
           <span
-            className={cn('absolute inset-y-0 left-0 rounded-full transition-all', ratioClass(ratio))}
-            style={{ width: `${pct}%` }}
-          />
-        </span>
-        <span className={cn('shrink-0 font-medium', ratio >= 0.7 ? 'text-amber-600' : 'text-foreground/80')}>
-          {snapshot ? `${pct}%` : '—'}
-        </span>
-        {snapshot && (
-          <span className="hidden shrink-0 sm:inline">
-            {fmtTokens(snapshot.estimatedTokens)} / {fmtTokens(snapshot.budgetTokens)} tokens
+            className={cn('flex shrink-0 flex-col-reverse gap-[1.5px]', ratio >= 0.9 && 'animate-pulse')}
+            aria-hidden
+          >
+            {Array.from({ length: SEGMENTS }, (_, i) => (
+              <span
+                key={i}
+                className={cn(
+                  'h-[2px] w-5 rounded-[1px] transition-colors duration-300',
+                  i < lit ? segmentOn(ratio) : 'bg-muted-foreground/25 group-hover:bg-muted-foreground/35',
+                )}
+              />
+            ))}
           </span>
-        )}
-        {snapshot?.degraded && <Badge variant="warning">已降级</Badge>}
+          <span className={cn('shrink-0 text-[10.5px] font-medium tabular-nums', levelText(ratio))}>
+            {snapshot ? `${pct}%` : '—'}
+          </span>
+          {snapshot && (
+            <span className="hidden shrink-0 text-[10.5px] tabular-nums text-muted-foreground/80 sm:inline">
+              {fmtTokens(snapshot.estimatedTokens)} / {fmtTokens(snapshot.budgetTokens)}
+            </span>
+          )}
+          {snapshot?.degraded && (
+            <Badge variant="warning" className="px-1.5 py-0 text-[10px]">
+              已降级
+            </Badge>
+          )}
+        </button>
         {usage && usage.costUsd > 0 && (
-          <span className="ml-auto shrink-0">本 Run ${usage.costUsd.toFixed(4)}</span>
+          <span className="shrink-0 tabular-nums">本 Run ${usage.costUsd.toFixed(4)}</span>
         )}
         {runId && (
-          <span
-            role="button"
-            tabIndex={0}
+          <button
+            type="button"
             title="查看本次运行轨迹（回合/工具/压缩/调度）"
-            className={cn(
-              'shrink-0 items-center gap-0.5 rounded px-1.5 py-0.5 transition-colors hover:bg-accent hover:text-foreground',
-              usage && usage.costUsd > 0 ? 'inline-flex' : 'ml-auto inline-flex',
-            )}
-            onClick={(e) => {
-              e.stopPropagation()
-              openTrace(runId)
-            }}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' || e.key === ' ') {
-                e.stopPropagation()
-                openTrace(runId)
-              }
-            }}
+            className="inline-flex shrink-0 items-center gap-0.5 rounded px-1.5 py-0.5 transition-colors hover:bg-accent hover:text-foreground"
+            onClick={() => openTrace(runId)}
           >
             <Activity className="size-3" />
             轨迹
-          </span>
+          </button>
         )}
-      </button>
+      </span>
 
       <Dialog open={contextOpen} onOpenChange={setContextOpen}>
         <DialogContent className="max-w-lg">

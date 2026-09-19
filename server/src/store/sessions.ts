@@ -7,7 +7,7 @@
  * - 关键节点（创建会话 / Run 结束 / 列表查询）立即 flush。
  */
 import { randomUUID } from 'node:crypto'
-import type { ChatMessage, MessageAttachment, MessageStatus, Session, SessionSummary, ToolCallRecord } from '@multi-agent/shared'
+import type { ChatMessage, MessageAttachment, MessageStatus, Session, SessionAccessRole, SessionSummary, ToolCallRecord } from '@multi-agent/shared'
 import { getLogger } from '../logger.js'
 import type { AppDb } from './db.js'
 
@@ -35,6 +35,8 @@ interface SessionRow {
   plan_first?: number
   /** M46-2：串行执行开关（0/1；1 = 波次逐位出场） */
   serial?: number
+  /** M57：会话属主（users.id；NULL = 单用户兼容模式历史数据） */
+  owner_id?: string | null
   workspace_dir: string | null
   created_at: string
   updated_at: string
@@ -49,6 +51,8 @@ interface MessageRow {
   seq: number
   role: string
   agent_id: string | null
+  /** M77：说话成员键（分身实例；存量消息为 NULL） */
+  member_key: string | null
   content: string
   mentions: string
   status: string
@@ -61,6 +65,8 @@ interface MessageRow {
   attachments: string | null
   /** M35：定时任务触发注入的消息挂任务 id（NULL = 普通消息） */
   schedule_id: string | null
+  /** M57：人类消息作者（users.id；agent / system 消息为空） */
+  user_id?: string | null
   created_at: string
 }
 
@@ -68,9 +74,17 @@ interface SummaryRow {
   message_count: number
   last_role: string | null
   last_agent_id: string | null
+  /** M77：最后一条消息的说话成员键（列表预览署名；历史 / 存量行为 NULL） */
+  last_member_key: string | null
   last_content: string | null
   last_created_at: string | null
+  /** M57 P3：最后一条人类消息的作者（列表预览署名；历史 / 兼容模式为 NULL） */
+  last_user_id: string | null
+  last_user_name: string | null
 }
+
+/** 列表查询行（list / listForUser 共用；access_role 仅 listForUser 携带） */
+type SummaryRowFull = SessionRow & SummaryRow & { access_role?: string | null }
 
 interface Entry {
   session: Session
@@ -96,6 +110,7 @@ function rowToSession(row: SessionRow): Session {
     id: row.id,
     title: row.title,
     participantIds: parseJson<string[]>(row.participant_ids, []),
+    ownerId: row.owner_id ?? undefined,
     memberSouls: Object.keys(memberSouls).length > 0 ? memberSouls : undefined,
     planFirst: row.plan_first ? true : undefined,
     serial: row.serial ? true : undefined,
@@ -115,6 +130,7 @@ function rowToMessage(row: MessageRow): ChatMessage {
     seq: row.seq,
     role: row.role as ChatMessage['role'],
     agentId: row.agent_id ?? undefined,
+    memberKey: row.member_key ?? undefined,
     content: row.content,
     mentions: parseJson<string[]>(row.mentions, []),
     status: row.status as MessageStatus,
@@ -124,6 +140,7 @@ function rowToMessage(row: MessageRow): ChatMessage {
     mode: (row.mode as ChatMessage['mode']) ?? undefined,
     attachments: parseJson<MessageAttachment[] | undefined>(row.attachments, undefined),
     scheduleId: row.schedule_id ?? undefined,
+    userId: row.user_id ?? undefined,
     createdAt: row.created_at,
   }
 }
@@ -164,37 +181,92 @@ export class SessionStore {
     return entry
   }
 
-  list(): SessionSummary[] {
+  /**
+   * 会话列表（M57：ownerId 必传——用户 id = 仅本人；null = 系统全量（单用户兼容 / 内部引用统计用））。
+   * 参数必传是刻意的：编译期强制每个调用点声明隔离意图，防漏加归属过滤。
+   * M57 P2：本方法保持「仅本人」语义（管理 / 统计用）；多用户列表走 listForUser（本人 + 共享）。
+   */
+  list(ownerId: string | null): SessionSummary[] {
     this.flushAll()
-    const rows = this.db.all<
-      SessionRow &
-        SummaryRow & {
-          message_count: number
-        }
-    >(
+    const ownerFilter = ownerId === null ? '' : 'AND s.owner_id = ?'
+    const ownerParams = ownerId === null ? [] : [ownerId]
+    const rows = this.db.all<SummaryRowFull>(
       `SELECT s.*,
               (SELECT COUNT(*) FROM messages m WHERE m.session_id = s.id) AS message_count,
-              lm.role AS last_role, lm.agent_id AS last_agent_id,
-              lm.content AS last_content, lm.created_at AS last_created_at
+              lm.role AS last_role, lm.agent_id AS last_agent_id, lm.member_key AS last_member_key,
+              lm.content AS last_content, lm.created_at AS last_created_at,
+              lm.user_id AS last_user_id,
+              (SELECT u.display_name FROM users u WHERE u.id = lm.user_id) AS last_user_name
        FROM sessions s
        LEFT JOIN messages lm ON lm.session_id = s.id AND lm.seq = (
          SELECT MAX(m2.seq) FROM messages m2 WHERE m2.session_id = s.id
        )
-       WHERE s.deleted_at IS NULL
+       WHERE s.deleted_at IS NULL ${ownerFilter}
        ORDER BY s.updated_at DESC`,
+      ...ownerParams,
     )
-    return rows.map((row) => ({
+    return rows.map((row) => this.summarize(row))
+  }
+
+  /**
+   * M57 P2：用户可见会话列表（本人 + 共享给我），逐行标注 role（owner / editor / viewer）。
+   * 单用户兼容模式（无账号体系）走 list(null)。
+   */
+  listForUser(userId: string): SessionSummary[] {
+    this.flushAll()
+    const rows = this.db.all<SummaryRowFull>(
+      `SELECT s.*,
+              CASE WHEN s.owner_id = ? THEN 'owner' ELSE m.role END AS access_role,
+              (SELECT COUNT(*) FROM messages m2 WHERE m2.session_id = s.id) AS message_count,
+              lm.role AS last_role, lm.agent_id AS last_agent_id, lm.member_key AS last_member_key,
+              lm.content AS last_content, lm.created_at AS last_created_at,
+              lm.user_id AS last_user_id,
+              (SELECT u.display_name FROM users u WHERE u.id = lm.user_id) AS last_user_name
+       FROM sessions s
+       LEFT JOIN session_members m ON m.session_id = s.id AND m.user_id = ?
+       LEFT JOIN messages lm ON lm.session_id = s.id AND lm.seq = (
+         SELECT MAX(m3.seq) FROM messages m3 WHERE m3.session_id = s.id
+       )
+       WHERE s.deleted_at IS NULL AND (s.owner_id = ? OR m.user_id IS NOT NULL)
+       ORDER BY s.updated_at DESC`,
+      userId,
+      userId,
+      userId,
+    )
+    return rows.map((row) => this.summarize(row))
+  }
+
+  /**
+   * M57 P3：用户会话数（不含已删除；配额校验用——直查库避免 list 的消息聚合开销）。
+   */
+  countForUser(userId: string): number {
+    this.flushAll()
+    const row = this.db.get<{ n: number }>(
+      'SELECT COUNT(*) AS n FROM sessions WHERE owner_id = ? AND deleted_at IS NULL',
+      userId,
+    )
+    return Number(row?.n ?? 0)
+  }
+
+  /** 列表行投影（list / listForUser 共用；access_role 仅 listForUser 查询携带） */
+  private summarize(row: SummaryRowFull): SessionSummary {
+    return {
       ...rowToSession(row),
       messageCount: Number(row.message_count ?? 0),
+      ...(row.access_role ? { role: row.access_role as SessionAccessRole } : {}),
       lastMessage: row.last_role
         ? {
             role: row.last_role as 'user' | 'agent' | 'system',
             agentId: row.last_agent_id ?? undefined,
+            // M77：说话成员键（分身实例署名；存量行为 NULL → 前端按角色名回退）
+            ...(row.last_member_key ? { memberKey: row.last_member_key } : {}),
             content: (row.last_content ?? '').slice(0, 80),
             createdAt: row.last_created_at ?? '',
+            // M57 P2/P3：人类消息作者（共享会话列表预览署名；兼容模式缺省）
+            ...(row.last_user_id ? { userId: row.last_user_id, userName: row.last_user_name ?? undefined } : {}),
           }
         : undefined,
-    }))
+    }
   }
 
   get(id: string): StoredSession | undefined {
@@ -241,6 +313,8 @@ export class SessionStore {
       planFirst?: boolean
       /** M46-2：串行执行（缺省开启；显式 false 关闭以启用并行成波） */
       serial?: boolean
+      /** M57：会话属主（多用户）；缺省 = 单用户兼容模式（NULL） */
+      ownerId?: string
     } = {},
   ): Session {
     const ts = nowIso()
@@ -248,6 +322,7 @@ export class SessionStore {
       id: newId('s'),
       title: title?.trim() || '新会话',
       participantIds: [...new Set(participantIds)],
+      ownerId: opts.ownerId,
       memberSouls: opts.souls && Object.keys(opts.souls).length > 0 ? { ...opts.souls } : undefined,
       planFirst: opts.planFirst ? true : undefined,
       // M46-2：默认串行（逐位出场，便于跟进查看）；显式 serial: false 才关闭
@@ -258,8 +333,8 @@ export class SessionStore {
       updatedAt: ts,
     }
     this.db.run(
-      `INSERT INTO sessions (id, project_id, title, participant_ids, member_souls, workspace_dir, plan_first, serial, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO sessions (id, project_id, title, participant_ids, member_souls, workspace_dir, plan_first, serial, owner_id, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       session.id,
       session.projectId ?? null,
       session.title,
@@ -268,6 +343,7 @@ export class SessionStore {
       session.workspaceDir ?? null,
       session.planFirst ? 1 : 0,
       session.serial ? 1 : 0,
+      session.ownerId ?? null,
       ts,
       ts,
     )
@@ -473,6 +549,16 @@ export class SessionStore {
     this.timers.clear()
   }
 
+  /**
+   * M57：外部批量改写（如首启归属回填）后清空内存缓存与定时器。
+   * 调用方须保证已先 flushAll（否则未落盘的脏数据会丢失）；清空后下一次读取从库重建。
+   */
+  invalidateCache(): void {
+    for (const timer of this.timers.values()) clearTimeout(timer)
+    this.timers.clear()
+    this.cache.clear()
+  }
+
   // ---------- 内部：落库 ----------
 
   private flush(id: string): void {
@@ -486,7 +572,7 @@ export class SessionStore {
     // 审核 M-1：先落库成功再清脏标记（tx 失败时脏数据保留，避免静默丢写；下次触发重试）
     this.db.tx(() => {
       this.db.run(
-        `UPDATE sessions SET title = ?, participant_ids = ?, member_souls = ?, project_id = ?, workspace_dir = ?, plan_first = ?, serial = ?, updated_at = ?
+        `UPDATE sessions SET title = ?, participant_ids = ?, member_souls = ?, project_id = ?, workspace_dir = ?, plan_first = ?, serial = ?, owner_id = ?, updated_at = ?
          WHERE id = ?`,
         session.title,
         JSON.stringify(session.participantIds),
@@ -495,6 +581,7 @@ export class SessionStore {
         session.workspaceDir ?? null,
         session.planFirst ? 1 : 0,
         session.serial ? 1 : 0,
+        session.ownerId ?? null,
         session.updatedAt,
         session.id,
       )
@@ -507,13 +594,13 @@ export class SessionStore {
 
   private insertMessage(message: ChatMessage): void {
     this.db.run(
-      `INSERT INTO messages (id, session_id, run_id, turn_index, seq, role, agent_id, content, mentions, status, artifacts, tool_calls, reasoning, mode, attachments, schedule_id, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO messages (id, session_id, run_id, turn_index, seq, role, agent_id, member_key, user_id, content, mentions, status, artifacts, tool_calls, reasoning, mode, attachments, schedule_id, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET
          turn_index = excluded.turn_index,
          content = excluded.content, mentions = excluded.mentions, status = excluded.status,
          artifacts = excluded.artifacts, tool_calls = excluded.tool_calls, reasoning = excluded.reasoning, mode = excluded.mode,
-         attachments = excluded.attachments, schedule_id = excluded.schedule_id`,
+         attachments = excluded.attachments, schedule_id = excluded.schedule_id, user_id = excluded.user_id`,
       message.id,
       message.sessionId,
       message.runId ?? null,
@@ -521,6 +608,8 @@ export class SessionStore {
       message.seq ?? 0,
       message.role,
       message.agentId ?? null,
+      message.memberKey ?? null,
+      message.userId ?? null,
       message.content,
       JSON.stringify(message.mentions ?? []),
       message.status,
@@ -551,18 +640,30 @@ export class SessionStore {
 
   /**
    * 跨会话全文检索（M9；trigram FTS + LIKE 回退）。
+   * - M57：ownerId 必传——用户 id = 仅检索本人会话；null = 全量（单用户兼容）。
    * - trigram 分词器需 ≥3 字符：短词（如两字中文词）走 LIKE 子串匹配；
    * - FTS5 缺失（旧构建）或语法异常 → LIKE 回退，检索永不报错。
    */
-  search(query: string, limit = 50): Array<{ sessionId: string; messageId: string; content: string }> {
+  search(query: string, limit = 50, ownerId: string | null = null): Array<{ sessionId: string; messageId: string; content: string }> {
     const q = query.trim()
     if (!q) return []
+    // M57 P2：access 口径 = 自己 + 共享给我（ownerId 语义升级为“当前用户”；null = 不过滤）
+    const ownerClause =
+      ownerId === null
+        ? ''
+        : `AND session_id IN (
+             SELECT s.id FROM sessions s
+             LEFT JOIN session_members m ON m.session_id = s.id AND m.user_id = ?
+             WHERE s.owner_id = ? OR m.user_id IS NOT NULL
+           )`
+    const ownerParams = ownerId === null ? [] : [ownerId, ownerId]
     const likeRows = (): Array<{ sessionId: string; messageId: string; content: string }> =>
       this.db
         .all<{ session_id: string; message_id: string; content: string }>(
           `SELECT session_id, id AS message_id, content FROM messages
-           WHERE content LIKE ? ORDER BY created_at DESC LIMIT ?`,
+           WHERE content LIKE ? ${ownerClause} ORDER BY created_at DESC LIMIT ?`,
           `%${q}%`,
+          ...ownerParams,
           limit,
         )
         .map((r) => ({ sessionId: r.session_id, messageId: r.message_id, content: r.content }))
@@ -572,8 +673,9 @@ export class SessionStore {
       return this.db
         .all<{ session_id: string; message_id: string; content: string }>(
           `SELECT session_id, message_id, content FROM messages_fts
-           WHERE messages_fts MATCH ? ORDER BY rank LIMIT ?`,
+           WHERE messages_fts MATCH ? ${ownerClause} ORDER BY rank LIMIT ?`,
           phrase,
+          ...ownerParams,
           limit,
         )
         .map((r) => ({ sessionId: r.session_id, messageId: r.message_id, content: r.content }))

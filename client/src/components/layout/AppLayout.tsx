@@ -3,7 +3,7 @@
  * 会话列表 | 主区（对话 / 画布 + 深度工作台）| 团队面板。
  * - 顶栏通栏（全宽）：品牌 + 实时连接状态 / 安静模式 / 快捷键帮助（命令面板为 ⌘K 键盘直达，无按钮）；
  *   设置入口收在 rail 底部（M36 起为主区视图）；
- * - 主区：上下文用量条（ContextBar）+ ErrorBoundary；断线提示条（ConnectionBanner）位于顶栏下方主区内；
+ * - 主区：ErrorBoundary；上下文电池（ContextBar）随 Composer 底栏展示，断线提示条（ConnectionBanner）位于顶栏下方主区内；
  * - M49（ADR 0100）：主区顶栏收敛为「对话 / 画布」两页签；交付件 / 数据库 / 终端改为按需展开的
  *   深度工作台（expandWorkspace，头部替换为「← 返回 | 工作台标题」；入口在右栏实况面板展开钮 /
  *   底栏跳转 / 命令面板）；
@@ -32,14 +32,18 @@ import {
   PanelRight,
   PanelRightClose,
   PanelRightOpen,
+  UserRound,
 } from 'lucide-react'
 import { useMediaQuery } from '../../lib/hooks'
+import { memberViews } from '../../lib/members'
 import { cn } from '../../lib/utils'
 import { useAgentStore } from '../../stores/agent-store'
+import { useAuthStore } from '../../stores/auth-store'
 import { useSessionStore } from '../../stores/session-store'
 import { useUiStore, type MainTab } from '../../stores/ui-store'
 import { useWsStore } from '../../stores/ws-store'
 import { attachActiveRunFor } from '../../stores/run-store'
+import { AccountDialog } from '../account/AccountDialog'
 import { Button } from '../ui/button'
 import { Dialog, DialogContent, DialogTitle } from '../ui/dialog'
 import { Tabs, TabsList, TabsTrigger } from '../ui/tabs'
@@ -48,7 +52,6 @@ import { SessionList } from '../sessions/SessionList'
 import { ChatArea } from '../chat/ChatArea'
 import { ArtifactsView } from '../artifacts/ArtifactsView'
 import { TeamPanel } from '../team/TeamPanel'
-import { ContextBar } from '../context/ContextBar'
 import { CommandPalette } from './CommandPalette'
 import { ConnectionBanner } from './ConnectionBanner'
 import { ErrorBoundary } from './ErrorBoundary'
@@ -57,15 +60,22 @@ import { TraceDrawer } from '../observability/TraceDrawer'
 import { LiveDock } from '../live/LiveDock'
 // M54 续完善：摇卦台全局宿主（自消息行内上提——弹窗不随虚拟列表行回收 / 面板卸载消失）
 import { PanTossHost } from '../chat/md-ext/pan/TossHost'
+// M78：塔罗抽牌台全局宿主（抽牌台 / 图鉴 / 手记同族；不放主 chunk，内部 React.lazy）
+import { TarotRitualHost } from '../chat/md-ext/tarot/TarotRitualHost'
 // M26：左侧图标导航栏 + 资产控制台（Agent / Skill / 连接 管理）
 import { ActivityRail } from '../console/ActivityRail'
 import { AgentConsole } from '../console/AgentConsole'
 import { SkillConsole } from '../console/SkillConsole'
 import { ConnectionsConsole } from '../console/ConnectionsConsole'
+// M68：用户素材库（全员可见的个人资源视图）
+import { MaterialsConsole } from '../console/MaterialsConsole'
 // M27：MCP 管理台（服务器 CRUD / 生命周期 / 会话绑定 / 工具可达性）
 import { McpConsole } from '../mcp/McpConsole'
-// M36：设置（自弹窗升级为主区页：26 项运行期设置 + 资源概览 + 系统信息）
+// M36：设置（自弹窗升级为主区页：26 项运行期设置 + 资源概览 + 系统信息；M57：成员见个人偏好视图）
 import { SettingsView } from '../settings/SettingsView'
+import { PersonalSettingsView } from '../settings/PersonalSettingsView'
+// M57：用户管理（admin；邀请制建号 / 禁用 / 重置密码）
+import { UsersConsole } from '../console/UsersConsole'
 
 /** 主区懒加载（M23）：数据库工作台 / SSH 终端按需分包（xterm + fit 约 300KB，不进首屏） */
 const DatabaseWorkbench = React.lazy(() =>
@@ -92,6 +102,9 @@ export function HeaderBar({ narrow, onOpenSessions }: { narrow?: boolean; onOpen
   const wsStatus = useWsStore((s) => s.status)
   const quietMode = useUiStore((s) => s.quietMode)
   const toggleQuietMode = useUiStore((s) => s.toggleQuietMode)
+  // M57：账号入口（当前身份 / 修改密码 / 用户管理 / 退出登录）
+  const user = useAuthStore((s) => s.user)
+  const [accountOpen, setAccountOpen] = React.useState(false)
 
   return (
     <header className="flex h-12 shrink-0 items-center gap-3 border-b bg-card/80 px-3 shadow-sm shadow-slate-900/5 backdrop-blur-md sm:px-4">
@@ -101,7 +114,8 @@ export function HeaderBar({ narrow, onOpenSessions }: { narrow?: boolean; onOpen
         </Button>
       )}
       <div className="flex items-center gap-2">
-        <span className="text-[13.5px] font-bold tracking-tight">多 Agent 研发团队</span>
+        <img src="/favicon.svg" alt="" className="size-[18px]" />
+        <span className="text-[13.5px] font-bold tracking-tight">Owli Team</span>
       </div>
       <div className="ml-auto flex items-center gap-2">
         <span
@@ -141,7 +155,19 @@ export function HeaderBar({ narrow, onOpenSessions }: { narrow?: boolean; onOpen
         >
           <Keyboard className="size-4" />
         </Button>
+        {/* M57：账号入口（修改密码 / 用户管理 / 退出登录） */}
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-7 gap-1.5 px-2 text-[12px]"
+          title="账号（修改密码 / 退出登录）"
+          onClick={() => setAccountOpen(true)}
+        >
+          <UserRound className="size-4" />
+          <span className="hidden max-w-[120px] truncate sm:inline">{user?.displayName ?? '账号'}</span>
+        </Button>
       </div>
+      <AccountDialog open={accountOpen} onOpenChange={setAccountOpen} />
     </header>
   )
 }
@@ -187,15 +213,13 @@ export function LeftPanelEdgeHandle(): React.JSX.Element {
   )
 }
 
-/** 底部成员条（窄屏）：横向 @ 快捷入口 + 团队抽屉开关 */
+/** 底部成员条（窄屏）：横向 @ 快捷入口 + 团队抽屉开关；M77：按成员实例渲染（分身 = 名字·灵魂名） */
 function BottomMemberBar({ onOpenTeam }: { onOpenTeam: () => void }): React.JSX.Element {
   const agents = useAgentStore((s) => s.agents)
   const sessions = useSessionStore((s) => s.sessions)
   const currentId = useSessionStore((s) => s.currentId)
   const session = sessions.find((s) => s.id === currentId)
-  const participants = (session?.participantIds ?? [])
-    .map((id) => agents.find((a) => a.id === id))
-    .filter((a): a is NonNullable<typeof a> => !!a)
+  const members = React.useMemo(() => memberViews(agents, session), [agents, session])
 
   return (
     <div className="flex h-12 shrink-0 items-center gap-1.5 overflow-x-auto border-t bg-card/80 px-2 backdrop-blur">
@@ -203,22 +227,22 @@ function BottomMemberBar({ onOpenTeam }: { onOpenTeam: () => void }): React.JSX.
         <PanelRight className="size-3.5" />
         团队
       </Button>
-      {participants.map((a) => (
+      {members.map((m) => (
         <button
-          key={a.id}
+          key={m.key}
           type="button"
-          title={`@${a.name}（插入到输入框）`}
+          title={`@${m.label}（插入到输入框）`}
           className="flex shrink-0 items-center gap-1.5 rounded-full border bg-card py-0.5 pl-0.5 pr-2.5 text-[11.5px] transition-colors hover:border-primary/30 hover:bg-primary/5"
           onClick={() => {
             useUiStore.getState().setMainTab('chat')
-            useUiStore.getState().insertToComposer(`@${a.name} `)
+            useUiStore.getState().insertToComposer(`@${m.label} `)
           }}
         >
-          <AgentAvatar agent={a} size={18} animated={false} className="rounded-full" />
-          {a.name}
+          <AgentAvatar agent={m.agent} size={18} animated={false} />
+          {m.label}
         </button>
       ))}
-      {participants.length === 0 && (
+      {members.length === 0 && (
         <span className="px-1 text-[11.5px] text-muted-foreground">当前会话暂无成员 · 首条消息将自动组队</span>
       )}
     </div>
@@ -235,7 +259,11 @@ function toPanelSize(px: number, maxPct: number): number {
 export function AppLayout(): React.JSX.Element {
   const mainTab = useUiStore((s) => s.mainTab)
   const setMainTab = useUiStore((s) => s.setMainTab)
+  // M31 修订：画布页签未读角标（agent 写入计数；进画布即清零）
+  const newCanvasCount = useUiStore((s) => s.newCanvasCount)
   const appView = useUiStore((s) => s.appView)
+  // M57：成员不渲染管理面控制台（ActivityRail 已隐藏入口；此处兑底直接造访）
+  const isAdmin = useAuthStore((s) => s.isAdmin)
   const deepFrom = useUiStore((s) => s.deepFrom)
   const closeWorkspaceView = useUiStore((s) => s.closeWorkspaceView)
   const rightPanelOpen = useUiStore((s) => s.rightPanelOpen)
@@ -363,13 +391,22 @@ export function AppLayout(): React.JSX.Element {
           <Tabs value={mainTab} onValueChange={(v) => setMainTab(v as MainTab)}>
             <TabsList>
               <TabsTrigger value="chat">对话</TabsTrigger>
-              <TabsTrigger value="canvas">画布</TabsTrigger>
+              <TabsTrigger value="canvas">
+                画布
+                {newCanvasCount > 0 && (
+                  <span
+                    className="ml-1 shrink-0 rounded-full bg-primary/15 px-1 text-[9.5px] font-semibold tabular-nums text-primary"
+                    title="Agent 在画布上有新写入"
+                  >
+                    {newCanvasCount}
+                  </span>
+                )}
+              </TabsTrigger>
             </TabsList>
           </Tabs>
         )}
         {!narrow && <PanelToggleButton side="right" className="ml-auto" />}
       </div>
-      {mainTab === 'chat' && <ContextBar />}
       <ErrorBoundary>
         <React.Suspense
           fallback={<div className="flex min-h-0 flex-1 items-center justify-center text-[12px] text-muted-foreground">正在加载…</div>}
@@ -414,22 +451,29 @@ export function AppLayout(): React.JSX.Element {
       <TraceDrawer />
       <LiveDock />
       <PanTossHost />
+      <TarotRitualHost />
     </>
   )
 
   // M26：控制台视图（appView !== 'workspace'）——主区切换，rail 与 HeaderBar 保留
   // M36：设置（appView === 'settings'）同为主区全幅视图
+  // M57：管理面控制台仅 admin 渲染；成员设置页 = 个人偏好视图；用户管理（admin ）
+  // M68：素材库为全员可见的个人资源视图（无 isAdmin 条件）
   const consoleView =
-    appView === 'agents' ? (
+    appView === 'materials' ? (
+      <MaterialsConsole />
+    ) : appView === 'agents' && isAdmin ? (
       <AgentConsole />
-    ) : appView === 'skills' ? (
+    ) : appView === 'skills' && isAdmin ? (
       <SkillConsole />
-    ) : appView === 'mcp' ? (
+    ) : appView === 'mcp' && isAdmin ? (
       <McpConsole />
-    ) : appView === 'connections' ? (
+    ) : appView === 'connections' && isAdmin ? (
       <ConnectionsConsole />
+    ) : appView === 'users' && isAdmin ? (
+      <UsersConsole />
     ) : appView === 'settings' ? (
-      <SettingsView />
+      isAdmin ? <SettingsView /> : <PersonalSettingsView />
     ) : null
 
   if (narrow) {

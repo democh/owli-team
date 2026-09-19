@@ -10,6 +10,55 @@ export const COMPOSER_PLACEHOLDER = '输入消息，@ 召唤成员 / 文件 / �
 
 /** 成员中文名（与 server/src/llm/mock.ts DISPLAY_NAMES 对齐） */
 export const AGENT_NAME: Record<string, string> = {
+  // M69：电商经营 / 自媒体工作室 / 个人法务 / 学术论文 / 情感关系
+  'category-scout': '探市',
+  'listing-optimizer': '炼词',
+  'store-operator': '守铺',
+  'shop-support': '暖客',
+  'account-strategist': '立帜',
+  'script-writer': '先声',
+  'growth-editor': '借风',
+  monetizer: '点金',
+  'rights-advisor': '持正',
+  'labor-advisor': '守薪',
+  'contract-checker': '审微',
+  'lit-reviewer': '索隐',
+  methodologist: '定矩',
+  'paper-editor': '琢稿',
+  'submit-advisor': '叩门',
+  'rel-coach': '知言',
+  'date-coach': '初见',
+  mediator: '居间',
+  // M69：跑团工坊 / 塔罗研习 / 模拟法庭 / 商业沙盘 / 哲学茶室
+  'gm-host': '开卷',
+  'scenario-writer': '构幕',
+  'npc-player': '入戏',
+  'rule-keeper': '执规',
+  'tarot-reader': '观照',
+  'symbol-narrator': '释象',
+  'tarot-historian': '考源',
+  'plaintiff-counsel': '申言',
+  'defense-counsel': '析辩',
+  'presiding-judge': '端衡',
+  'sim-host': '掌局',
+  'market-referee': '市衡',
+  'review-coach': '温故',
+  'socratic-host': '叩问',
+  'thought-experimenter': '设境',
+  'ethics-moderator': '议善',
+  // M69：既有场景补强
+  'visa-advisor': '通境',
+  'local-curator': '寻巷',
+  'insurance-planner': '保宁',
+  'big-ticket-advisor': '慎衡',
+  'valuation-modeler': '衡价',
+  'datroom-keeper': '理卷',
+  'metric-governor': '正尺',
+  'viz-designer': '绘数',
+  'capacity-planner': '度峰',
+  'chaos-officer': '试雷',
+  'habit-coach': '立习',
+  'license-keeper': '执证',
   pm: '费利',
   architect: '艾达',
   designer: '艾瑞',
@@ -136,6 +185,13 @@ export const AGENT_NAME: Record<string, string> = {
   transit: '星移',
   synastry: '合璧',
   horary: '问星',
+  // M65-A：家装设计工作室
+  'interior-designer': '成竹',
+  'space-planner': '规方',
+  visualizer: '塑光',
+  // M66-A：堪舆阳宅
+  'plan-surveyor': '察隅',
+  'yangzhai-master': '司南',
 }
 
 /** 研发团队全体成员 id（场景「研发团队」推荐编制 = 默认预选） */
@@ -148,7 +204,7 @@ export const ALL_AGENTS = ['pm', 'architect', 'designer', 'frontend', 'backend',
  */
 export async function openApp(page: Page): Promise<void> {
   await page.goto('/')
-  const brand = page.getByText('多 Agent 研发团队').first()
+  const brand = page.getByText('Owli Team').first()
   try {
     await expect(brand).toBeVisible({ timeout: 8_000 })
   } catch {
@@ -170,8 +226,9 @@ export async function createSession(
   await page.getByTitle('新建会话').click()
   const dialog = page.getByRole('dialog')
   await expect(dialog.getByText('新建会话')).toBeVisible()
-  // 组队台来源行（aria-label「组队来源：X」与角色池分组 Tab 同名时仍唯一）
-  await dialog.getByRole('button', { name: `组队来源：${opts.scene ?? '研发团队'}` }).click()
+  // 组队台来源行（aria-label「组队来源：X」与角色池分组 Tab 同名时仍唯一；
+  // M66 修订：新增「最近组队」同名行后需 first() 取首行，防 strict-mode 冲突）
+  await dialog.getByRole('button', { name: `组队来源：${opts.scene ?? '研发团队'}` }).first().click()
   await expect(dialog.getByText(/已选 \d+ 位/)).toBeVisible()
   if (opts.title) await dialog.getByPlaceholder('会话标题（可选，默认自动生成）').fill(opts.title)
   for (const id of opts.unpick ?? []) {
@@ -265,4 +322,9 @@ export async function openWorkspace(page: Page, name: '交付件' | '数据库�
   if (await trigger.isVisible().catch(() => false)) await trigger.click()
   else await page.keyboard.press('Control+k')
   await page.getByRole('option', { name: new RegExp(`展开 · ${name}`) }).click()
+}
+
+/** M66：从深度工作台返回对话视图（交付件 / 数据库 / SSH 视图的「← 返回对话」）——后续发消息前必经 */
+export async function backToChat(page: Page): Promise<void> {
+  await page.getByRole('button', { name: '返回对话' }).click()
 }

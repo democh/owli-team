@@ -217,10 +217,10 @@ export function BrowserPanel(): React.JSX.Element {
             {backend === 'remote'
               ? '远程端点的形态由对方浏览器决定'
               : headless
-                ? '后台静默运行（省资源；可在面板内接管）'
+                ? '后台静默运行（可在面板内接管）'
                 : backend === 'local'
-                  ? '弹出可见窗口（适合登录 / 人工观察）；本机已有实例运行时将沿用它'
-                  : '弹出可见窗口（适合登录 / 人工观察）'}
+                  ? '弹出可见窗口；本机已有实例运行时将沿用它'
+                  : '弹出可见窗口'}
           </p>
           <Button
             size="sm"
@@ -326,7 +326,7 @@ export function BrowserPanel(): React.JSX.Element {
         {session.external && (
           <span
             className="shrink-0 rounded-full border px-1.5 py-px text-[9.5px] text-muted-foreground"
-            title="复用了已运行的浏览器实例：启动形态由该实例决定，切换形态需先退出它"
+            title="复用了你已运行的浏览器实例（同一账号的 local 持久配置）：启动形态由该实例决定，切换形态需先退出它"
           >
             复用实例
           </span>
@@ -381,7 +381,7 @@ export function BrowserPanel(): React.JSX.Element {
         {mode !== 'takeover' && (
           <div className="pointer-events-none absolute inset-x-0 bottom-0 flex items-center justify-center gap-1 bg-gradient-to-t from-slate-900/80 to-transparent px-2 pb-1 pt-4 text-[10.5px] text-slate-200">
             <MousePointerClick className="size-3" />
-            点击画面即可接管（键鼠直通浏览器）
+            点击画面即可接管
           </div>
         )}
       </div>

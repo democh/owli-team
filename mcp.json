@@ -1,0 +1,72 @@
+{
+  "mcpServers": {
+    "sequential-thinking": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-sequential-thinking"],
+      "displayName": "顺序思考",
+      "readOnlyOverride": "readonly"
+    },
+    "memory": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-memory"],
+      "env": {
+        "MEMORY_FILE_PATH": "${MCP_MEMORY_PATH:-/Users/democh/Desktop/multi-agent/data/mcp/memory.json}"
+      },
+      "displayName": "知识记忆"
+    },
+    "time": {
+      "type": "stdio",
+      "command": "uvx",
+      "args": ["mcp-server-time"],
+      "displayName": "时间时区",
+      "readOnlyOverride": "readonly"
+    },
+    "weather": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@dangahagan/weather-mcp@latest"],
+      "env": {
+        "ENABLED_TOOLS": "standard",
+        "WEATHER_UNITS": "metric",
+        "WEATHER_TIME_FORMAT": "24h"
+      },
+      "displayName": "天气气象",
+      "readOnlyOverride": "readonly"
+    },
+    "markitdown": {
+      "type": "stdio",
+      "command": "uvx",
+      "args": ["markitdown-mcp"],
+      "timeoutMs": 120000,
+      "displayName": "文档转换",
+      "readOnlyOverride": "readonly"
+    },
+    "deepwiki": {
+      "type": "http",
+      "url": "https://mcp.deepwiki.com/mcp",
+      "displayName": "仓库百科",
+      "readOnlyOverride": "readonly"
+    },
+    "context7": {
+      "type": "http",
+      "url": "https://mcp.context7.com/mcp",
+      "displayName": "库文档检索",
+      "readOnlyOverride": "readonly"
+    },
+    "arxiv": {
+      "type": "stdio",
+      "command": "uvx",
+      "args": ["arxiv-mcp-server", "--storage-path", "${MCP_ARXIV_STORAGE:-/Users/democh/Desktop/multi-agent/data/mcp/arxiv}"],
+      "displayName": "论文检索"
+    },
+    "yfinance": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "yfinance-mcp"],
+      "displayName": "全球行情",
+      "readOnlyOverride": "readonly"
+    }
+  }
+}

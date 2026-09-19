@@ -10,6 +10,7 @@
  * - 失败向上抛（调用方展示错误卡 + 源码回退），并清空失败缓存以便重试。
  */
 import mermaidBundleUrl from 'mermaid/dist/mermaid.min.js?url'
+import { FONT_SANS } from './fonts'
 import { mermaidCache } from './md-cache'
 
 type MermaidApi = typeof import('mermaid').default
@@ -47,7 +48,7 @@ async function getMermaid(): Promise<MermaidApi> {
         securityLevel: 'strict',
         theme: 'base',
         themeVariables: {
-          fontFamily: 'ui-sans-serif, system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif',
+          fontFamily: FONT_SANS,
           fontSize: '13px',
           primaryColor: '#dbeafe',
           primaryBorderColor: '#93c5fd',

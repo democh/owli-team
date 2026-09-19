@@ -13,12 +13,18 @@ import cors from 'cors'
 import express from 'express'
 import { ApprovalService } from './approval.js'
 import { PlanReviewService } from './plan-review.js'
+// M57：多用户（认证服务 / 访问控制 / 账号存储）
+import { AccessService } from './auth/access.js'
+import { AuthService, type AuthUser } from './auth/service.js'
+import { ApiKeyStore, AuthSessionStore } from './store/auth-sessions.js'
+import { UserStore } from './store/users.js'
 import { configWarnings, describeConfig, ensureDirSync, loadConfig } from './config.js'
 import { Compressor } from './context/compressor.js'
 import { ContextService } from './context/service.js'
 import { createProvider } from './llm/factory.js'
+import { LlmProviderRouter } from './llm/provider-router.js'
 import { closeLogger, initLogger } from './logger.js'
-import { createAuthMiddleware, createCorsOptions, createMessageLimiter, createTokenEntryMiddleware } from './middleware.js'
+import { createAuthMiddleware, createCorsOptions, createLoginLimiter, createMessageLimiter, createOriginGuard, createRequireAdmin, createTokenEntryMiddleware } from './middleware.js'
 import { Engine } from './orchestration/engine.js'
 import { apiErrorHandler, createApiRouter } from './routes/index.js'
 import { applySettingsToConfig, readSettingsFile } from './settings.js'
@@ -36,6 +42,15 @@ import { ReviewStore } from './store/reviews.js'
 import { RunEventStore } from './store/run-events.js'
 import { RunStore } from './store/runs.js'
 import { ScheduleStore } from './store/schedules.js'
+import { createConnectionUseGuard } from './connections/access.js'
+import { createUserLabelResolver } from './context/user-label.js'
+import { ByokProvider } from './llm/byok.js'
+import { QuotaService } from './quota/service.js'
+import { LibraryService } from './library/service.js'
+import { LlmCredentialStore } from './store/llm-credentials.js'
+import { MaterialStore } from './store/materials.js'
+import { QuotaStore } from './store/quotas.js'
+import { SessionMemberStore } from './store/session-members.js'
 import { SessionStore } from './store/sessions.js'
 import { SkillLibrary } from './store/skills.js'
 import { SummaryStore } from './store/summaries.js'
@@ -111,7 +126,7 @@ const sessions = new SessionStore(db)
 // M6：项目层 + 工作区服务（artifact 工作区根由 WorkspaceService 解析：sandbox/repo/worktree）
 const projects = new ProjectStore(db, cfg.allowedRoots)
 const workspace = new WorkspaceService({ cfg, sessions, projects })
-const artifacts = new ArtifactStore(cfg.workspaceDir, (sid) => workspace.dirFor(sid))
+const artifacts = new ArtifactStore(cfg.workspaceDir, (sid) => workspace.resolveDir(sid))
 // M8：交付件版本存储（写类工具落地后记版；Diff 视图数据源）
 const versions = new ArtifactVersionStore(db)
 // M25：嵌入队列（写入即入队；worker 未启动时仅积累，启用后消费）
@@ -131,7 +146,7 @@ const feedbackStore = new FeedbackStore(db)
 const planStore = new PlanStore(db)
 const reviewStore = new ReviewStore(db)
 const planReviews = new PlanReviewService({ plans: planStore, timeoutMs: cfg.planReviewTimeoutMs })
-const provider = createProvider(cfg)
+let provider = createProvider(cfg)
 const tools = createToolRegistry(cfg)
 // M26：资产控制台（Agent / Skill 读写；软删除到 data/trash/assets；写后依赖 mtime 热更新自动生效）
 const assets = new AssetManager({
@@ -146,7 +161,8 @@ const assets = new AssetManager({
 })
 // M27：MCP_SERVERS 仅作启动种子（历史格式 `name=command args…` / `name=https://…`，逗号分隔）
 const mcpSeeds = parseMcpServerSeeds(cfg.mcpServers)
-const notify = new NotifyHub(cfg)
+// M57：NotifyHub 惰性读取认证依赖（WS 订阅 ACL；构造时 auth/access 尚未初始化）
+const notify = new NotifyHub(cfg, () => ({ auth, access }))
 
 // ---------- M22：连接中心装配（数据库 / SSH / 浏览器接入） ----------
 ensureDirSync(cfg.dataDir)
@@ -159,6 +175,60 @@ if (vault.source === 'ephemeral') {
 }
 const connectionStore = new ConnectionStore(db, vault)
 const auditStore = new AuditStore(db)
+// M57 P3：BYOK 包装（按会话属主解析用户 LLM 凭据；无凭据 / Mock 直通系统 provider；凭据变更 invalidate 重建）
+const llmCredentials = new LlmCredentialStore(db, vault)
+const byokProvider = new ByokProvider({
+  base: provider,
+  cfg,
+  sessions,
+  credentials: llmCredentials,
+  createFor: (creds) =>
+    createProvider({
+      ...cfg,
+      llmApiKey: creds.apiKey,
+      llmBaseUrl: creds.baseUrl || cfg.llmBaseUrl,
+      llmModel: creds.model || cfg.llmModel,
+    }),
+})
+provider = byokProvider
+// 多 Provider：模型名命中模型服务清单 → 经该服务调用（未命中透传 BYOK → 系统默认）
+const llmProviderRouter = new LlmProviderRouter({
+  base: provider,
+  cfg,
+  connections: connectionStore,
+  createFor: ({ baseUrl, apiKey }) => createProvider({ ...cfg, llmBaseUrl: baseUrl, llmApiKey: apiKey }),
+})
+provider = llmProviderRouter
+// M57：多用户装配（账号 / 登录会话 / API Key / 访问控制；无账号时保持单用户兼容模式）
+const users = new UserStore(db)
+const authSessions = new AuthSessionStore(db)
+const apiKeys = new ApiKeyStore(db)
+const auth = new AuthService({ cfg, users, authSessions, apiKeys, audit: auditStore, sessions })
+// M57 P2：会话共享成员（owner 之外的角色：editor / viewer）；P2/P3：共享会话人类署名解析
+const sessionMembers = new SessionMemberStore(db)
+const userLabelResolver = createUserLabelResolver({ members: sessionMembers, users })
+const access = new AccessService({ isMultiUser: () => auth.multiUser, sessions, projects, members: sessionMembers })
+// M57 P3：配额（user_quotas；缺省不限；存储体积按工作区目录 + M68 用户素材库目录计量）
+const quotaStore = new QuotaStore(db)
+const quotaService = new QuotaService({
+  cfg,
+  quotas: quotaStore,
+  sessions,
+  usage: usageStore,
+  dirOf: (sid) => workspace.resolveDir(sid),
+  // M68：素材目录（workspace/_library/u_<uid>）计入存储体积（路径口径与 LibraryService.userDirOf 一致）
+  libraryUserDirOf: (uid) => path.join(cfg.workspaceDir, '_library', `u_${uid.replace(/[^a-zA-Z0-9_-]/g, '') || 'local'}`),
+})
+// M68：用户素材库（per-user 私人素材；文件在 workspace/_library/u_<id>/；独立菜单管理页面的服务端面）
+const materialStore = new MaterialStore(db)
+const libraryService = new LibraryService({
+  cfg,
+  materials: materialStore,
+  assertUserStorage: (uid, extra) => quotaService.assertUserStorageAllowed(uid, extra),
+  // 会话可访问判定：兼容模式（无账号）放行；多用户按共享角色矩阵（owner/editor/viewer 皆可引用素材入画布）
+  canAccessSession: (uid, sid) => access.canAccessSession(uid === 'local' ? undefined : ({ id: uid } as AuthUser), sid),
+  sessionDirOf: (sid) => workspace.resolveDir(sid),
+})
 // M27：MCP 接入（服务器 CRUD + 会话绑定 + 连接生命周期 + 工具注入 mcp__<slug>__<tool>）
 const mcpStore = new McpServerStore(db, vault)
 const mcpManager = new McpRuntimeManager({
@@ -224,14 +294,18 @@ dbManager.start()
 // M23：SSH 连接管理器（测试 / Agent 命令 / 终端会话）
 const sshManager = new SshConnectionManager(cfg, connectionStore, auditStore)
 sshManager.start()
-// M31：画布文档存储（data/canvas/<sid>.json；agent 写入后广播 notify:canvas-changed）
+// M31：画布文档存储（data/canvas[/u_<uid>]/<sid>.json；agent 写入后广播 notify:canvas-changed）
 const canvasStore = new CanvasStore({
   dataDir: cfg.dataDir,
-  publish: (sessionId, version, by) =>
-    notify.publish({ type: 'notify:canvas-changed', sessionId, payload: { sessionId, version, by } }),
+  // M57：多用户嵌套布局（data/canvas/u_<uid>/<sid>.json；旧文件回退平面路径）
+  fileFor: (sid) => workspace.canvasFileFor(sid),
+  // M31 修订：广播携带 touched（前端写入高亮）/ actor（作者徽标）/ reason（来源区分）
+  publish: (sessionId, version, by, meta) =>
+    notify.publish({ type: 'notify:canvas-changed', sessionId, payload: { sessionId, version, by, ...meta } }),
 })
 // M31：媒体生成服务（四适配器注册；全局连接，未配置的连接在创建任务时给「设置 → 媒体生成」引导错误）
-const mediaService = new MediaService({ connections: connectionStore, artifacts, notify })
+// M31 修订：注入画布存储——任务创建落占位 / 终态结算（未装配 canvas 时落位降级）
+const mediaService = new MediaService({ connections: connectionStore, artifacts, notify, canvas: canvasStore })
 mediaService.register(comfyUiAdapter)
 mediaService.register(sdWebUiAdapter)
 mediaService.register(openAiCompatAdapter)
@@ -239,7 +313,6 @@ mediaService.register(taskTemplateAdapter)
 // M31：脑图生成器（五来源 → summaryModel 结构化 JSON 树；只读调用）
 const mindGenerator = new MindGenerator({ cfg, provider, sessions, tasks: taskStore, plans: planStore, memory, usage: usageStore })
 const streamTokens = new StreamTokenService(cfg.browserStreamTokenTtlMs)
-let streamHub: StreamHub | undefined
 const browserRuntime = new BrowserRuntime({
   cfg,
   db,
@@ -252,12 +325,19 @@ const browserRuntime = new BrowserRuntime({
       sessionId: event.sessionId,
       payload: event.payload,
     }),
+  // M62：多用户浏览器治理（owner 解析 / 订阅计数 / 管理员判定；兼容模式 owner 恒 undefined → 治理不生效）
+  ownerOfSession: (sessionId) => sessions.getSession(sessionId)?.ownerId,
+  subscriberCount: (topic) => streamHub?.subscriberCount(topic) ?? 0,
+  isAdminUser: (userId) => users.get(userId)?.role === 'admin',
 })
-streamHub = new StreamHub(cfg, browserRuntime, streamTokens)
-// M23：SSH 交互终端通道（/ws/ssh；一次性 token 握手即消费）
-const sshTerminalHub = new SshTerminalHub(cfg, sshManager, streamTokens)
-const compressor = new Compressor({ cfg, provider, sessions, summaries, memory, usage: usageStore })
-const context = new ContextService({ cfg, prompts, skills, sessions, artifacts, memory, memories, summaries, compressor, plans: planStore })
+const streamHub: StreamHub = new StreamHub(cfg, browserRuntime, streamTokens, () => ({ auth }))
+// M62：启动对账（僵尸行 / 孤儿进程 / 临时目录）与空闲回收循环（best-effort，不阻断启动）
+void browserRuntime.reconcileOnStartup()
+browserRuntime.startReclaimLoop()
+// M23：SSH 交互终端通道（/ws/ssh；一次性 token 握手即消费；M57：token 与登录用户绑定）
+const sshTerminalHub = new SshTerminalHub(cfg, sshManager, streamTokens, () => ({ auth }))
+const compressor = new Compressor({ cfg, provider, sessions, summaries, memory, usage: usageStore, billingModelFor: (sid) => byokProvider.modelFor(sid), userLabelFor: (sid) => userLabelResolver(sid) })
+const context = new ContextService({ cfg, prompts, skills, sessions, artifacts, memory, memories, summaries, compressor, plans: planStore, members: sessionMembers, users })
 // M28：工具按需发现（混合检索：BM25 词法打底 + 嵌入语义融合 0.35；未配置 / 失败 = 静默退化纯词法）
 const toolDiscovery = new ToolDiscoveryService({
   embedder: { embed: async (texts) => (await embeddings.embed(texts)).vecs },
@@ -325,6 +405,14 @@ const engine = new Engine({
   financeStore,
   // M47：会话模式门控（sandbox 无仓库 → git 工具不进模型清单；repo / worktree 模式保持可见）
   isGitMode: (sessionId) => workspace.isGitMode(sessionId),
+  // M57 P2：连接最小权限复核（共享会话下成员禁触达未开放连接；兼容模式放行）
+  connectionGuard: createConnectionUseGuard({ multiUser: () => auth.multiUser, users, connections: connectionStore }),
+  // M57 P3：配额（并发上限 / 波次边界用量闸门；无配额行 = 不限）
+  quotas: quotaService,
+  // M57 P3：BYOK 生效模型（成本归因；无凭据 = undefined 回退系统默认）
+  billingModelFor: (sid) => byokProvider.modelFor(sid),
+  // M57：共享会话人类署名（记忆沉淀输入文本）
+  userLabelFor: (sid) => userLabelResolver(sid),
 })
 // M35：定时任务服务（引用 engine.launch / activeRunOf 闭包避免循环依赖；建后回填 engine 工具层）
 const scheduleService = new ScheduleService({
@@ -338,20 +426,28 @@ const scheduleService = new ScheduleService({
 engine.setScheduleService(scheduleService)
 
 const app = express()
-// M7：CORS 收窄（ALLOWED_ORIGINS 白名单；未配置时仅本机来源）+ AUTH_TOKEN 校验（配置即启用）
+// M57：反向代理信任（nginx 网关单跳：限流 / 审计取 X-Forwarded-For 真实 IP；TRUST_PROXY='1' | 'true'）
+const trustProxy = parseTrustProxy(cfg.trustProxy)
+if (trustProxy !== false) app.set('trust proxy', trustProxy)
+// M7：CORS 收窄（ALLOWED_ORIGINS 白名单；未配置时仅本机来源）
 app.use(cors(createCorsOptions(cfg)))
+// M57：非 GET 请求 Origin 校验（CSRF 第二道防线；无 Origin 的 CLI / 测试请求放行）
+app.use(createOriginGuard(cfg))
 // 审核 M-2：上传接口单独放宽 body 上限（8MB 文件 base64 后 ~10.7MB，全局 4mb 会先拒）
 app.use('/api/sessions/:id/uploads', express.json({ limit: '12mb' }))
 // M26：头像上传通道（base64 PNG ≤8MB，同上传接口模式，须在全局 4mb 之前）
 app.use('/api/console/agents/:id/avatar', express.json({ limit: '12mb' }))
 // M31：画布素材直传（raw 二进制 ≤200MB；fetch body 直传，无 base64 膨胀，须在全局 4mb 之前）
 app.use('/api/sessions/:id/media/upload', express.raw({ type: () => true, limit: '200mb' }))
+// M68：素材库上传（raw 二进制 ≤200MB；仅上传端点，其余素材库端点走全局 JSON 解析）
+app.use('/api/library/uploads', express.raw({ type: () => true, limit: '200mb' }))
 // M33：对话附件直传（raw 二进制 ≤200MB；同 M31 模式，须在全局 4mb 之前）
 app.use('/api/sessions/:id/attachments', express.raw({ type: () => true, limit: '200mb' }))
 app.use(express.json({ limit: '4mb' }))
 // M10：浏览器首次授权入口（Docker/局域网）：/?token=<AUTH_TOKEN> → 种 cookie + 跳回 /（未配置 token 时为 no-op）
 app.use(createTokenEntryMiddleware(cfg))
-app.use('/api', createAuthMiddleware(cfg))
+// M57：登录态解析（sid cookie / Bearer API Key / legacy AUTH_TOKEN）+ 公开路由白名单
+app.use('/api', createAuthMiddleware(cfg, auth))
 app.use(
   '/api',
   createApiRouter({
@@ -369,6 +465,14 @@ app.use(
     feedback: feedbackStore,
     projects,
     workspace,
+    members: sessionMembers,
+    // M57 P3：配额服务（用量接口 / 强制点）
+    quotas: quotaService,
+    // M68：用户素材库（/api/library/*；独立菜单管理页面）
+    library: libraryService,
+    // M57 P3：BYOK（凭据存储 + 缓存失效；路由在 routes/index 按存在性挂载）
+    llmCredentials,
+    llmCredsInvalidate: (userId) => byokProvider.invalidate(userId),
     approvals,
     // M24：范式协作（计划接口 / 审批结算）
     plans: planStore,
@@ -377,6 +481,12 @@ app.use(
     versions,
     usage: usageStore,
     messageLimiter: createMessageLimiter(cfg),
+    // M57：多用户（登录限流 / 管理面守卫 / 认证与访问服务）
+    loginLimiter: createLoginLimiter(cfg),
+    requireAdmin: createRequireAdmin(auth),
+    auth,
+    access,
+    users,
     engine,
     notify,
     // M22：连接中心
@@ -439,6 +549,12 @@ server.listen(cfg.port, host, () => {
   if (cfg.authToken) {
     log.info('浏览器首次访问：http://<主机>:' + cfg.port + '/?token=<AUTH_TOKEN>（种 cookie 后直接访问 / 即可）')
   }
+  // M57：多用户状态（首启前为单用户兼容模式；setup 后进入账号体系）
+  if (auth.multiUser) {
+    log.info(`多用户模式：已启用 ${auth.listUsers().length} 个账号（管理入口 /api/users；登录 / 首启接口 /api/auth/*）`)
+  } else {
+    log.info('尚未初始化账号：单用户兼容模式（行为与旧版一致）；浏览器访问 / 或调用 POST /api/auth/setup 创建管理员')
+  }
   for (const warning of configWarnings) log.warn(warning)
   // M35：HTTP 就绪后启动调度（立即补一轮 → 周期 tick；缺省 tick 30s）
   scheduleService.start()
@@ -495,3 +611,12 @@ process.on('uncaughtException', (err) => {
 })
 // M27：进程退出兜底 —— 同步强杀残留 MCP stdio 子进程（正常路径已由 finishShutdown 异步关闭）
 process.on('exit', () => mcpManager.killOrphansSync())
+
+/** TRUST_PROXY 解析：''/'false'/'off'/'0' = 关闭；'true'/'on' = 信任全部；正整数 = 信任跳数（nginx 单跳填 1） */
+function parseTrustProxy(raw: string): boolean | number {
+  const value = raw.trim().toLowerCase()
+  if (!value || value === 'false' || value === 'off' || value === '0') return false
+  if (value === 'true' || value === 'on') return true
+  const hops = Number(value)
+  return Number.isInteger(hops) && hops > 0 ? hops : false
+}

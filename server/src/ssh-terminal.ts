@@ -16,7 +16,8 @@ import { WebSocket, WebSocketServer } from 'ws'
 import type { Client, ClientChannel } from 'ssh2'
 import type { AppConfig } from './config.js'
 import { getLogger } from './logger.js'
-import { AUTH_COOKIE, parseCookie, safeEqual } from './middleware.js'
+import { AUTH_COOKIE, parseCookie, resolveUserFromHeaders, safeEqual } from './middleware.js'
+import type { AuthService } from './auth/service.js'
 import type { StreamTokenService } from './browser/stream-token.js'
 import type { SshConnectionManager } from './connections/ssh/manager.js'
 import { resizeShell } from './connections/ssh/connector.js'
@@ -42,6 +43,8 @@ export class SshTerminalHub {
     private readonly cfg: AppConfig,
     private readonly ssh: SshConnectionManager,
     private readonly tokens: StreamTokenService,
+    /** M57：认证依赖（惰性读取；缺省 = 旧语义（仅 token 校验，测试兼容）） */
+    private readonly getAuthDeps?: () => { auth: AuthService },
   ) {}
 
   attach(server: HttpServer): void {
@@ -49,14 +52,16 @@ export class SshTerminalHub {
     server.on('upgrade', (req, socket, head) => {
       const url = new URL(req.url ?? '/', 'http://localhost')
       if (url.pathname !== '/ws/ssh') return // 其他升级请求交由其它监听器处理
-      if (!this.authorized(req, url)) {
+      const authVerdict = this.authorize(req, url)
+      if (!authVerdict.ok) {
         socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n')
         socket.destroy()
         return
       }
       const connectionId = url.searchParams.get('connectionId') ?? ''
       const token = url.searchParams.get('token') ?? ''
-      const verdict = this.tokens.verify(token, `ssh:${connectionId}`, 'takeover')
+      // M57：流 token 与连接用户绑定比对
+      const verdict = this.tokens.verify(token, `ssh:${connectionId}`, 'takeover', authVerdict.userId)
       if (!verdict.ok) {
         socket.write('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n')
         socket.destroy()
@@ -73,18 +78,27 @@ export class SshTerminalHub {
     this.heartbeatTimer.unref?.()
   }
 
-  /** 握手鉴权（与 /ws、/ws/stream 一致：cookie / query token / Bearer） */
-  private authorized(req: IncomingMessage, url: URL): boolean {
-    if (!this.cfg.authToken) return true
+  /**
+   * 握手鉴权（M57）：已注入认证依赖时解析登录态；未注入时沿用 AUTH_TOKEN 校验（测试兼容）。
+   */
+  private authorize(req: IncomingMessage, url: URL): { ok: boolean; userId?: string } {
+    const deps = this.getAuthDeps?.()
+    if (deps) {
+      const user = resolveUserFromHeaders(deps.auth, this.cfg, req.headers, url.searchParams.get('token') ?? '')
+      if (user) return { ok: true, userId: user.id }
+      if (!deps.auth.multiUser && !this.cfg.authToken) return { ok: true }
+      return { ok: false }
+    }
+    if (!this.cfg.authToken) return { ok: true }
     const header = req.headers.authorization ?? ''
     const bearer = header.startsWith('Bearer ') ? header.slice(7) : ''
     const cookieToken = parseCookie(req.headers.cookie ?? '', AUTH_COOKIE)
     const queryToken = url.searchParams.get('token') ?? ''
-    return (
+    const ok =
       safeEqual(bearer, this.cfg.authToken) ||
       safeEqual(cookieToken, this.cfg.authToken) ||
       safeEqual(queryToken, this.cfg.authToken)
-    )
+    return { ok }
   }
 
   private async onConnection(socket: WebSocket, req: IncomingMessage): Promise<void> {

@@ -116,6 +116,8 @@ export interface AppConfig {
   llmReasoningEffort: 'low' | 'high' | 'max'
   /** 结构化输出的请求形态（M2 摘要等）：json_object 兼容性最好，json_schema 语义最强，off 不透传 */
   llmJsonMode: 'json_object' | 'json_schema' | 'off'
+  /** 单次输出上限（max_tokens；0 = 不下发，用服务商默认）——防长文被默认低上限静默截断 */
+  llmMaxOutputTokens: number
   summaryModel: string
   judgeModel: string
   llmMaxConcurrency: number
@@ -124,6 +126,8 @@ export interface AppConfig {
   firstTokenTimeoutMs: number
   streamIdleTimeoutMs: number
   temperature: number
+  /** 统一温度（设置面板热切换）：开启后忽略角色 AGENT.md 的 temperature，全部角色使用全局温度 */
+  temperatureOverride: boolean
   llmPricing: Record<string, { prompt: number; completion: number }>
 
   maxTurnsPerRun: number
@@ -154,10 +158,8 @@ export interface AppConfig {
   allowedCommands: string[]
   allowedRoots: string[]
   allowSensitive: boolean
-  /** web_fetch 白名单域名（为空 = 工具不可用） */
-  webFetchAllowedDomains: string[]
-  /** web_search 配置（enabled=false 时工具不可用；apiKey 非空 = 官方 API 模式） */
-  webSearch: { enabled: boolean; apiKey: string; apiUrl: string; htmlUrl: string }
+  /** web_search 配置（无启用开关，始终可用；apiKey 非空 = 官方 API 模式，否则免 Key 多引擎降级链） */
+  webSearch: { apiKey: string; apiUrl: string; htmlUrl: string; engines: string[] }
   /** 联网工具浏览器 UA 覆盖（空 = 内置 Chrome 桌面版） */
   httpUserAgent: string
   /** 联网工具同域名最小请求间隔（毫秒，反爬限速；0 = 不限速） */
@@ -236,6 +238,14 @@ export interface AppConfig {
   browserScreenshotDir: string
   /** watch/takeover 流 token 有效期（ms） */
   browserStreamTokenTtlMs: number
+  /** M62：单用户活跃浏览器实例上限（0 = 不限；多用户模式生效，先回收再拒绝） */
+  browserMaxPerUser: number
+  /** M62：全局活跃浏览器实例上限（0 = 不限） */
+  browserMaxTotal: number
+  /** M62：空闲自动关闭阈值（ms；0 = 不回收；人工接管 / 有订阅者的实例永不回收） */
+  browserIdleCloseMs: number
+  /** M62：空闲回收扫描周期（ms） */
+  browserReclaimIntervalMs: number
 
   // ---------- M25：向量记忆 ----------
 
@@ -295,6 +305,25 @@ export interface AppConfig {
   scheduleCatchupMs: number
   /** 连续失败自动暂停阈值（次数） */
   scheduleFailLimit: number
+
+  // ---------- M57：多用户（P1 账号与隔离） ----------
+
+  /** 登录会话滑动过期（天；每次访问续期） */
+  sessionTtlDays: number
+  /** 登录会话绝对过期（天；不可续期上限） */
+  sessionAbsoluteTtlDays: number
+  /** 登录失败锁定阈值（次） */
+  loginLockoutThreshold: number
+  /** 登录失败锁定时长（ms） */
+  loginLockoutMs: number
+  /** 登录接口 IP 限流（次/分钟） */
+  loginRateLimit: number
+  /** 每用户活跃 + 排队 Run 上限（防单户挤占全局并发；0 = 不限制） */
+  runMaxPerUser: number
+  /** 公网 HTTPS（nginx 网关终止 TLS）时置 true：sid cookie 加 Secure */
+  authCookieSecure: boolean
+  /** 反向代理信任（nginx 单跳填 1 或 true；限流 / 审计取 X-Forwarded-For 真实 IP） */
+  trustProxy: string
 }
 
 const LOG_LEVELS = ['trace', 'debug', 'info', 'warn', 'error', 'silent'] as const
@@ -317,10 +346,12 @@ const ConfigSchema = z.object({
   asyncRunMax: z.number().int().min(1),
   artifactMaxBytes: z.number().int().min(1_024),
   temperature: z.number().min(0).max(2),
+  temperatureOverride: z.boolean(),
   llmThinking: z.boolean(),
   llmMock: z.boolean(),
   llmMockDelayMs: z.number().int().min(0),
   llmReasoningEffort: z.enum(['low', 'high', 'max']),
+  llmMaxOutputTokens: z.number().int().min(0).max(65_536),
   embeddingDim: z.number().int().min(0).max(8_192),
   embeddingBatchSize: z.number().int().min(1).max(128),
   embeddingTimeoutMs: z.number().int().min(1_000),
@@ -344,6 +375,12 @@ const ConfigSchema = z.object({
   scheduleMinGapMs: z.number().int().min(60_000),
   scheduleCatchupMs: z.number().int().min(0),
   scheduleFailLimit: z.number().int().min(1).max(10),
+  sessionTtlDays: z.number().int().min(1).max(365),
+  sessionAbsoluteTtlDays: z.number().int().min(1).max(730),
+  loginLockoutThreshold: z.number().int().min(1).max(100),
+  loginLockoutMs: z.number().int().min(10_000).max(86_400_000),
+  loginRateLimit: z.number().int().min(1).max(1_000),
+  runMaxPerUser: z.number().int().min(0).max(64),
 })
 
 /** 内部一致性断言：启动（loadConfig）与运行期覆盖（settings）共用同一条校验路径 */
@@ -375,6 +412,7 @@ export function loadConfig(): AppConfig {
     llmThinking: envBool('LLM_THINKING', false),
     llmReasoningEffort: envEnum('LLM_REASONING_EFFORT', ['low', 'high', 'max'] as const, 'high'),
     llmJsonMode: envEnum('LLM_JSON_MODE', ['json_object', 'json_schema', 'off'] as const, 'json_object'),
+    llmMaxOutputTokens: envNum('LLM_MAX_OUTPUT_TOKENS', 8_192, 0, 65_536),
     summaryModel: envStr('SUMMARY_MODEL', ''),
     judgeModel: envStr('JUDGE_MODEL', ''),
     llmMaxConcurrency: envNum('LLM_MAX_CONCURRENCY', 3, 1, 64),
@@ -383,6 +421,7 @@ export function loadConfig(): AppConfig {
     firstTokenTimeoutMs: envNum('FIRST_TOKEN_TIMEOUT_MS', 30_000, 1_000),
     streamIdleTimeoutMs: envNum('STREAM_IDLE_TIMEOUT_MS', 60_000, 1_000),
     temperature: envNum('LLM_TEMPERATURE', 0.6, 0, 2),
+    temperatureOverride: envBool('LLM_TEMPERATURE_OVERRIDE', false),
     llmPricing: readPricing(),
 
     maxTurnsPerRun: envNum('MAX_TURNS_PER_RUN', 10, 1),
@@ -410,13 +449,13 @@ export function loadConfig(): AppConfig {
     allowedCommands: envList('ALLOWED_COMMANDS'),
     allowedRoots: envList('ALLOWED_ROOTS').map((p) => path.resolve(p)),
     allowSensitive: envBool('ALLOW_SENSITIVE', false),
-    webFetchAllowedDomains: envList('WEB_FETCH_ALLOWED_DOMAINS'),
     webSearch: {
-      enabled: envBool('WEB_SEARCH_ENABLED', false),
       apiKey: envStr('BAIDU_SEARCH_API_KEY', ''),
       apiUrl: envStr('BAIDU_SEARCH_API_URL', 'https://qianfan.baidubce.com/v2/ai_search/web_search'),
       // 结果页抓取入口（免 Key 模式；不暴露环境变量，测试可注入本地地址）
       htmlUrl: 'https://www.baidu.com/s',
+      // 免 Key 引擎降级链（逗号分隔；留空 = 内置默认 baidu,bing,sogou,so360）
+      engines: envList('WEB_SEARCH_ENGINES'),
     },
     httpUserAgent: envStr('HTTP_USER_AGENT', ''),
     httpMinIntervalMs: envNum('HTTP_MIN_INTERVAL_MS', 1_200, 0, 60_000),
@@ -465,6 +504,10 @@ export function loadConfig(): AppConfig {
     browserStepShots: envBool('BROWSER_STEP_SHOTS', true),
     browserScreenshotDir: resolveDir('BROWSER_SCREENSHOT_DIR', path.join(envStr('DATA_DIR', 'data'), 'screenshots')),
     browserStreamTokenTtlMs: envNum('BROWSER_STREAM_TOKEN_TTL_MS', 300_000, 30_000, 3_600_000),
+    browserMaxPerUser: envNum('BROWSER_MAX_PER_USER', 3, 0, 100),
+    browserMaxTotal: envNum('BROWSER_MAX_TOTAL', 8, 0, 100),
+    browserIdleCloseMs: envNum('BROWSER_IDLE_CLOSE_MS', 1_800_000, 0, 86_400_000),
+    browserReclaimIntervalMs: envNum('BROWSER_RECLAIM_INTERVAL_MS', 60_000, 5_000, 600_000),
 
     embeddingConnectionId: envStr('EMBEDDING_CONNECTION_ID', ''),
     embeddingBaseUrl: envStr('EMBEDDING_BASE_URL', ''),
@@ -499,6 +542,16 @@ export function loadConfig(): AppConfig {
     scheduleMinGapMs: envNum('SCHEDULE_MIN_GAP_MS', 5 * 60_000, 60_000),
     scheduleCatchupMs: envNum('SCHEDULE_CATCHUP_MS', 10 * 60_000, 0),
     scheduleFailLimit: envNum('SCHEDULE_FAIL_LIMIT', 3, 1, 10),
+
+    // M57：多用户（滑动 30 天 / 绝对 90 天；锁定 5 次 / 15 分钟；单户并发 2）
+    sessionTtlDays: envNum('SESSION_TTL_DAYS', 30, 1, 365),
+    sessionAbsoluteTtlDays: envNum('SESSION_ABSOLUTE_TTL_DAYS', 90, 1, 730),
+    loginLockoutThreshold: envNum('LOGIN_LOCKOUT_THRESHOLD', 5, 1, 100),
+    loginLockoutMs: envNum('LOGIN_LOCKOUT_MS', 15 * 60_000, 10_000, 86_400_000),
+    loginRateLimit: envNum('LOGIN_RATE_LIMIT', 10, 1, 1_000),
+    runMaxPerUser: envNum('RUN_MAX_PER_USER', 2, 0, 64),
+    authCookieSecure: envBool('AUTH_COOKIE_SECURE', false),
+    trustProxy: envStr('TRUST_PROXY', ''),
   }
 
   // M15：旧 PROMPTS_DIR 仍被尊重（作为回退），但提示迁移
@@ -542,7 +595,7 @@ export function describeConfig(cfg: AppConfig): string[] {
     `审批模式: ${cfg.approvalMode}${cfg.approvalTools.length ? `（强制审批：${cfg.approvalTools.join('、')}）` : ''}`,
     `数据目录: ${cfg.dataDir}（DB: ${cfg.dbFile}）`,
     `连接中心: 密钥文件 ${cfg.connectionSecretFile}；数据库查询上限 ${cfg.dbQueryMaxRows} 行 / ${cfg.dbQueryTimeoutMs}ms`,
-    `浏览器: 默认 ${cfg.browserDefaultBackend}${cfg.browserExecutable ? `（可执行 ${cfg.browserExecutable}）` : '（自动发现）'}；默认${cfg.browserHeadless ? '无头' : '打开窗口'}；帧率 ${cfg.browserFrameMaxFps}fps`,
+    `浏览器: 默认 ${cfg.browserDefaultBackend}${cfg.browserExecutable ? `（可执行 ${cfg.browserExecutable}）` : '（自动发现）'}；默认${cfg.browserHeadless ? '无头' : '打开窗口'}；帧率 ${cfg.browserFrameMaxFps}fps；实例上限 单用户 ${cfg.browserMaxPerUser || '不限'} / 全局 ${cfg.browserMaxTotal || '不限'}；空闲回收 ${cfg.browserIdleCloseMs > 0 ? `${Math.round(cfg.browserIdleCloseMs / 60_000)} 分钟` : '关闭'}`,
     `向量记忆: 召回${cfg.memoryRecallEnabled ? `开启（topK=${cfg.memoryRecallTopK}，阈值 ${cfg.memoryRecallMinScore}，预算 ${cfg.memoryRecallBudgetTokens}t）` : '关闭'}；沉淀 ${cfg.memoryDigestMode}；嵌入 ${
       cfg.embeddingConnectionId
         ? `连接 ${cfg.embeddingConnectionId}`

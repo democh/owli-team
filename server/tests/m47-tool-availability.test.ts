@@ -17,8 +17,6 @@ import { Engine } from '../src/orchestration/engine.js'
 import {
   GIT_TOOL_NAMES,
   RUN_COMMAND_DISABLED_SUMMARY,
-  WEB_FETCH_DISABLED_SUMMARY,
-  WEB_SEARCH_DISABLED_SUMMARY,
   toolUnavailableReason,
 } from '../src/tools/availability.js'
 import { ToolDiscoveryService } from '../src/tools/discovery.js'
@@ -29,10 +27,8 @@ import { appendUserMessage, makeEnv, makeTmpDir, routePassThrough, waitRunFinish
 type Env = ReturnType<typeof makeEnv>
 type ToolCallRecordLike = { name: string; status: string; summary?: string }
 
-/** M47：pin 网关门控开启（除专门验证门控的用例外，保证工具计数与环境无关） */
+/** M47：pin 门控开启（保证工具计数与环境无关）；联网工具（web_search / web_fetch）无环境门控（ADR 0136） */
 const NET_ENABLED: Parameters<typeof makeEnv>[0] = {
-  webSearch: { enabled: true, apiKey: '', apiUrl: '', htmlUrl: '' },
-  webFetchAllowedDomains: ['example.invalid'],
   allowRunCommand: true,
 }
 
@@ -171,28 +167,25 @@ describe('M47：环境门控单一事实来源（toolUnavailableReason）', () =
   const base = loadConfig()
   const off = {
     ...base,
-    webSearch: { ...base.webSearch, enabled: false },
-    webFetchAllowedDomains: [],
     allowRunCommand: false,
   }
   const on = {
     ...base,
-    webSearch: { ...base.webSearch, enabled: true },
-    webFetchAllowedDomains: ['example.com'],
     allowRunCommand: true,
   }
 
   it('未启用 → 统一「未启用」文案（含配置指引，可行动）', () => {
-    expect(toolUnavailableReason('web_search', off)).toBe(WEB_SEARCH_DISABLED_SUMMARY)
-    expect(toolUnavailableReason('web_fetch', off)).toBe(WEB_FETCH_DISABLED_SUMMARY)
     expect(toolUnavailableReason('run_command', off)).toBe(RUN_COMMAND_DISABLED_SUMMARY)
+    // 联网工具已退出环境门控（始终可用，无白名单 / 无启用开关，ADR 0136）
+    expect(toolUnavailableReason('web_search', off)).toBeUndefined()
+    expect(toolUnavailableReason('web_fetch', off)).toBeUndefined()
   })
 
   it('已启用 / 无关工具 → 无门控（不误伤）', () => {
     for (const name of ['web_search', 'web_fetch', 'run_command', 'git_status', 'read_file', 'fin_quote']) {
       expect(toolUnavailableReason(name, on)).toBeUndefined()
     }
-    // 联网门关闭不影响其他工具
+    // 命令门关闭不影响其他工具
     expect(toolUnavailableReason('read_file', off)).toBeUndefined()
     expect(toolUnavailableReason('git_status', off)).toBeUndefined()
   })
@@ -222,14 +215,12 @@ describe('M47：执行期精确提示（未启用 / 参数校验本地化）', (
 })
 
 describe('M47：引擎清单门控（未启用工具不进 schema 与可发现范围）', () => {
-  it('联网三工具关闭 → 不进模型清单（同集合下 read_file 等在列）', async () => {
+  it('run_command 关闭 → 不进模型清单（联网工具无环境门控，恒可见）', async () => {
     const agentsDir = path.join(makeTmpDir('ma-m47-'), 'agents')
     seedAgents(agentsDir)
     const env = makeEnv({
       agentsDir,
       financeEnabled: false,
-      webSearch: { enabled: false, apiKey: '', apiUrl: '', htmlUrl: '' },
-      webFetchAllowedDomains: [],
       allowRunCommand: false,
     })
     const engine = makeEngine(env) // 不装配 toolSearch：全量清单（仅隐藏 tool_search）
@@ -237,23 +228,21 @@ describe('M47：引擎清单门控（未启用工具不进 schema 与可发现�
     const { toolsLists } = scriptProvider(env, () => [handoffUser, done])
     await runTurn(engine, env, session.id, '打个招呼')
     const tools = toolsLists[0]!
-    expect(tools).not.toContain('web_fetch')
-    expect(tools).not.toContain('web_search')
+    expect(tools).toContain('web_fetch')
+    expect(tools).toContain('web_search')
     expect(tools).not.toContain('run_command')
     expect(tools).toContain('read_file')
     expect(tools).toContain('write_file')
-    // 59 − 3（联网/命令被环境门过滤）− 6（git：sandbox 会话被模式门过滤）− 1（tool_search：未装配发现）
-    expect(tools).toHaveLength(49)
+    // 68 − 1（run_command 被环境门过滤）− 6（git：sandbox 会话被模式门过滤）− 1（tool_search：未装配发现）
+    expect(tools).toHaveLength(60)
   })
 
-  it('发现启用（大集合）：未启用工具与 git 不进 <tool_discovery> 可检索范围', async () => {
+  it('发现启用（大集合）：run_command 与 git 不进 <tool_discovery> 可检索范围', async () => {
     const agentsDir = path.join(makeTmpDir('ma-m47-'), 'agents')
     seedAgents(agentsDir)
     const env = makeEnv({
       agentsDir,
       financeEnabled: false,
-      webSearch: { enabled: false, apiKey: '', apiUrl: '', htmlUrl: '' },
-      webFetchAllowedDomains: [],
       allowRunCommand: false,
     })
     const engine = makeEngine(env, { toolSearch: new ToolDiscoveryService() })
@@ -262,7 +251,7 @@ describe('M47：引擎清单门控（未启用工具不进 schema 与可发现�
     await runTurn(engine, env, session.id, '打个招呼')
     const system = systems[systems.length - 1]!
     expect(system).toContain('<tool_discovery>')
-    expect(system).not.toContain('联网（')
+    expect(system).toContain('联网（2 个）：web_fetch / web_search') // 联网工具无环境门控（ADR 0136）
     expect(system).not.toContain('命令执行（')
     expect(system).not.toContain('Git（')
     // 类别概览仍含可达的重型工具（证明区块本身在注入，而非整体缺失）
@@ -279,13 +268,13 @@ describe('M47：引擎清单门控（未启用工具不进 schema 与可发现�
     await runTurn(makeEngine(env, { isGitMode: () => false }), env, session.id, '第一轮')
     const hiddenTools = hidden.toolsLists[0]!
     for (const name of GIT_TOOL_NAMES) expect(hiddenTools).not.toContain(name)
-    expect(hiddenTools).toHaveLength(52) // 59 − 6（git）− 1（tool_search）
+    expect(hiddenTools).toHaveLength(61) // 68 − 6（git）− 1（tool_search）
 
     const shown = scriptProvider(env, () => [handoffUser, done])
     await runTurn(makeEngine(env, { isGitMode: () => true }), env, session.id, '第二轮')
     const shownTools = shown.toolsLists[0]!
     for (const name of GIT_TOOL_NAMES) expect(shownTools).toContain(name)
-    expect(shownTools).toHaveLength(58) // 59 − 1（tool_search）
+    expect(shownTools).toHaveLength(67) // 68 − 1（tool_search）
   })
 })
 

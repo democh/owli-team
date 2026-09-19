@@ -3,6 +3,7 @@
  * - 每行 = 缺陷编号 + 描述 + 修补方向（配对不完整 → 行级降级「未附修补方向」）；
  * - 「已响应」由后续消息提及缺陷编号推导（lib/pk.respondedSig；primitive 订阅——
  *   签名未变不触发重渲染，see ADR 0117 显式结构口径）；
+ * - 点「缺陷 N」→ 回填「回应缺陷 N：」草稿（ADR 0064：只写草稿不直发；发送后点亮「已响应」）；
  * - 解析失败 → raw 兜底静态渲染，其余内容照常。
  */
 import * as React from 'react'
@@ -10,7 +11,9 @@ import { CheckCheck } from 'lucide-react'
 import { cn } from '../../../lib/utils'
 import { findingIdsOfSig, findingsOfLines, parseFindingsItems, respondedSig } from '../../../lib/pk'
 import { useSessionStore } from '../../../stores/session-store'
+import { useUiStore } from '../../../stores/ui-store'
 import { useMessageInfo } from './message-context'
+import { useStreaming } from './streaming'
 
 export function FindingsCard({
   title,
@@ -24,6 +27,8 @@ export function FindingsCard({
   children?: React.ReactNode
 }): React.JSX.Element {
   const info = useMessageInfo()
+  const streaming = useStreaming()
+  const insertToComposer = useUiStore((s) => s.insertToComposer)
   const parsed = React.useMemo(() => {
     const fromJson = parseFindingsItems(itemsRaw)
     if (fromJson.length > 0) return fromJson
@@ -61,7 +66,15 @@ export function FindingsCard({
               className={cn('md-findings-row', hit && 'is-responded')}
               data-responded={hit ? 'true' : 'false'}
             >
-              <span className="md-findings-id">{`缺陷 ${f.id}`}</span>
+              <button
+                type="button"
+                className="md-findings-id"
+                disabled={streaming}
+                title={streaming ? '生成中不可回应' : `回应缺陷 ${f.id}（写入草稿，可编辑后发送）`}
+                onClick={() => insertToComposer(`回应缺陷 ${f.id}：`)}
+              >
+                {`缺陷 ${f.id}`}
+              </button>
               <span className="md-findings-body">
                 <span className="md-findings-text">{f.text}</span>
                 {f.fix ? (

@@ -22,6 +22,7 @@ import {
 } from 'lucide-react'
 import type { AgentDefinition, Plan, PlanStep, Session, TaskItem, TaskStatus } from '@multi-agent/shared'
 import { apiPatch } from '../../lib/api'
+import { memberDisplayList } from '../../lib/members'
 import { useAgentStore } from '../../stores/agent-store'
 import { usePlanStore } from '../../stores/plan-store'
 import { useSessionStore } from '../../stores/session-store'
@@ -138,7 +139,7 @@ function PlanBoardCard({ plan, members }: { plan: Plan; members: AgentDefinition
   return (
     <div className="rounded-lg border bg-card px-2.5 py-2 shadow-soft">
       <div className="flex flex-wrap items-center gap-1.5">
-        {author && <AgentAvatar agent={author} size={16} animated={false} className="rounded" />}
+        {author && <AgentAvatar agent={author} size={16} animated={false} />}
         <span className="min-w-0 flex-1 truncate text-[12px] font-semibold" title={plan.title}>
           {plan.title}
         </span>
@@ -198,7 +199,7 @@ function PlanBoardCard({ plan, members }: { plan: Plan; members: AgentDefinition
                   ) : (
                     owner && (
                       <span className="flex items-center gap-1">
-                        <AgentAvatar agent={owner} size={12} animated={false} className="rounded" />
+                        <AgentAvatar agent={owner} size={12} animated={false} />
                         {owner.name}
                       </span>
                     )
@@ -285,7 +286,7 @@ function MemberPlanCard({ member, memberId, entries }: { member?: AgentDefinitio
   return (
     <div className="rounded-lg border bg-card px-2.5 py-2 shadow-soft">
       <div className="flex items-center gap-1.5">
-        <AgentAvatar agent={member} size={16} animated={false} className="rounded" />
+        <AgentAvatar agent={member} size={16} animated={false} />
         <span className="text-[12px] font-semibold">{member?.name ?? memberId}</span>
         <span className="ml-auto text-[10.5px] text-muted-foreground">
           已规划 · 步骤 {done}/{entries.length}
@@ -392,13 +393,16 @@ export function TaskView(): React.JSX.Element {
   const sortedPlans = React.useMemo(() => sortPlans(plans), [plans])
   const pendingCount = plans.filter((p) => p.status === 'submitted').length
 
-  const members = React.useMemo(
-    () =>
-      (session?.participantIds ?? [])
-        .map((id) => agents.find((a) => a.id === id))
-        .filter(Boolean) as AgentDefinition[],
-    [session, agents],
-  )
+  // M77：成员实例投影（id = 成员键、name = 展示标签）+ 幽灵补位（历史计划/任务的作者与负责人已离场时仍可读）
+  const members = React.useMemo(() => {
+    const extra: string[] = []
+    for (const plan of sortedPlans) {
+      extra.push(plan.agentId)
+      for (const step of plan.steps) if (step.ownerAgentId) extra.push(step.ownerAgentId)
+    }
+    if (bound) for (const task of tasks) if (task.ownerAgentId) extra.push(task.ownerAgentId)
+    return memberDisplayList(agents, session, extra)
+  }, [session, agents, sortedPlans, tasks, bound])
 
   const refresh = (): void => {
     if (!currentId) return
@@ -570,7 +574,7 @@ export function TaskView(): React.JSX.Element {
             )}
             <div className="space-y-1">
               {list.map((task: TaskItem, i) => {
-                const owner = task.ownerAgentId ? agents.find((a) => a.id === task.ownerAgentId) : undefined
+                const owner = task.ownerAgentId ? members.find((a) => a.id === task.ownerAgentId) : undefined
                 return (
                   <div
                     key={task.id}
@@ -591,7 +595,7 @@ export function TaskView(): React.JSX.Element {
                         <span>{STATUS_TEXT[task.status]}</span>
                         {owner && (
                           <span className="flex items-center gap-1">
-                            <AgentAvatar agent={owner} size={13} animated={false} className="rounded" />
+                            <AgentAvatar agent={owner} size={13} animated={false} />
                             {owner.name}
                           </span>
                         )}

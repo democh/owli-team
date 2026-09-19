@@ -5,6 +5,7 @@
  * 输出四柱 / 十神（干与支藏）/ 藏干 / 五行统计 / 起运与大运 / 流年序。
  */
 import { Lunar, Solar } from 'lunar-typescript'
+import { computeRelations, computeShenSha, type BaziRelationItem, type BaziShenShaItem, type PillarSlot } from './bazi_extra.js'
 import {
   applyTrueSolarTime,
   BirthInput,
@@ -59,6 +60,26 @@ export interface ExtraPillar {
   naYin: string
 }
 
+/** 小运（起运后逐年一步；源自 lunar-typescript DaYun.getXiaoYun） */
+export interface XiaoYunItem {
+  ganZhi: string
+  age: number
+  year: number
+}
+
+/** 流月（按节气分月；源自 lunar-typescript LiuNian.getLiuYue） */
+export interface LiuYueItem {
+  /** 中文月序（正 / 二 / … / 腊） */
+  month: string
+  ganZhi: string
+}
+
+/** computeBazi 可选项（M63-A） */
+export interface BaziOptions {
+  /** 指定流年（年份如 '2026' 或干支如 '丙午'）——输出该年 12 流月 */
+  liuYueOf?: string
+}
+
 export interface BaziResult {
   /** 输入回显（校正前后 + 校正量分钟） */
   input: {
@@ -95,6 +116,16 @@ export interface BaziResult {
   daYun: DaYunItem[]
   /** 当前大运的流年序（无当前时间 → 首运前 10 年） */
   liuNian: LiuNianItem[]
+  /** 神煞（18 种，逐柱命中制；M63-A） */
+  shenSha: BaziShenShaItem[]
+  /** 柱间关系 + 运岁作用（M63-A） */
+  relations: BaziRelationItem[]
+  /** 小运（当前大运内 10 步；M63-A） */
+  xiaoYun: XiaoYunItem[]
+  /** 流月（liuYueOf 指定流年时输出 12 条；缺省 null） */
+  liuYue: LiuYueItem[] | null
+  /** 流月回显（请求的流年标识） */
+  liuYueOf: string | null
   warnings: string[]
 }
 
@@ -135,7 +166,7 @@ export function toLunar(input: BirthInput): {
 }
 
 /** 计算四柱八字（golden 测试入口） */
-export function computeBazi(input: BirthInput): BaziResult {
+export function computeBazi(input: BirthInput, opts?: BaziOptions): BaziResult {
   const { lunar, corrected, warnings, correction } = toLunar(input)
   const ec = lunar.getEightChar()
   const genderNum = input.gender === 'male' ? 1 : 0
@@ -224,6 +255,54 @@ export function computeBazi(input: BirthInput): BaziResult {
       }))
     : []
 
+  // M63-A：神煞（18 种）+ 柱间关系（含运岁作用：当前大运 / 当前流年）
+  const slots: PillarSlot[] = [
+    { position: '年', gan: pillars.year.gan, zhi: pillars.year.zhi },
+    { position: '月', gan: pillars.month.gan, zhi: pillars.month.zhi },
+    { position: '日', gan: pillars.day.gan, zhi: pillars.day.zhi },
+    { position: '时', gan: pillars.hour.gan, zhi: pillars.hour.zhi },
+  ]
+  const shenSha = computeShenSha(slots)
+  const currentLiuNian = liuNian.find((l) => l.isCurrent)
+  const relations = computeRelations(slots, {
+    ...(current ? { daYun: current.getGanZhi() } : {}),
+    ...(currentLiuNian ? { liuNian: currentLiuNian.ganZhi } : {}),
+  })
+
+  // M63-A：小运（当前大运内 10 步；与既有 Yun 同源）
+  const xiaoYun: XiaoYunItem[] = current
+    ? (
+        current.getXiaoYun() as Array<{ getGanZhi: () => string; getAge: () => number; getYear: () => number }>
+      ).map((x) => ({ ganZhi: x.getGanZhi(), age: x.getAge(), year: x.getYear() }))
+    : []
+
+  // M63-A：流月（liuYueOf 指定流年——遍历全部大运找匹配年份 / 干支）
+  let liuYue: LiuYueItem[] | null = null
+  let liuYueOf: string | null = null
+  if (opts?.liuYueOf) {
+    const target = opts.liuYueOf.trim()
+    type LiuNianLike = { getYear: () => number; getGanZhi: () => string; getLiuYue: () => Array<{ getMonthInChinese: () => string; getGanZhi: () => string }> }
+    let found: LiuNianLike | null = null
+    for (const d of daYunAll.slice(1)) {
+      const hit = (d.getLiuNian() as unknown as LiuNianLike[]).find(
+        (l) => String(l.getYear()) === target || l.getGanZhi() === target,
+      )
+      if (hit) {
+        found = hit
+        break
+      }
+    }
+    if (found) {
+      liuYueOf = `${found.getYear()} ${found.getGanZhi()}`
+      liuYue = found.getLiuYue().map((ly) => ({ month: `${ly.getMonthInChinese()}月`, ganZhi: ly.getGanZhi() }))
+    } else {
+      throw new PanError(
+        `未找到指定流年「${target}」`,
+        'liuYueOf 用年份（如 2026）或干支（如 丙午）；请确认该年在本盘流年范围内',
+      )
+    }
+  }
+
   return {
     input: {
       birth: input.birth,
@@ -248,6 +327,11 @@ export function computeBazi(input: BirthInput): BaziResult {
     startLuck,
     daYun,
     liuNian,
+    shenSha,
+    relations,
+    xiaoYun,
+    liuYue,
+    liuYueOf,
     warnings,
   }
 }

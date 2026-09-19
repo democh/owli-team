@@ -18,6 +18,13 @@ const BaziBoard = React.lazy(() => import('./BaziBoard').then((m) => ({ default:
 const ZiweiBoard = React.lazy(() => import('./ZiweiBoard').then((m) => ({ default: m.ZiweiBoard })))
 const GuaBoard = React.lazy(() => import('./GuaBoard').then((m) => ({ default: m.GuaBoard })))
 const NatalWheel = React.lazy(() => import('./NatalWheel').then((m) => ({ default: m.NatalWheel })))
+const TransitWheel = React.lazy(() => import('./TransitWheel').then((m) => ({ default: m.TransitWheel })))
+const SynastryBoard = React.lazy(() => import('./SynastryBoard').then((m) => ({ default: m.SynastryBoard })))
+const DaliurenBoard = React.lazy(() => import('./DaliurenBoard').then((m) => ({ default: m.DaliurenBoard })))
+const QizhengBoard = React.lazy(() => import('./QizhengBoard').then((m) => ({ default: m.QizhengBoard })))
+const QimenBoard = React.lazy(() => import('./QimenBoard').then((m) => ({ default: m.QimenBoard })))
+const LuopanBoard = React.lazy(() => import('./LuopanBoard').then((m) => ({ default: m.LuopanBoard })))
+const ZeriBoard = React.lazy(() => import('./ZeriBoard').then((m) => ({ default: m.ZeriBoard })))
 
 class PanBoundary extends React.Component<{ fallback?: React.ReactNode; children: React.ReactNode }, { failed: boolean }> {
   state = { failed: false }
@@ -88,6 +95,7 @@ export function PanView({ model, onAsk, fallback, sessionId, sourceKey, title }:
     ) : model.kind === 'gua' ? (
       <GuaBoard
         model={model}
+        onAsk={ask}
         onOpenToss={() =>
           openPanToss({
             compare: { title: model.ben, yao: model.yao.map((y) => ({ yin: y.yin })) },
@@ -95,6 +103,20 @@ export function PanView({ model, onAsk, fallback, sessionId, sourceKey, title }:
           })
         }
       />
+    ) : model.kind === 'transit' ? (
+      <TransitWheel model={model} onAsk={ask} />
+    ) : model.kind === 'synastry' ? (
+      <SynastryBoard model={model} onAsk={ask} />
+    ) : model.kind === 'daliuren' ? (
+      <DaliurenBoard model={model} onAsk={ask} />
+    ) : model.kind === 'qizheng' ? (
+      <QizhengBoard model={model} onAsk={ask} />
+    ) : model.kind === 'qimen' ? (
+      <QimenBoard model={model} onAsk={ask} />
+    ) : model.kind === 'luopan' ? (
+      <LuopanBoard model={model} onAsk={ask} onPalace={onPalace} />
+    ) : model.kind === 'zeri' ? (
+      <ZeriBoard model={model} onAsk={ask} />
     ) : (
       <NatalWheel model={model} onAsk={ask} />
     )

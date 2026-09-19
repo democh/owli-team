@@ -10,6 +10,7 @@
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import type * as React from 'react'
 import type { AgentDefinition, ChatMessage, ReviewRecord } from '@multi-agent/shared'
 import { Markdown } from '../src/components/chat/Markdown'
@@ -157,6 +158,13 @@ describe('缺陷-修补配对卡（::: findings）', () => {
     const { container } = render(<FindingsCard items={'oops'} raw={'备份文本'} />)
     expect(container.querySelector('.md-findings-static')?.textContent).toBe('备份文本')
   })
+
+  it('点缺陷编号 → 回应草稿回填「回应缺陷 N：」（发送后由配对机制点亮「已响应」）', () => {
+    const { container } = render(wrapMd('m43-findings-fill', 'm1', <Markdown content={FINDINGS} />))
+    const ids = container.querySelectorAll('.md-findings-id')
+    fireEvent.click(ids[1]!)
+    expect(useUiStore.getState().composerInsert?.text).toBe('回应缺陷 2：')
+  })
 })
 
 // ---------- 主张卡 / 报价卡 / 对决声明卡 ----------
@@ -208,6 +216,15 @@ describe('报价卡（::: offer）', () => {
     const priced = card.querySelectorAll('.md-offer-row.is-price')
     expect(priced).toHaveLength(1)
     expect(priced[0]!.textContent).toContain('98 万')
+  })
+
+  it('点值复制：写入剪贴板并短暂显示勾选（与 KPI 同模式）', async () => {
+    const user = userEvent.setup()
+    const { container } = render(wrapMd('m43-offer-copy', 'm1', <Markdown content={OFFER} />))
+    const values = container.querySelectorAll('.md-offer-value')
+    await user.click(values[0]!)
+    await waitFor(() => expect(values[0]!.querySelector('.lucide-check')).not.toBeNull())
+    expect(await navigator.clipboard.readText()).toBe('98 万')
   })
 })
 

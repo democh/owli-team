@@ -104,7 +104,7 @@ export function ArtifactFeedView(): React.JSX.Element {
               {baseName(artifact.path)}
             </span>
             <span className="shrink-0 text-[9.5px] text-muted-foreground">{humanSize(artifact.size)}</span>
-            {author && <AgentAvatar agent={author} size={14} animated={false} className="shrink-0 rounded" />}
+            {author && <AgentAvatar agent={author} size={14} animated={false} className="shrink-0" />}
           </div>
 
           {/* ① 预览区（flex-1，内部滚动） */}

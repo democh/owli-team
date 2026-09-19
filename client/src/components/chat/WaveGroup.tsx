@@ -10,6 +10,8 @@
  * 内容二栏（窄屏回退纵向单流）、组尾裁决卡（PK-4，仅最新成员波；运行中禁用；回填只写草稿）。
  * 计分 / 裁决卡在子组件内隔离订阅（useSceneMessages 节流 + useSceneBusy primitive 三路），
  * 主组件仍不随流式增量重渲染。
+ * M39（§97，MK-1）：波次网格——营销 / 健康场景同波 2–4 条改 2 列网格（`data-wave-grid`）；
+ * 窄屏 / 单条 / 超出 2–4 条回退纵向单列（现状口径）。
  */
 import * as React from 'react'
 import { ChevronDown, Columns2, Gavel, Swords } from 'lucide-react'
@@ -17,6 +19,8 @@ import { useAgentStore } from '../../stores/agent-store'
 import { useSessionStore } from '../../stores/session-store'
 import { useUiStore } from '../../stores/ui-store'
 import { cn } from '../../lib/utils'
+import { baseAgentId } from '@multi-agent/shared'
+import { labelOfMemberKey } from '../../lib/members'
 import {
   duelPhaseOf,
   duelSides,
@@ -33,14 +37,26 @@ import { MessageItem } from './MessageItem'
 /** 入场动效窗口：仅新近波次播放，虚拟列表重挂载不重放 */
 const WAVE_ANIMATE_WINDOW_MS = 60_000
 
+/** M39（MK-1）：波次网格场景（同波 2–4 条 → 2 列） */
+const GRID_SCENES = new Set(['marketing', 'health'])
+
 export function WaveGroup({ ids }: { ids: string[] }): React.JSX.Element {
   const agents = useAgentStore((s) => s.agents)
+  const session = useSessionStore((s) => s.sessions.find((x) => x.id === s.currentId))
   const quiet = useUiStore((s) => s.quietMode)
   const ctx = useSceneCtx()
   const [open, setOpen] = React.useState(true)
 
   // 组头数据都是 primitive：任意流式增量只改 byId 内容，不改变本组件订阅结果
-  const memberKey = useSessionStore((s) => ids.map((id) => s.byId.get(id)?.agentId ?? '').join(','))
+  // M77：成员键（分身实例）而非基础角色——组头署名 / 头像按实例区分
+  const memberKey = useSessionStore((s) =>
+    ids
+      .map((id) => {
+        const m = s.byId.get(id)
+        return m?.memberKey ?? m?.agentId ?? ''
+      })
+      .join(','),
+  )
   const doneCount = useSessionStore((s) => {
     let n = 0
     for (const id of ids) {
@@ -52,23 +68,29 @@ export function WaveGroup({ ids }: { ids: string[] }): React.JSX.Element {
   const turnIndex = useSessionStore((s) => s.byId.get(ids[0])?.turnIndex)
 
   const agentIds = React.useMemo(() => memberKey.split(','), [memberKey])
+  /** 对决 / 分栏口径基础角色（席位声明为基础 id） */
+  const baseIds = React.useMemo(() => agentIds.map((k) => (k ? baseAgentId(k) : '')), [agentIds])
   const seats = ctx?.stage.seats
   // 对决分侧（PK-1）：仅场景内、显式结构化口径（席位优先 → 姿态注册表）；两侧均非空才成对决
   const split = React.useMemo(
-    () => (ctx ? duelSides(agentIds.filter(Boolean), seats) : undefined),
-    [ctx, agentIds, seats],
+    () => (ctx ? duelSides(baseIds.filter(Boolean), seats) : undefined),
+    [ctx, baseIds, seats],
   )
   const duel = split !== undefined && ids.length >= 2
+  // M39（MK-1）：波次网格（营销 / 健康 × 同波 2–4 条 × 非窄屏 × 非对决）
+  const grid = !duel && !!ctx && GRID_SCENES.has(ctx.group?.id ?? '') && ids.length >= 2 && ids.length <= 4 && !ctx.narrow
 
+  // M77：组头署名走成员标签回退链（分身 = 名字·灵魂名）；头像取基础角色（重复实例按序重叠展示）
   const nameOf = React.useCallback(
-    (id: string | undefined): string => (id ? (agents.find((a) => a.id === id)?.name ?? '') : ''),
-    [agents],
+    (id: string | undefined): string => (id ? labelOfMemberKey(agents, session, id) : ''),
+    [agents, session],
   )
 
-  const members = memberKey
-    .split(',')
-    .map((id) => agents.find((a) => a.id === id))
+  const members = agentIds
+    .filter(Boolean)
+    .map((k) => agents.find((a) => a.id === baseAgentId(k)))
     .filter((a): a is NonNullable<typeof a> => Boolean(a))
+  const memberLabels = agentIds.filter(Boolean).map((k) => labelOfMemberKey(agents, session, k))
   const animate =
     !quiet && createdAt !== '' && Date.now() - Date.parse(createdAt) < WAVE_ANIMATE_WINDOW_MS
   const allDone = doneCount >= ids.length
@@ -80,13 +102,13 @@ export function WaveGroup({ ids }: { ids: string[] }): React.JSX.Element {
     const rightSet = new Set(split.right)
     const out = { left: [] as string[], right: [] as string[], center: [] as string[] }
     ids.forEach((id, i) => {
-      const agent = agentIds[i] ?? ''
+      const agent = baseIds[i] ?? ''
       if (leftSet.has(agent)) out.left.push(id)
       else if (rightSet.has(agent)) out.right.push(id)
       else out.center.push(id)
     })
     return out
-  }, [ids, agentIds, split])
+  }, [ids, baseIds, split])
 
   // 裁决卡仅在「本组为最新成员波」时出现（历史对决波不重复挂按钮）
   const isLatestWave = useSessionStore((s) => {
@@ -156,11 +178,11 @@ export function WaveGroup({ ids }: { ids: string[] }): React.JSX.Element {
                 并行协作
               </span>
               <span className="flex shrink-0 -space-x-1.5">
-                {members.map((a) => (
-                  <AgentAvatar key={a.id} agent={a} size={18} animated={false} className="rounded-full ring-1 ring-card" />
+                {members.map((a, i) => (
+                  <AgentAvatar key={`${a.id}-${i}`} agent={a} size={18} animated={false} className="ring-1 ring-card" />
                 ))}
               </span>
-              <span className="min-w-0 truncate text-muted-foreground">{members.map((a) => a.name).join('、')}</span>
+              <span className="min-w-0 truncate text-muted-foreground">{memberLabels.join('、')}</span>
             </>
           )}
           <span
@@ -192,10 +214,16 @@ export function WaveGroup({ ids }: { ids: string[] }): React.JSX.Element {
                 ) : null}
               </div>
             ) : (
-              <div className="border-t border-primary/10 py-0.5">
-                {ids.map((id) => (
-                  <MessageItem key={id} messageId={id} />
-                ))}
+              <div className="border-t border-primary/10 py-0.5" {...(grid ? { 'data-wave-grid': '' } : {})}>
+                {grid ? (
+                  <div className="grid grid-cols-2 items-start gap-x-2">
+                    {ids.map((id) => (
+                      <MessageItem key={id} messageId={id} />
+                    ))}
+                  </div>
+                ) : (
+                  ids.map((id) => <MessageItem key={id} messageId={id} />)
+                )}
               </div>
             )}
             {duel && split && isLatestWave && ctx ? (

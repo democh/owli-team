@@ -92,7 +92,7 @@ describe('M30：取数能力与只读边界（可达性基线）', () => {
 describe('M30：方法论文档在场（技能层与场景协议）', () => {
   it('技能预载：nl2sql / data-visualization / spreadsheet-modeling', () => {
     const lib = realLibrary()
-    expect(lib.get('bi')?.skills).toEqual(['nl2sql', 'data-visualization', 'spreadsheet-modeling'])
+    expect(lib.get('bi')?.skills).toEqual(['nl2sql', 'data-visualization', 'spreadsheet-modeling', 'report-authoring'])
   })
 
   it('nl2sql 技能在场：描述含触发场景，正文含六步法与纪律关键词', () => {

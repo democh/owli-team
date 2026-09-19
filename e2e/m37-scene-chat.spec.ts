@@ -2,7 +2,7 @@
  * E2E · M37 场景化对话基座（mock 模式）：
  * 1) 场景资产与波次导航：新会话空态 → 资产 guide + 议程 chips（点击预填草稿、不直发）
  *    → 全链收束（尾条 @用户 → 你的回合 + 收尾交付清单）→ 上滑离开底部 → 波次分隔行进入
- *    视口 + 悬浮阶段条（第 1 波）→ 点击跳波起点；
+ *    视口 + 悬浮阶段条（M39：研发场景换显示为「需求 · 阶段 1/7」）→ 点击跳波起点；
  * 2) 结构化容器闭环：发送含触发词消息 → checklist 卡（流式禁用 → 完成态点选联动计数）
  *    → 「回填完成情况」写入 Composer 草稿（ADR 0064）→ 用户确认发送 → 回填消息落流。
  * 锚点：虚拟列表下用 data-wave-sep / data-wave-strip 属性定位（类名/结构不稳定）。
@@ -31,6 +31,7 @@ test('M37 · 场景基座：议程 chips 预填 → 波次分隔行 → 悬浮�
   await expect(manifest.locator('[data-delivery-row]').first()).toBeVisible()
 
   // M37-2/3：上滑离开底部 → 波次分隔行进入视口 + 悬浮阶段条挂载（首个可见行起向前扫描 = 第 1 波）
+  // M39（DEV-1）：研发场景阶段换显示——药丸为「需求 · 阶段 1/7」（data-wave-stage 锚点）
   const log = page.getByRole('log', { name: '消息流' })
   await log.evaluate((el) => {
     el.scrollTop = 0
@@ -41,11 +42,12 @@ test('M37 · 场景基座：议程 chips 预填 → 波次分隔行 → 悬浮�
   await expect(page.locator('[data-wave-sep]').first()).toBeVisible()
   const strip = page.locator('[data-wave-strip]')
   await expect(strip).toBeVisible()
-  await expect(strip).toContainText('第 1 波')
+  await expect(strip).toHaveAttribute('data-wave-stage', '需求')
+  await expect(strip).toContainText('阶段 1/7')
 
   // 点击跳波起点：滚动定位后仍处于「离开底部」态（悬浮条由 vp 派生保留）
   await strip.click()
-  await expect(strip).toContainText('第 1 波')
+  await expect(strip).toContainText('需求')
 })
 
 test('M37 · 结构化容器：checklist 点选 → 回填完成情况进草稿 → 确认发送', async ({ page }) => {

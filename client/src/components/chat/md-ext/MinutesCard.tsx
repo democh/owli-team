@@ -1,17 +1,31 @@
 /**
  * M42（§71.4）：纪要卡（::: minutes [标题]）——条目由 remark 侧转 data-items JSON（`- 键 | 值`）。
  * - 三栏：决议 / 待办 / 风险（未识别键归入决议栏；空栏显示占位）；
+ * - 「复制纪要」：导出 markdown 分栏文本（标题 + 三栏），便于转发 / 存档；
  * - 待办值以 `@负责人 事项` 开头时显示负责人头像，整行可点 → 回填 `@负责人 ` 草稿（ADR 0064：只写草稿不直发）；
  * - 流式期间派活行不可点；解析失败 / 空条目 → raw 兜底静态渲染，其余内容照常。
  */
 import * as React from 'react'
 import { Send } from 'lucide-react'
 import { cn } from '../../../lib/utils'
-import { MINUTES_KEYS, parseMinutesItems, splitMinutesOwner } from '../../../lib/meeting'
+import { MINUTES_KEYS, parseMinutesItems, splitMinutesOwner, type MinutesItem } from '../../../lib/meeting'
 import { useAgentStore } from '../../../stores/agent-store'
 import { useUiStore } from '../../../stores/ui-store'
 import { AgentAvatar } from '../../agents/AgentAvatar'
+import { CopyButton } from './CopyButton'
 import { useStreaming } from './streaming'
+
+/** 纪要条目 → 可复制结构化文本（markdown 分栏，可粘贴回聊天 / 文档） */
+export function buildMinutesText(title: string | undefined, items: MinutesItem[]): string {
+  const head = `## ${title || '会议纪要'}`
+  const sections = MINUTES_KEYS.map((key) => {
+    const rows = items.filter((it) =>
+      (MINUTES_KEYS as readonly string[]).includes(it.key) ? it.key === key : key === MINUTES_KEYS[0],
+    )
+    return [`### ${key}`, ...(rows.length > 0 ? rows.map((it) => `- ${it.value}`) : ['—'])].join('\n')
+  })
+  return [head, ...sections].join('\n\n')
+}
 
 export function MinutesCard({
   title,
@@ -44,6 +58,7 @@ export function MinutesCard({
       <div className="md-minutes-head">
         <span className="md-minutes-title">{title || '会议纪要'}</span>
         <span className="md-minutes-count">{parsed.length} 条</span>
+        <CopyButton text={() => buildMinutesText(title, parsed)} label="复制纪要" />
       </div>
       <div className="md-minutes-cols">
         {MINUTES_KEYS.map((key) => {
@@ -84,7 +99,7 @@ export function MinutesCard({
                     onClick={() => insertToComposer(`@${owner} `)}
                   >
                     {agent ? (
-                      <AgentAvatar agent={agent} size={18} animated={false} className="shrink-0 rounded-full" />
+                      <AgentAvatar agent={agent} size={18} animated={false} className="shrink-0" />
                     ) : (
                       <span className="md-minutes-owner-fallback" aria-hidden>
                         {owner.slice(0, 1)}

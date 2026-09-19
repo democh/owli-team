@@ -5,7 +5,7 @@
  * 与 React Flow 解耦：输入输出均为 shared 的 CanvasNode / CanvasEdge 内容（可单测）。
  * 坐标约定：顶层节点为画布绝对坐标；子节点（parentId）为父画框内相对坐标。
  */
-import type { CanvasEdge, CanvasEdgeKind, CanvasNode, CanvasNodeData, CanvasNodeType } from '@multi-agent/shared'
+import type { CanvasDoc, CanvasEdge, CanvasEdgeKind, CanvasNode, CanvasNodeData, CanvasNodeType } from '@multi-agent/shared'
 import { visualOfFile } from './attachments'
 
 /** id 生成（与项目既有 `${prefix}_${uuid8}` 口径一致；jsdom 无 randomUUID 时回落） */
@@ -14,6 +14,10 @@ function uid8(): string {
   if (c && typeof c.randomUUID === 'function') return c.randomUUID().slice(0, 8)
   return Math.random().toString(16).slice(2, 10).padEnd(8, '0')
 }
+
+/** fitView 缩放上限与留白（画布口径：不对小内容做超原生尺寸的放大；缩放指示器 / 快捷键共用） */
+export const FIT_MAX_ZOOM = 1
+export const FIT_VIEW_PADDING = 0.2
 
 export function newNodeId(): string {
   return `nd_${uid8()}`
@@ -73,6 +77,52 @@ export function canConnect(source: CanvasNodeType, target: CanvasNodeType): Canv
   const flowTarget = target === 'image' || target === 'video'
   if (flowSource && flowTarget) return 'flow'
   return 'ref'
+}
+
+// ---------- 画布内查找（M31 修订） ----------
+
+/** 查找命中（面板列表行） */
+export interface CanvasSearchHit {
+  id: string
+  type: CanvasNodeType
+  /** 主文案（节点标签截断） */
+  label: string
+  /** 副文案（类型 + 匹配片段） */
+  snippet: string
+}
+
+/** 可搜索文本（按类型提取展示字段：文本 / 标题 / 提示词 / 路径 / 名称 / 标的 / 话题） */
+function searchableText(node: CanvasNode): string {
+  const d = node.data as Record<string, unknown>
+  const parts: string[] = []
+  for (const key of ['text', 'title', 'prompt', 'negative', 'path', 'artifact', 'name', 'symbol', 'topic'] as const) {
+    const v = d[key]
+    if (typeof v === 'string' && v) parts.push(v)
+  }
+  return parts.join(' ')
+}
+
+/** 画布内查找：按文本匹配全部节点类型，大小写不敏感；空查询返回空（limit 防大画布列表失控） */
+export function searchNodes(doc: CanvasDoc, query: string, limit = 12): CanvasSearchHit[] {
+  const q = query.trim().toLowerCase()
+  if (!q) return []
+  const hits: CanvasSearchHit[] = []
+  for (const n of doc.nodes) {
+    const text = searchableText(n)
+    const idx = text.toLowerCase().indexOf(q)
+    if (idx < 0) continue
+    const from = Math.max(0, idx - 16)
+    const slice = text.slice(from, from + 56)
+    const label = nodeLabel(n)
+    hits.push({
+      id: n.id,
+      type: n.type,
+      label: label.length > 42 ? `${label.slice(0, 42)}…` : label,
+      snippet: `${NODE_TYPE_LABEL[n.type]} · ${from > 0 ? '…' : ''}${slice}${text.length > from + 56 ? '…' : ''}`,
+    })
+    if (hits.length >= limit) break
+  }
+  return hits
 }
 
 // ---------- 剪贴板 ----------
@@ -399,6 +449,8 @@ export interface SnapGuide {
   /** 参考线覆盖区间的起点 / 终点（画布坐标） */
   from: number
   to: number
+  /** M31 修订：对齐线（缺省）/ 等距标记（Figma 等距语义，渲染为独立颜色） */
+  kind?: 'align' | 'dist'
 }
 
 export interface SnapResult {
@@ -417,9 +469,65 @@ function landmarksY(r: SnapRect): number[] {
   return [r.y, r.y + r.height / 2, r.y + r.height]
 }
 
+/** M31 修订：等距吸附——moving 被两节点水平/垂直夹击且两侧间隙近似相等时，吸附到等距中点（Figma 等距语义；优先于普通对齐） */
+function distSnap(moving: SnapRect, others: readonly SnapRect[], threshold: number): { dx?: number; dy?: number; guides: SnapGuide[] } {
+  const guides: SnapGuide[] = []
+  let dx: number | undefined
+  let dy: number | undefined
+
+  // 水平：左邻（右缘 ≤ moving 左缘中最右）/ 右邻（左缘 ≥ moving 右缘中最左）
+  let left: SnapRect | undefined
+  let right: SnapRect | undefined
+  let top: SnapRect | undefined
+  let bottom: SnapRect | undefined
+  for (const o of others) {
+    if (o.x + o.width <= moving.x) {
+      if (!left || o.x + o.width > left.x + left.width) left = o
+    } else if (o.x >= moving.x + moving.width) {
+      if (!right || o.x < right.x) right = o
+    }
+    if (o.y + o.height <= moving.y) {
+      if (!top || o.y + o.height > top.y + top.height) top = o
+    } else if (o.y >= moving.y + moving.height) {
+      if (!bottom || o.y < bottom.y) bottom = o
+    }
+  }
+  if (left && right) {
+    const gap = (right.x - (left.x + left.width) - moving.width) / 2
+    if (gap > 0.5) {
+      const target = left.x + left.width + gap
+      const d = target - moving.x
+      if (Math.abs(d) <= threshold) {
+        dx = d
+        const from = Math.min(left.y, right.y, moving.y)
+        const to = Math.max(left.y + left.height, right.y + right.height, moving.y + moving.height)
+        // 两条标记线：两侧间隙的各中点
+        guides.push({ orientation: 'v', position: left.x + left.width + gap / 2, from, to, kind: 'dist' })
+        guides.push({ orientation: 'v', position: target + moving.width + gap / 2, from, to, kind: 'dist' })
+      }
+    }
+  }
+  if (top && bottom) {
+    const gap = (bottom.y - (top.y + top.height) - moving.height) / 2
+    if (gap > 0.5) {
+      const target = top.y + top.height + gap
+      const d = target - moving.y
+      if (Math.abs(d) <= threshold) {
+        dy = d
+        const from = Math.min(top.x, bottom.x, moving.x)
+        const to = Math.max(top.x + top.width, bottom.x + bottom.width, moving.x + moving.width)
+        guides.push({ orientation: 'h', position: top.y + top.height + gap / 2, from, to, kind: 'dist' })
+        guides.push({ orientation: 'h', position: target + moving.height + gap / 2, from, to, kind: 'dist' })
+      }
+    }
+  }
+  return { dx, dy, guides }
+}
+
 /**
  * 对齐吸附：moving 与 others 的三基准位比对，取最近的小于阈值的偏移量吸附；
- * 同时返回该位置上的参考线（覆盖 moving 与参与节点区间）。
+ * 同时返回该位置上的参考线（覆盖 moving 与参与节点区间）；
+ * M31 修订：叠加等距吸附（被两侧夹击且间距相等时优先吸附到等距位）。
  */
 export function computeSnap(moving: SnapRect, others: readonly SnapRect[], threshold = SNAP_THRESHOLD): SnapResult {
   const mV = landmarksX(moving)
@@ -440,6 +548,10 @@ export function computeSnap(moving: SnapRect, others: readonly SnapRect[], thres
       }
     }
   }
+  // M31 修订：等距吸附（更强意图，命中时覆盖对齐位移）
+  const dist = distSnap(moving, others, threshold)
+  if (dist.dx !== undefined) dx = dist.dx
+  if (dist.dy !== undefined) dy = dist.dy
   const position = { x: moving.x + (dx ?? 0), y: moving.y + (dy ?? 0) }
   const snapped: SnapRect = { ...moving, ...position }
   const guides: SnapGuide[] = []
@@ -473,7 +585,8 @@ export function computeSnap(moving: SnapRect, others: readonly SnapRect[], thres
     }
     for (const p of positions) guides.push({ orientation: 'h', position: p, from, to })
   }
-  return { position, guides }
+  // M31 修订：等距标记随对齐线一同返回（kind='dist'，前端以独立颜色渲染）
+  return { position, guides: dist.guides.length > 0 ? [...guides, ...dist.guides] : guides }
 }
 
 // ---------- 脑图折叠 ----------

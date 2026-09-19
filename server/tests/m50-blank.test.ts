@@ -100,10 +100,8 @@ const routingTraces = (env: Env, runId: string): Array<{ payload: Record<string,
 
 // ---------- M28 装配（m28-engine-search.test.ts 同款） ----------
 
-/** M47：pin 网关门控开启（断言的是「分层」而非「环境不可用」） */
+/** M47：pin 门控开启（断言的是「分层」而非「环境不可用」）；联网工具无环境门控（ADR 0136） */
 const NET_ENABLED: Parameters<typeof makeEnv>[0] = {
-  webSearch: { enabled: true, apiKey: '', apiUrl: '', htmlUrl: '' },
-  webFetchAllowedDomains: ['example.invalid'],
   allowRunCommand: true,
 }
 

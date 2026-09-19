@@ -21,39 +21,41 @@ import type {
 import { CAPABILITY_LABEL } from '../../lib/media'
 import { cn } from '../../lib/utils'
 import { useConnectionsStore } from '../../stores/connections-store'
+import { useMediaStore } from '../../stores/media-store'
 import { Button } from '../ui/button'
 import { Input } from '../ui/input'
 import { Switch } from '../console/fields'
 
+/** 媒体连接清单变更 → 重拉全局 providers（画布能力门控与生成面板共用的判定源） */
+function syncMediaProviders(): void {
+  void useMediaStore.getState().refreshProviders()
+}
+
 /** M31 媒体生成：提供方注册表（与 shared MediaProviderKind / 服务端四适配器一一对应）。
- *  M36：补充适配器能力矩阵与联调探活说明（提供方卡片 / 能力矩阵 / 测试联调数据源）。 */
+ *  M36：补充提供方卡片与能力矩阵。 */
 const MEDIA_PROVIDERS: Record<
   MediaProviderKind,
-  { label: string; hint: string; capabilities: MediaCapability[]; testHint: string }
+  { label: string; hint: string; capabilities: MediaCapability[] }
 > = {
   comfyui: {
     label: 'ComfyUI',
     hint: '本地生图 / 视频 / 首尾帧',
     capabilities: ['text2image', 'image2image', 'text2video', 'image2video', 'firstlast2video'],
-    testHint: 'GET /system_stats 探活（版本与设备数）',
   },
   sdwebui: {
     label: 'Stable Diffusion WebUI',
     hint: '本地生图 / 图生图',
     capabilities: ['text2image', 'image2image'],
-    testHint: 'GET /sdapi/v1/options 探活（当前模型）',
   },
   openai: {
     label: 'OpenAI 兼容图像 API',
     hint: '云端生图 / 编辑',
     capabilities: ['text2image', 'image2image'],
-    testHint: 'GET /models 探活（可用模型数）',
   },
   template: {
     label: '通用异步任务模板',
     hint: '云端视频：提交-轮询-取件',
     capabilities: ['text2image', 'image2image', 'text2video', 'image2video', 'firstlast2video'],
-    testHint: '校验三段式模板完整性（create / poll / extract）',
   },
 }
 const MEDIA_CAPS: MediaCapability[] = ['text2image', 'image2image', 'text2video', 'image2video', 'firstlast2video']
@@ -326,6 +328,7 @@ function MediaConnectionForm({
         savedId = saved.id
         toast('连接已创建并启用')
       }
+      syncMediaProviders()
       onDone()
       // 保存并测试（Navicat 习惯）：关闭表单后回显测试结果
       if (testAfter && savedId) {
@@ -360,7 +363,7 @@ function MediaConnectionForm({
 
       {/* M36：提供方卡片（选择即收敛能力矩阵与联调方式） */}
       <div className="space-y-1 pt-0.5">
-        <span className="text-[10.5px] text-muted-foreground">提供方（决定适配器能力矩阵与联调探活方式）</span>
+        <span className="text-[10.5px] text-muted-foreground">提供方</span>
         <div className="grid grid-cols-2 gap-1.5">
           {(Object.keys(MEDIA_PROVIDERS) as MediaProviderKind[]).map((p) => {
             const meta = MEDIA_PROVIDERS[p]
@@ -600,22 +603,15 @@ function MediaConnectionForm({
         />
       </Field>
 
-      {/* M36：测试联调说明（按提供方展示真实探活方式） */}
-      <p className="rounded-md border border-dashed px-2 py-1.5 text-[10.5px] leading-4 text-muted-foreground">
-        「保存并测试」将执行联调探活：
-        <span className="text-foreground/80">{MEDIA_PROVIDERS[form.mediaProvider].testHint}</span>
-        ；启用后全场景可用（画布「媒体生成」面板与 Agent 工具），无需会话绑定。
-        {form.mediaProvider === 'template' && (
-          <>
-            {' '}
-            模板占位符：
-            <span className="font-mono">
-              {'{{prompt}} {{negative}} {{seed}} {{width}} {{height}} {{duration}} {{model}} {{image}} {{first_frame}} {{last_frame}}'}
-            </span>
-            （输入图自动转 base64）。
-          </>
-        )}
-      </p>
+      {/* M36：模板占位符参考（写模板时的字段级清单） */}
+      {form.mediaProvider === 'template' && (
+        <p className="rounded-md border border-dashed px-2 py-1.5 text-[10.5px] leading-4 text-muted-foreground">
+          模板占位符：
+          <span className="font-mono">
+            {'{{prompt}} {{negative}} {{seed}} {{width}} {{height}} {{duration}} {{model}} {{image}} {{first_frame}} {{last_frame}}'}
+          </span>
+        </p>
+      )}
 
       <div className="flex items-center gap-1.5 pt-0.5">
         <Button size="xs" disabled={saving} onClick={() => void save()}>
@@ -665,6 +661,7 @@ function MediaConnectionCard({
   const toggleEnabled = async (enabled: boolean): Promise<void> => {
     try {
       await useConnectionsStore.getState().update(connection.id, { enabled })
+      syncMediaProviders()
       toast(enabled ? '已启用（画布生成面板与 Agent 工具可用）' : '已停用（生成入口暂不可用）')
     } catch (err) {
       toast.error((err as Error).message)
@@ -719,7 +716,10 @@ function MediaConnectionCard({
             void useConnectionsStore
               .getState()
               .remove(connection.id)
-              .then(() => toast('连接已删除'))
+              .then(() => {
+                syncMediaProviders()
+                toast('连接已删除')
+              })
               .catch((err: Error) => toast.error(err.message))
           }}
         >
@@ -768,7 +768,7 @@ export function MediaConnectionsSection(): React.JSX.Element {
     <div className="space-y-3">
       <div className="flex items-center gap-1.5">
         <span className="text-[11px] text-muted-foreground">
-          {loading && media.length === 0 ? '正在加载连接…' : `已配置 ${media.length} 个连接 · 启用即全场景可用（无需会话绑定）`}
+          {loading && media.length === 0 ? '正在加载连接…' : `已配置 ${media.length} 个连接`}
         </span>
         <Button
           size="xs"
@@ -792,7 +792,7 @@ export function MediaConnectionsSection(): React.JSX.Element {
       {media.length === 0 && !creating && !(loading && media.length === 0) && (
         <div className="rounded-lg border border-dashed px-4 py-8 text-center text-[11.5px] text-muted-foreground">
           <Clapperboard className="float-soft mx-auto mb-2 size-5 text-primary/40" />
-          还没有媒体生成连接。创建并启用后，画布「媒体生成」面板与 Agent 工具（media_generate / media_video）即可用。
+          还没有媒体生成连接。创建并启用后，画布与 Agent 工具即可用。
         </div>
       )}
 

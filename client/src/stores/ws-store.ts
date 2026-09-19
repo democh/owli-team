@@ -28,6 +28,7 @@ import { useBrowserStore } from './browser-store'
 import { useCanvasStore } from './canvas-store'
 import { useConnectionsStore } from './connections-store'
 import { useConsoleStore } from './console-store'
+import { useShareStore } from './share-store'
 import { useLiveDockStore } from './live-dock-store'
 import { useLivePanelStore } from './live-panel-store'
 import { useMcpStore } from './mcp-store'
@@ -57,7 +58,7 @@ const cursors = new Map<string, number>()
 let pollTimer: ReturnType<typeof setInterval> | undefined
 let flashTimer: ReturnType<typeof setInterval> | undefined
 let flashing = false
-let baseTitle = '多 Agent 研发团队'
+let baseTitle = 'Owli Team'
 /** 通知降级轮询间隔（M4：由 GET /api/health 下发 NOTIFY_POLL_MS，默认 8s） */
 let pollMs = 8000
 
@@ -142,10 +143,28 @@ export function handleNotify(env: NotifyEnvelope): void {
     }
 
     // M31：画布远端变更（agent canvas_write / 其他标签页保存）——本地空闲立即拉取合流，脏则保存后补拉
+    // M31 修订：透传 touched/actor（写入高亮 + 作者徽标）；同会话且不在画布页时累计页签角标
     case 'notify:canvas-changed': {
-      useCanvasStore
-        .getState()
-        .handleRemoteChange(env.sessionId, Number(env.payload.version ?? 0), String(env.payload.by) === 'agent' ? 'agent' : 'user')
+      const by = String(env.payload.by) === 'agent' ? ('agent' as const) : ('user' as const)
+      const rawTouched = env.payload.touched as { added?: unknown; updated?: unknown; removed?: unknown } | undefined
+      const arr = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [])
+      const meta = {
+        actor: typeof env.payload.actor === 'string' ? env.payload.actor : undefined,
+        touched: rawTouched ? { added: arr(rawTouched.added), updated: arr(rawTouched.updated), removed: arr(rawTouched.removed) } : undefined,
+      }
+      useCanvasStore.getState().handleRemoteChange(env.sessionId, Number(env.payload.version ?? 0), by, meta)
+      if (by === 'agent') {
+        if (sameSession) {
+          // 当前会话：不在画布页时累计页签角标
+          if (useUiStore.getState().mainTab !== 'canvas') {
+            const n = meta.touched ? meta.touched.added.length + meta.touched.updated.length + meta.touched.removed.length : 1
+            useUiStore.getState().noteCanvasWrite(Math.max(1, n))
+          }
+        } else {
+          // M31 修订：其他会话的 agent 写入 → 会话列表小点（切到该会话即清零）
+          useUiStore.getState().noteOtherCanvasWrite(env.sessionId)
+        }
+      }
       break
     }
 
@@ -253,6 +272,21 @@ export function handleNotify(env: NotifyEnvelope): void {
       break
     }
 
+    // M57 P2：会话共享变更（邀请 / 改角色 / 移出 / 自助退出）——刷新会话列表；
+    // 当前会话已不可见（被移出 / 已退出）→ 清空当前视图并提示；面板正打开则同步刷新
+    case 'notify:share-changed': {
+      const payload = env.payload as { userId?: string; action?: string }
+      useShareStore.getState().refreshIfOpen(env.sessionId)
+      void useSessionStore.getState().loadSessions().then(() => {
+        const after = useSessionStore.getState()
+        if (after.currentId && !after.sessions.some((x) => x.id === after.currentId)) {
+          void after.selectSession(undefined)
+          toast.info(payload.action === 'left' ? '你已退出该共享会话' : '你已被移出该共享会话')
+        }
+      })
+      break
+    }
+
     // M26：资产变更（Agent / Skill / 场景；保留主题 __assets__）——多标签页同步，不计未读
     case 'notify:assets-changed': {
       void useConsoleStore.getState().refreshAll() // 内部含 agent-store.reload
@@ -300,7 +334,7 @@ export function handleNotify(env: NotifyEnvelope): void {
       } else {
         const text = `⏰ ${sessionTitle(env.sessionId)}：${task?.title ?? '定时提醒'}`
         toast(text)
-        if (!visible) systemNotify('多 Agent 研发团队', text)
+        if (!visible) systemNotify('Owli Team', text)
         const next = { ...useWsStore.getState().unread }
         next[env.sessionId] = (next[env.sessionId] ?? 0) + 1
         useWsStore.setState({ unread: next })
@@ -323,7 +357,7 @@ export function handleNotify(env: NotifyEnvelope): void {
             : `${title}：本轮协作完成`
       if (env.type === 'notify:run-error') toast.error(text)
       else toast(text)
-      if (!visible) systemNotify('多 Agent 研发团队', text)
+      if (!visible) systemNotify('Owli Team', text)
       const next = { ...useWsStore.getState().unread }
       next[env.sessionId] = (next[env.sessionId] ?? 0) + 1
       useWsStore.setState({ unread: next })

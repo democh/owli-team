@@ -44,7 +44,7 @@ test('右栏显隐：中区头部钮 / 刷新持久化 / ⌘B 与命令面板同
 
   // 3) 刷新持久化：收起状态保持（localStorage ma:rightPanelOpen=0），钮仍为「显示右栏」
   await page.reload()
-  await expect(page.getByText('多 Agent 研发团队').first()).toBeVisible()
+  await expect(page.getByText('Owli Team').first()).toBeVisible()
   await expect(teamTab(page)).toBeHidden()
   await expect(mainPanel.getByTitle('显示右栏（⌘B）')).toBeVisible()
 
@@ -102,7 +102,7 @@ test('左栏显隐：左缘中部悬浮把手（悬停淡入）/ 刷新持久化
 
   // 3) 刷新持久化：收起状态保持（localStorage ma:leftPanelOpen=0），钮仍在
   await page.reload()
-  await expect(page.getByText('多 Agent 研发团队').first()).toBeVisible()
+  await expect(page.getByText('Owli Team').first()).toBeVisible()
   await expect(page.locator('[data-panel-id="sessions"]')).toHaveCount(0)
   await expect(mainPanel.getByTitle('显示左栏（⌘⇧B）')).toBeVisible()
 

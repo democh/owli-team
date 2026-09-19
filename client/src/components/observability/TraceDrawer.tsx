@@ -183,6 +183,7 @@ function renderEvent(entry: TraceEntry, nameOf: (id: string) => string, startedA
       const flags = [
         p.handedToUser === true ? '交还用户' : '',
         p.loopSuppressed === true ? '循环抑制' : '',
+        p.stallSuppressed === true ? '停滞抑制' : '',
         p.fallbackUsed === true ? '文本回退' : '',
       ].filter(Boolean)
       const source = typeof p.source === 'string' ? `来源 ${p.source === 'tool' ? 'handoff 工具' : '文本提及'}` : ''

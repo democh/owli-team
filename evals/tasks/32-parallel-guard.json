@@ -1,0 +1,16 @@
+{
+  "id": "parallel-guard",
+  "name": "并行波守卫：并行协作零停滞零写冲突（M16 并行 + M61 D3/D5）",
+  "participants": ["analyst-fa", "analyst-ta"],
+  "prompt": "@秦砚 与 @雷动 就增长主题各自出分析（基本面与技术面并行开展），分别落盘后一并交还。",
+  "maxTurns": 4,
+  "serial": false,
+  "assertions": [
+    { "type": "artifact_exists", "path": "docs/基本面分析-增长.md" },
+    { "type": "artifact_exists", "path": "docs/技术面分析-增长.md" },
+    { "type": "scheduling", "parallelWavesMin": 1, "stallSuppressedMax": 0, "writeConflictsMax": 0 },
+    { "type": "no_stall" },
+    { "type": "no_loop" },
+    { "type": "run_end_reason", "value": "completed" }
+  ]
+}

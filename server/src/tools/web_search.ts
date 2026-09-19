@@ -1,157 +1,40 @@
 /**
- * web_search 工具：联网检索（百度，双模式）。
+ * web_search 工具：联网检索（免 Key 多引擎降级链 + 官方 API 双模式）。
  * - API 模式（推荐）：配置 BAIDU_SEARCH_API_KEY 时走千帆「百度搜索」官方 API
  *   （结构化结果、每月免费额度、无风控问题）；
- * - HTML 模式（默认，免 Key）：抓取百度结果页并解析（浏览器头 + 域名限速 + 退避重试 +
- *   风控识别与冷却，反爬细节见 tools/http.ts）。
- * 只读 → 可并行 + 幂等缓存；被风控拦截时返回明确提示（不重试不加剧封禁）。
+ * - 免 Key 模式（默认）：按引擎链抓取结果页并解析——百度 → Bing → 搜狗 → 360，
+ *   某引擎被风控/冷却（IP 级封锁时单点客户端伪装不可靠）时自动切换到下一个，
+ *   结果标注实际引擎；引擎适配见 tools/search-engines.ts，反爬细节见 tools/http.ts。
+ * 只读 → 可并行 + 幂等缓存；全部引擎失败时返回明确提示（不重试不加剧封禁）。
  */
 import { z } from 'zod'
 import { AntiBotError, antiBotFetch } from './http.js'
-import { WEB_SEARCH_DISABLED_SUMMARY } from './availability.js'
+import {
+  cleanInline,
+  DEFAULT_ENGINE_ORDER,
+  ENGINE_REGISTRY,
+  hostOf,
+  type SearchEngine,
+  type SearchItem,
+} from './search-engines.js'
 import { toolAbortError, type ToolRuntime, type ToolResult } from './registry.js'
-import { htmlToText } from './text.js'
 
-/** 返回条数上限（HTML 模式对应 rn 参数） */
+export { parseBaiduSerp } from './search-engines.js'
+export type { SearchItem } from './search-engines.js'
+
+/** 返回条数上限（引擎结果数参数 / 解析后截断共用） */
 const MAX_RESULTS = 10
 /** 回灌模型的结果明细上限（字符） */
 const MAX_DETAIL_CHARS = 4_000
-/** 百度结果页默认入口（测试可经 runtime 注入本地地址） */
-const DEFAULT_HTML_URL = 'https://www.baidu.com/s'
-/** HTML 模式响应体上限：百度 SERP 含大量内联脚本（实测约 900KB，超过 antiBotFetch 默认 512KB），
- *  检索场景需容忍；2MB 仍可防止超大响应拖垮内存 */
+/** 抓取模式响应体上限：SERP 含大量内联脚本（现代站点实测最高约 1MB，超过 antiBotFetch
+ *  默认 512KB），检索场景需容忍；2MB 仍可防止超大响应拖垮内存 */
 const HTML_MODE_MAX_BYTES = 2 * 1024 * 1024
-/** cookie 预热缓存时长 */
+/** 引擎 Cookie 预热缓存时长 */
 const COOKIE_TTL_MS = 30 * 60_000
-
-export interface SearchItem {
-  title: string
-  url: string
-  summary: string
-  site: string
-  date: string
-}
-
-/** 内联片段净化：去标签 + 解码实体 + 压缩空白 */
-function cleanInline(s: string): string {
-  return htmlToText(s).replace(/\s+/g, ' ').trim()
-}
-
-/** data-tools 属性（转义 JSON）实体解码（&amp; 最后处理，避免二次解码） */
-function decodeAttrEntities(s: string): string {
-  return s
-    .replace(/&quot;/gi, '"')
-    .replace(/&#0*34;/g, '"')
-    .replace(/&lt;/gi, '<')
-    .replace(/&gt;/gi, '>')
-    .replace(/&#0*39;/g, "'")
-    .replace(/&nbsp;/gi, ' ')
-    .replace(/&amp;/gi, '&')
-}
-
-function hostOf(url: string): string {
-  try {
-    return new URL(url).hostname
-  } catch {
-    return ''
-  }
-}
-
-/** 百度跳转链（www.baidu.com/link?url=...）判定：此类 URL 不可作为展示链接且无站点信息 */
-function isBaiduLink(url: string): boolean {
-  return /(^|\.)baidu\.com$/i.test(hostOf(url)) && /\/link\?/i.test(url)
-}
-
-/** 结果容器判定：class 含 c-container 且含 result / result-* 类 */
-function isResultContainer(tag: string): boolean {
-  const cls = /class="([^"]*)"/i.exec(tag)?.[1]
-  if (!cls) return false
-  const parts = cls.split(/\s+/)
-  return parts.includes('c-container') && parts.some((p) => p === 'result' || p.startsWith('result-'))
-}
-
-/** 单个结果块解析：标题 / 真实 URL / 摘要 / 站点 / 日期（多级回退，容忍结构差异） */
-function parseResultBlock(block: string): SearchItem | null {
-  const h3 = /<h3[^>]*>([\s\S]*?)<\/h3>/i.exec(block)?.[1] ?? ''
-  const anchor = /<a\b[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/i.exec(h3)
-  const title = cleanInline(anchor?.[2] ?? h3)
-  if (!title) return null
-
-  // URL：data-tools JSON（真实 URL）→ mu 属性 → h3 内锚点（百度跳转链）
-  let url = ''
-  const toolsRaw = /data-tools="([^"]*)"/i.exec(block)?.[1]
-  if (toolsRaw) {
-    const decoded = decodeAttrEntities(toolsRaw)
-    try {
-      const parsed = JSON.parse(decoded) as { url?: string }
-      if (typeof parsed.url === 'string' && parsed.url) url = parsed.url
-    } catch {
-      // 转义异常时宽松提取，避免整块丢弃
-      url = /"url"\s*:\s*"([^"]+)"/.exec(decoded)?.[1] ?? ''
-    }
-  }
-  if (!url) url = /\bmu="([^"]+)"/i.exec(block)?.[1] ?? ''
-  if (!url) url = anchor?.[1] ?? ''
-
-  // 摘要：c-abstract / content-right_* / c-span-last 依次尝试
-  const absRaw =
-    /<div[^>]*class="[^"]*\bc-abstract\b[^"]*"[^>]*>([\s\S]*?)<\/div>/i.exec(block)?.[1] ??
-    /<span[^>]*class="[^"]*\bcontent-right_[^"]*"[^>]*>([\s\S]*?)<\/span>/i.exec(block)?.[1] ??
-    /<div[^>]*class="[^"]*\bc-span-last\b[^"]*"[^>]*>([\s\S]*?)<\/div>/i.exec(block)?.[1] ??
-    ''
-  const summary = cleanInline(absRaw)
-
-  // 站点：真实 URL 的 hostname 优先；跳转链/缺失时取灰字（排除日期/快照等噪声）
-  let site = url && !isBaiduLink(url) ? hostOf(url) : ''
-  if (!site) {
-    const grays = block.match(/<span[^>]*class="[^"]*\bc-color-gray\b[^"]*"[^>]*>[\s\S]*?<\/span>/gi) ?? []
-    for (const gray of grays) {
-      const text = cleanInline(gray)
-      if (text && !/^\d/.test(text) && text.length <= 60 && !/快照/.test(text)) {
-        site = text
-        break
-      }
-    }
-  }
-
-  // 日期：从块纯文本提取（标签已剥离，不会误匹配链接）
-  const blockText = htmlToText(block)
-  const date = /(\d{4}[-年]\d{1,2}[-月]\d{1,2}日?|\d{1,2}\s*小时前|\d{1,2}\s*分钟前|\d+\s*天前|昨天)/.exec(blockText)?.[1] ?? ''
-
-  return {
-    title,
-    url,
-    summary,
-    site: site.replace(/^https?:\/\//, '').replace(/\/$/, ''),
-    date,
-  }
-}
-
-/** 解析百度结果页（SERP）为结构化列表（导出供单测） */
-export function parseBaiduSerp(html: string): SearchItem[] {
-  const starts: Array<{ index: number; tag: string }> = []
-  const divRe = /<div[^>]*>/gi
-  for (let m = divRe.exec(html); m; m = divRe.exec(html)) {
-    if (isResultContainer(m[0])) starts.push({ index: m.index, tag: m[0] })
-  }
-  const items: SearchItem[] = []
-  const seen = new Set<string>()
-  for (let i = 0; i < starts.length; i++) {
-    const block = html.slice(starts[i].index, i + 1 < starts.length ? starts[i + 1].index : html.length)
-    const item = parseResultBlock(block)
-    if (!item) continue
-    const key = item.url || item.title
-    if (seen.has(key)) continue
-    seen.add(key)
-    items.push(item)
-  }
-  return items
-}
 
 /** 千帆「百度搜索」API 约束：query ≤ 72 字符（汉字计 2）——超长按权重截断 */
 export function clampQuery72(q: string): string {
-  const wide =
-    /[\u2e80-\u9fff\uf900-\ufaff\ufe30-\ufe4f\uff00-\uff60\uffe0-\uffe6\u3000-\u303f]/
+  const wide = /[\u2e80-\u9fff\uf900-\ufaff\ufe30-\ufe4f\uff00-\uff60\uffe0-\uffe6\u3000-\u303f]/
   let width = 0
   let out = ''
   for (const ch of q) {
@@ -180,21 +63,41 @@ interface ApiSearchResponse {
   references?: ApiReference[]
 }
 
-/** BAIDUID cookie 预热缓存（进程内共享；仅为反爬降级，非登录态） */
-let cookieCache: { value: string; expiresAt: number } | null = null
+// ---------- 免 Key 模式：引擎降级链 ----------
+
+/** 引擎 Cookie 预热缓存（进程内共享；仅为反爬降级，非登录态） */
+const cookieCache = new Map<string, { value: string; expiresAt: number }>()
 
 /** 测试辅助：清空 cookie 缓存（用例隔离） */
 export function resetSearchCookieCache(): void {
-  cookieCache = null
+  cookieCache.clear()
 }
 
-/** 预热入口页拿 cookie（失败降级为不携带；TTL 内复用） */
-async function warmupCookie(ctx: ToolRuntime, base: string): Promise<string> {
+/** 引擎链解析：runtime 覆写（engines / engineUrls / htmlUrl）→ 内置默认；未知 id 忽略 */
+function resolveChain(ctx: ToolRuntime): SearchEngine[] {
+  const ids: readonly string[] = ctx.webSearch.engines?.length ? ctx.webSearch.engines : DEFAULT_ENGINE_ORDER
+  const overrides = ctx.webSearch.engineUrls ?? {}
+  const htmlOverride = ctx.webSearch.htmlUrl.trim()
+  const chain: SearchEngine[] = []
+  for (const raw of ids) {
+    const id = raw.trim().toLowerCase()
+    const engine = ENGINE_REGISTRY[id]
+    if (!engine) continue
+    // baidu 兼容历史 htmlUrl 覆写字段（测试与旧配置沿用）
+    const override = (overrides[id] ?? (id === 'baidu' ? htmlOverride : '')).trim()
+    chain.push(override ? { ...engine, baseUrl: override } : engine)
+  }
+  return chain.length > 0 ? chain : DEFAULT_ENGINE_ORDER.map((id) => ENGINE_REGISTRY[id])
+}
+
+/** 预热入口页拿 cookie（失败降级为不携带；TTL 内按引擎复用） */
+async function warmupCookie(engine: SearchEngine, ctx: ToolRuntime): Promise<string> {
   const now = Date.now()
-  if (cookieCache && cookieCache.expiresAt > now) return cookieCache.value
+  const hit = cookieCache.get(engine.id)
+  if (hit && hit.expiresAt > now) return hit.value
   try {
     const res = await antiBotFetch({
-      url: `${new URL(base).origin}/`,
+      url: `${new URL(engine.baseUrl).origin}/`,
       readBody: false,
       signal: ctx.signal,
       userAgent: ctx.httpUserAgent,
@@ -206,7 +109,7 @@ async function warmupCookie(ctx: ToolRuntime, base: string): Promise<string> {
       .map((c) => c.split(';')[0] ?? '')
       .filter((c) => c.length > 0)
       .join('; ')
-    if (value) cookieCache = { value, expiresAt: now + COOKIE_TTL_MS }
+    if (value) cookieCache.set(engine.id, { value, expiresAt: now + COOKIE_TTL_MS })
     return value
   } catch (err) {
     if ((err as Error).name === 'AbortError') throw err
@@ -214,37 +117,61 @@ async function warmupCookie(ctx: ToolRuntime, base: string): Promise<string> {
   }
 }
 
-/** HTML 模式：抓取百度结果页并解析 */
-async function searchViaHtml(params: { query: string; count: number }, ctx: ToolRuntime): Promise<ToolResult> {
-  const base = ctx.webSearch.htmlUrl.trim() !== '' ? ctx.webSearch.htmlUrl : DEFAULT_HTML_URL
-  const cookie = await warmupCookie(ctx, base)
-  const endpoint = new URL(base)
-  endpoint.searchParams.set('ie', 'utf-8')
-  endpoint.searchParams.set('rn', String(params.count))
-  endpoint.searchParams.set('wd', params.query)
-  const res = await antiBotFetch({
-    url: endpoint.toString(),
-    signal: ctx.signal,
-    userAgent: ctx.httpUserAgent,
-    timeoutMs: ctx.httpTimeoutMs,
-    minIntervalMs: ctx.httpMinIntervalMs,
-    maxBytes: HTML_MODE_MAX_BYTES,
-    headers: {
-      referer: `${new URL(base).origin}/`,
-      ...(cookie ? { cookie } : {}),
-    },
-  })
-  const items = parseBaiduSerp(res.text)
-  if (items.length === 0) {
-    return {
-      ok: false,
-      summary: '未解析到搜索结果（百度页面结构变化或轻量风控），请稍后重试，或配置 BAIDU_SEARCH_API_KEY 改用官方 API',
-    }
-  }
-  return formatSearchResult(params.query, items.slice(0, params.count), '网页抓取')
+/** 引擎级失败原因（单行、可读；供降级链汇总） */
+function briefError(err: unknown): string {
+  const message = err instanceof Error ? err.message : String(err)
+  return message.slice(0, 160)
 }
 
-/** API 模式：千帆「百度搜索」官方接口 */
+/** 免 Key 模式：按引擎链依次尝试（被风控/冷却的引擎自动跳过；结果标注实际引擎） */
+async function searchViaEngines(
+  params: { query: string; count: number },
+  ctx: ToolRuntime,
+): Promise<ToolResult> {
+  const chain = resolveChain(ctx)
+  const skips: string[] = []
+  for (const engine of chain) {
+    try {
+      const cookie = engine.warmup ? await warmupCookie(engine, ctx) : ''
+      const origin = new URL(engine.baseUrl).origin
+      const res = await antiBotFetch({
+        url: engine.buildUrl(engine.baseUrl, params.query, params.count),
+        signal: ctx.signal,
+        userAgent: ctx.httpUserAgent,
+        timeoutMs: ctx.httpTimeoutMs,
+        minIntervalMs: ctx.httpMinIntervalMs,
+        maxBytes: HTML_MODE_MAX_BYTES,
+        headers: {
+          referer: `${origin}/`,
+          ...(cookie ? { cookie } : {}),
+        },
+      })
+      const items = engine.parse(res.text)
+      if (items.length === 0) {
+        skips.push(`${engine.label}：未解析到搜索结果（页面结构变化或轻量风控）`)
+        continue
+      }
+      const mode = skips.length > 0 ? `网页抓取·${engine.label}（降级）` : `网页抓取·${engine.label}`
+      const result = formatSearchResult(params.query, items.slice(0, params.count), mode)
+      if (skips.length > 0 && result.detail) {
+        result.detail = `（降级跳过 ${skips.join('；')}）\n${result.detail}`
+      }
+      return result
+    } catch (err) {
+      if ((err as Error).name === 'AbortError') throw err
+      skips.push(`${engine.label}：${briefError(err)}`)
+    }
+  }
+  return {
+    ok: false,
+    summary:
+      `联网检索失败（已尝试 ${chain.length} 个引擎）：${skips.join('；')}` +
+      '；建议稍后重试，或配置 BAIDU_SEARCH_API_KEY 改用官方 API',
+  }
+}
+
+// ---------- API 模式：千帆「百度搜索」官方接口 ----------
+
 async function searchViaApi(params: { query: string; count: number }, ctx: ToolRuntime): Promise<ToolResult> {
   const res = await antiBotFetch({
     url: ctx.webSearch.apiUrl,
@@ -273,10 +200,15 @@ async function searchViaApi(params: { query: string; count: number }, ctx: ToolR
   }
   const code = json.code ?? json.error_code
   if (code !== undefined && Number(code) !== 0) {
-    return { ok: false, summary: `检索 API 错误：${String(json.message ?? json.error_msg ?? code).slice(0, 160)}` }
+    return {
+      ok: false,
+      summary: `检索 API 错误：${String(json.message ?? json.error_msg ?? code).slice(0, 160)}`,
+    }
   }
-  const items = (json.references ?? [])
-    .filter((r) => (r.type === undefined || r.type === 'web') && typeof r.url === 'string' && r.url.length > 0)
+  const items: SearchItem[] = (json.references ?? [])
+    .filter(
+      (r) => (r.type === undefined || r.type === 'web') && typeof r.url === 'string' && r.url.length > 0,
+    )
     .map((r) => ({
       title: cleanInline(r.title ?? '') || r.url!,
       url: r.url!,
@@ -301,25 +233,7 @@ function formatSearchResult(query: string, items: SearchItem[], mode: string): T
   })
   let detail = blocks.join('\n\n')
   if (detail.length > MAX_DETAIL_CHARS) detail = `${detail.slice(0, MAX_DETAIL_CHARS)}\n…（结果过长已截断）`
-  return { ok: true, summary: `百度检索「${query}」：${items.length} 条结果（${mode}）`, detail }
-}
-
-/** AntiBotError → 模型可读提示（含可操作建议） */
-function antiBotMessage(err: AntiBotError): string {
-  switch (err.kind) {
-    case 'blocked':
-      return `检索被风控拦截：${err.message}；建议稍后重试，或配置 BAIDU_SEARCH_API_KEY 改用官方 API`
-    case 'rate-limit':
-      return '检索失败：请求过于频繁（HTTP 429），请稍后重试'
-    case 'timeout':
-      return `检索超时（${err.message}）`
-    case 'too-large':
-      return `检索响应过大，已拒绝（${err.message}）`
-    case 'network':
-      return `检索网络错误：${err.message}`
-    case 'status':
-      return `检索失败：HTTP ${err.status ?? '未知'}`
-  }
+  return { ok: true, summary: `联网检索「${query}」：${items.length} 条结果（${mode}）`, detail }
 }
 
 const searchSchema = z.object({
@@ -332,8 +246,9 @@ export const webSearchTool = {
   tier: 'deferred' as const,
   readOnly: true,
   description:
-    '联网搜索（百度检索）：输入查询词返回标题 / 链接 / 摘要列表，用于获取时效性信息与外部资料。' +
-    '配置 BAIDU_SEARCH_API_KEY 时走官方 API（更稳定），否则抓取百度结果页（可能触发风控）。',
+    '联网搜索（多引擎降级链：百度 → Bing → 搜狗 → 360，被风控时自动切换下一个）：' +
+    '输入查询词返回标题 / 链接 / 摘要列表，用于获取时效性信息与外部资料。' +
+    '配置 BAIDU_SEARCH_API_KEY 时走官方 API（更稳定），否则抓取搜索结果页。',
   parameters: {
     type: 'object',
     properties: {
@@ -344,19 +259,16 @@ export const webSearchTool = {
   },
   schema: searchSchema,
   async execute(args: z.infer<typeof searchSchema>, ctx: ToolRuntime): Promise<ToolResult> {
-    if (!ctx.webSearch.enabled) {
-      return { ok: false, summary: WEB_SEARCH_DISABLED_SUMMARY }
-    }
     const query = args.query.trim()
     if (!query) return { ok: false, summary: '查询词不能为空' }
     const params = { query, count: args.count ?? 8 }
     try {
       return ctx.webSearch.apiKey.trim() !== ''
         ? await searchViaApi(params, ctx)
-        : await searchViaHtml(params, ctx)
+        : await searchViaEngines(params, ctx)
     } catch (err) {
       if ((err as Error).name === 'AbortError') throw toolAbortError()
-      if (err instanceof AntiBotError) return { ok: false, summary: antiBotMessage(err) }
+      if (err instanceof AntiBotError) return { ok: false, summary: `检索被风控拦截：${err.message}` }
       return { ok: false, summary: `检索出错：${(err as Error).message.slice(0, 160)}` }
     }
   },

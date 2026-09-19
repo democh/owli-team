@@ -43,6 +43,11 @@ export default {
         md: 'calc(var(--radius) - 2px)',
         sm: 'calc(var(--radius) - 4px)',
       },
+      fontFamily: {
+        // 全局字体栈（权威源 lib/fonts.ts 与 index.css :root 变量，此处仅引用避免三处漂移）
+        sans: ['var(--font-sans)'],
+        mono: ['var(--font-mono)'],
+      },
       boxShadow: {
         // 卡片级柔和阴影（冷调）
         soft: '0 1px 2px rgba(15, 23, 42, 0.04), 0 1px 3px rgba(15, 23, 42, 0.05)',

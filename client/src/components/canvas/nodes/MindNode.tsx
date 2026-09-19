@@ -1,5 +1,6 @@
 /**
  * M31：脑图节点 —— 胶囊形 / 双击编辑 / 折叠切换（fold 时隐藏 mind 出边后代）。
+ * 长文本在文本区（max-w-52）内折行（行数与 lib/mind.ts estimateMindSize 对齐），不再溢出卡片。
  * 完整 xmind 式快捷编辑（Tab / Enter / 拖拽重组）见 P4。
  */
 import * as React from 'react'
@@ -27,9 +28,9 @@ export const MindNode = React.memo(function MindNode({ id, data, selected }: Can
       nodeId={id}
       selected={selected}
       onDoubleClick={edit.begin}
-      className="h-auto w-fit min-w-28 rounded-full"
+      className="h-auto w-fit min-w-28 rounded-2xl"
     >
-      <div className="flex items-center gap-1.5 rounded-full px-3 py-1.5">
+      <div className="flex items-center gap-1.5 rounded-2xl px-3 py-1.5">
         <span className={cn('size-1.5 shrink-0 rounded-full', accent.bar)} aria-hidden />
         {edit.editing ? (
           <input
@@ -43,10 +44,10 @@ export const MindNode = React.memo(function MindNode({ id, data, selected }: Can
               edit.onKeyDown(e)
               if (e.key === 'Enter' && !e.metaKey && !e.ctrlKey) edit.commit()
             }}
-            className="nodrag min-w-10 bg-transparent text-[12px] leading-5 outline-none placeholder:text-muted-foreground/50"
+            className="nodrag min-w-10 max-w-52 bg-transparent text-[12px] leading-5 outline-none placeholder:text-muted-foreground/50"
           />
         ) : (
-          <span className="max-w-52 text-[12px] leading-5 whitespace-nowrap">{d.text || '主题'}</span>
+          <span className="max-w-52 break-words text-[12px] leading-5">{d.text || '主题'}</span>
         )}
         {childCount > 0 && (
           <button

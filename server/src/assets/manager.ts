@@ -851,7 +851,7 @@ export class AssetManager {
     }
     // 会话成员合并为一行（避免长列表淹没其它引用）
     const participants = new Map<string, string[]>()
-    for (const session of this.sessions.list()) {
+    for (const session of this.sessions.list(null)) {
       for (const id of session.participantIds) {
         const list = participants.get(id) ?? []
         list.push(session.title)

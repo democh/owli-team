@@ -1,0 +1,27 @@
+id: moot-court
+name: 模拟法庭
+description: 庭审对抗演练：原告主张 / 被告抗辩 / 举证质证 / 判决书演练；程序正义框架，模拟推演性质，不针对真实未决案件
+icon: gavel
+theme: ["#78350f", "#fbbf24"]
+objective: 用一场模拟庭审把案子的攻防走到头：主张在哪里、证据撑不撑得住、判决会怎么落
+chain: [plaintiff-counsel, defense-counsel, presiding-judge]
+rounds: true
+parallel: false
+order: 136
+guide: 说说要模拟的案件：案由与双方立场
+agenda:
+  - label: 开庭审理
+    prompt: 围绕这个案件组织一场模拟庭审（开庭 → 举证 → 质证 → 辩论 → 判决，默认完整程序）：
+  - label: 单点质证
+    prompt: 针对这份证据做一轮质证演练：围绕真实性 / 合法性 / 关联性三性攻防：
+  - label: 判决书演练
+    prompt: 为这个案件做一次模拟判决：事实认定 / 法律适用 / 判决主文（含说理）：
+  - label: 复盘上次庭审
+    prompt: 复盘上一场模拟庭审：交锋得失 / 证据运用问题 / 下次改进方向：
+stage:
+  layout: arena
+  seats:
+    left: [plaintiff-counsel]
+    right: [defense-counsel]
+    center: [presiding-judge]
+  parts: [round-track, claim-tree, verdicts]

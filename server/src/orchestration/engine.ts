@@ -17,11 +17,12 @@ import type {
   Plan,
   RunEndReason,
   RunEvent,
+  Session,
   ToolCallRecord,
   TurnMode,
   UsageSnapshot,
 } from '@multi-agent/shared'
-import { BLANK_SCENE_ID, extractDeliveredPaths, sanitizeModelText } from '@multi-agent/shared'
+import { BLANK_SCENE_ID, baseAgentId, extractDeliveredPaths, sanitizeModelText, soulIdOfMember } from '@multi-agent/shared'
 import type { AppConfig } from '../config.js'
 import type { ApprovalOutcome, ApprovalService } from '../approval.js'
 import type { PlanReviewService } from '../plan-review.js'
@@ -45,6 +46,8 @@ import { MemoryDigester, type DigestResult } from '../memory/digest.js'
 import type { MemoryService } from '../memory/service.js'
 import type { ToolMetricsStore } from '../store/metrics.js'
 import type { PlanStore } from '../store/plans.js'
+import type { QuotaService } from '../quota/service.js'
+import type { UserLabeler } from '../context/user-label.js'
 import type { PromptLibrary } from '../store/prompts.js'
 import type { ReviewStore } from '../store/reviews.js'
 import type { RunEventStore } from '../store/run-events.js'
@@ -85,8 +88,16 @@ import { runPlatformRoute, type RouteAssignment } from './platform-router.js'
 import { countTokensCalibrated } from '../context/tokenizer.js'
 import { matchedSensitivePattern, normalizeRel } from '../tools/sensitive.js'
 import { writeSse } from '../sse.js'
-import { parseMentions } from './parser.js'
+import { buildMentionTokens, parseMentionsWithTokens, type ParseResult } from './parser.js'
+import { resolveMembers } from './members.js'
 import { decideHandoff, mergeWaveSchedule, planWave, waveSignature } from './scheduler.js'
+import {
+  detectWriteConflicts,
+  extractWritePaths,
+  newWaveWriteBuffer,
+  recordWrite,
+  type WaveWriteBuffer,
+} from './write-tracking.js'
 
 /** 通知发布端口（NotifyHub 满足；测试可注入 stub） */
 export interface NotifyPort {
@@ -155,6 +166,14 @@ export interface EngineDeps {
   financeStore?: FinanceStore
   /** M47：会话是否为「真实仓库」模式（repo / worktree；缺省 = 不判定，git 工具保持可见） */
   isGitMode?: (sessionId: string) => boolean
+  /** M57 P2：连接最小权限复核（共享会话下成员禁触达未开放连接；缺省 = 不复核） */
+  connectionGuard?: (connectionId: string, triggerUserId?: string) => string | undefined
+  /** M57 P3：配额服务（并发上限 / 波次边界用量闸门；缺省 = 不限，行为与现状零差异） */
+  quotas?: QuotaService
+  /** M57 P3：BYOK 生效模型解析（成本归因；缺省 = 系统默认模型） */
+  billingModelFor?: (sessionId: string) => string | undefined
+  /** M57：共享会话人类署名（记忆沉淀输入文本；缺省 = 「用户」） */
+  userLabelFor?: (sessionId: string) => UserLabeler | undefined
 }
 
 /** M28：某成员最近一次回合的发现态（enabled = 启用按需发现；entries = 可检索的延迟工具条目） */
@@ -166,6 +185,8 @@ interface DiscoveryState {
 interface RunRecord {
   id: string
   sessionId: string
+  /** M57 P2：本 Run 触发者（发起消息的 userId）；共享会话连接复核 / 归因用；兼容模式缺省 */
+  triggerUserId?: string
   controller: AbortController
   subscribers: Set<Response>
   queue: string[]
@@ -187,6 +208,10 @@ interface RunRecord {
   waveSignatures: string[]
   /** M16：每波串联文本（内容级循环检测输入） */
   waveTexts: string[]
+  /** M61-D3：每波成功写动作计数（实质进展停滞检测输入） */
+  waveWriteCounts: number[]
+  /** M61-D3/D5：当前波内写跟踪缓冲（波末结算后重置） */
+  waveWrites: WaveWriteBuffer
   /** M16：下一波强制并行（用户 @≥2 / handoff 多目标） */
   forceNextParallel: boolean
   /** 已完成回合数（随 runLoop 同步，供 runs 表持久化） */
@@ -287,6 +312,7 @@ export class Engine {
     const session = this.deps.sessions.getSession(sessionId)
     if (!session) throw new Error('会话不存在')
     if (this.activeRunOf(sessionId)) throw new Error('会话已有运行中的任务')
+    this.assertUserCapacity(sessionId)
     const userMessage = this.deps.sessions
       .messages(sessionId)
       .find((m) => m.id === userMessageId && m.role === 'user')
@@ -295,7 +321,7 @@ export class Engine {
     // 首发队列（M48 平台路由）：① @ 直达（零变化）② 消息级显式 plan/review 且有编制 → 编制首位
     // （目标已明确，直接投场景首棒）③ 未 @ / 空编制 → 交给平台路由步（引擎组队与派发，非角色回合）
     // （M15 起 members 顺序即编制顺序：建会话时已按场景 chain 排序落库）
-    const parsed = parseMentions(userMessage.content, this.deps.prompts.list())
+    const parsed = this.parseSessionMentions(session, userMessage.content)
     const mentioned = parsed.mentions.filter((id) => session.participantIds.includes(id))
     const explicitMode = opts.mode === 'plan' || opts.mode === 'review'
     // M50：空场景单助手直通 —— 编制恰为一位空场景成员：未 @ 消息直达本人，跳过平台路由（加人 / 换人即退出）
@@ -322,6 +348,8 @@ export class Engine {
     const record: RunRecord = {
       id: `run_${randomUUID().slice(0, 8)}`,
       sessionId,
+      // M57 P2：触发者 = 发起本 Run 的用户消息作者（共享会话连接复核；兼容模式为 undefined）
+      triggerUserId: userMessage.userId,
       controller: new AbortController(),
       subscribers: new Set(),
       queue,
@@ -335,6 +363,8 @@ export class Engine {
       handoffNotes: new Map(),
       waveSignatures: [],
       waveTexts: [],
+      waveWriteCounts: [],
+      waveWrites: newWaveWriteBuffer(),
       forceNextParallel: mentioned.length >= 2,
       turnIndex: 0,
       todosByAgent: new Map(),
@@ -353,7 +383,14 @@ export class Engine {
     const initialQueue = [...queue]
     this.runs.set(record.id, record)
     this.sessionRuns.set(sessionId, record.id)
-    this.deps.runs.create({ id: record.id, sessionId, state: 'waiting', queue })
+    this.deps.runs.create({
+      id: record.id,
+      sessionId,
+      state: 'waiting',
+      queue,
+      // M57：运行归因（会话属主；单用户兼容模式缺省）
+      userId: this.deps.sessions.getSession(sessionId)?.ownerId,
+    })
 
     const queued = this.activeCount >= this.deps.cfg.asyncRunMax
     if (queued) {
@@ -380,6 +417,7 @@ export class Engine {
     const session = sessions.getSession(sessionId)
     if (!session) throw new Error('会话不存在')
     if (this.activeRunOf(sessionId)) throw new Error('会话已有运行中的任务')
+    this.assertUserCapacity(sessionId)
     const plan = plans.get(planId)
     if (!plan || plan.sessionId !== sessionId) throw new Error('计划不存在')
     if (plan.status === 'submitted') plans.setStatus(planId, 'approved')
@@ -404,6 +442,8 @@ export class Engine {
       handoffNotes: new Map(),
       waveSignatures: [],
       waveTexts: [],
+      waveWriteCounts: [],
+      waveWrites: newWaveWriteBuffer(),
       forceNextParallel: false,
       turnIndex: 0,
       todosByAgent: new Map(),
@@ -421,7 +461,13 @@ export class Engine {
     const initialQueue = [...queue]
     this.runs.set(record.id, record)
     this.sessionRuns.set(sessionId, record.id)
-    this.deps.runs.create({ id: record.id, sessionId, state: 'waiting', queue })
+    this.deps.runs.create({
+      id: record.id,
+      sessionId,
+      state: 'waiting',
+      queue,
+      userId: this.deps.sessions.getSession(sessionId)?.ownerId,
+    })
     // M24：登记派发（planDispatch + plan→executing）先于首波：首个波次的成员即命中步骤
     this.registerPlanDispatch(record, approved)
 
@@ -446,7 +492,12 @@ export class Engine {
     if (!record) return null
     record.subscribers.add(res)
 
-    writeSse(res, { type: 'run:start', runId: record.id, sessionId: record.sessionId, queue: [...record.queue] })
+    writeSse(res, {
+      type: 'run:start',
+      runId: record.id,
+      sessionId: record.sessionId,
+      queue: [...record.queue],
+    })
     // M16：并行波恢复 —— activeMembers 非空时先补波次标记（前端按波归组多路流）
     if (record.activeMembers.length > 0) {
       writeSse(res, {
@@ -466,12 +517,15 @@ export class Engine {
           type: 'turn:start',
           runId: record.id,
           agentId: message.agentId,
+          memberKey: message.memberKey ?? message.agentId,
           messageId: message.id,
           turnIndex: message.turnIndex ?? 0,
         })
       }
-      if (message.content) writeSse(res, { type: 'message:delta', messageId: message.id, delta: message.content })
-      if (message.reasoning) writeSse(res, { type: 'reasoning:delta', messageId: message.id, delta: message.reasoning })
+      if (message.content)
+        writeSse(res, { type: 'message:delta', messageId: message.id, delta: message.content })
+      if (message.reasoning)
+        writeSse(res, { type: 'reasoning:delta', messageId: message.id, delta: message.reasoning })
       for (const call of message.toolCalls ?? []) {
         writeSse(res, { type: 'tool:result', messageId: message.id, call })
       }
@@ -515,7 +569,7 @@ export class Engine {
       record.pendingUserMessages.push(userMessageId)
     }
     // 插话同样解析 mentions（@chip 渲染依据），但不触发新 Run
-    const parsed = parseMentions(message.content, this.deps.prompts.list())
+    const parsed = this.parseSessionMentions(session, message.content)
     const mentioned = parsed.mentions.filter((id) => session.participantIds.includes(id))
     this.deps.sessions.patchMessage(sessionId, userMessageId, { mentions: mentioned })
     this.deps.sessions.saveNow(sessionId)
@@ -528,6 +582,7 @@ export class Engine {
     const session = this.deps.sessions.getSession(sessionId)
     if (!session) throw new Error('会话不存在')
     if (this.activeRunOf(sessionId)) throw new Error('会话已有运行中的任务')
+    this.assertUserCapacity(sessionId)
     const snapshot = runId ? this.deps.runs.get(runId) : this.deps.runs.latestInterrupted(sessionId)
     if (!snapshot) throw new Error('没有可继续的中断运行')
     if (snapshot.sessionId !== sessionId) throw new Error('运行不属于该会话')
@@ -551,6 +606,8 @@ export class Engine {
       handoffNotes: new Map(),
       waveSignatures: [],
       waveTexts: [],
+      waveWriteCounts: [],
+      waveWrites: newWaveWriteBuffer(),
       forceNextParallel: false,
       turnIndex: 0,
       todosByAgent: new Map(),
@@ -571,7 +628,13 @@ export class Engine {
     const initialQueue = [...queue]
     this.runs.set(record.id, record)
     this.sessionRuns.set(sessionId, record.id)
-    this.deps.runs.create({ id: record.id, sessionId, state: 'waiting', queue })
+    this.deps.runs.create({
+      id: record.id,
+      sessionId,
+      state: 'waiting',
+      queue,
+      userId: this.deps.sessions.getSession(sessionId)?.ownerId,
+    })
 
     const queued = this.activeCount >= this.deps.cfg.asyncRunMax
     if (queued) {
@@ -660,6 +723,41 @@ export class Engine {
     return { removed: true, queue: [...record.queue] }
   }
 
+  /**
+   * M77：分身换装同步 —— 成员键原位替换（队列 / 波内进行中 / 已发言台账 / 未消费交接提案 / 交接便条），
+   * 已落库的发言史不追溯；广播 queue:updated（指挥台与成员条实时刷新）。成员不在队列也未进行中时仍
+   * 替换便条与台账（幂等）。
+   *
+   * 三个台账的处理口径：
+   * - spoken：同席位移交（原键已出手 → 新键视为已出手）——防 fallback 选人时同席位借换装重复出手；
+   * - pendingHandoffs：提案目标改写——防旧键经「资产存在」路径被平台重新召集（幽灵复活）；
+   * - handoffNotes：便条合并到新键（接收方发言时消费）。
+   */
+  replaceMemberKey(runId: string, from: string, to: string): { queue: string[] } {
+    const record = this.runs.get(runId)
+    if (!record) throw new Error('运行不存在或已结束')
+    record.queue = [...new Set(record.queue.map((id) => (id === from ? to : id)))]
+    record.activeMembers = record.activeMembers.map((id) => (id === from ? to : id))
+    record.spoken = [...new Set(record.spoken.map((id) => (id === from ? to : id)))]
+    for (const entries of record.pendingHandoffs.values()) {
+      for (const entry of entries) entry.targets = entry.targets.map((t) => (t === from ? to : t))
+    }
+    const notes = record.handoffNotes.get(from)
+    if (notes) {
+      record.handoffNotes.delete(from)
+      record.handoffNotes.set(to, [...(record.handoffNotes.get(to) ?? []), ...notes])
+    }
+    this.deps.runs.update(record.id, { queue: [...record.queue] })
+    this.emit(record, {
+      type: 'queue:updated',
+      runId: record.id,
+      sessionId: record.sessionId,
+      queue: [...record.queue],
+    })
+    this.trace(record, 'queue:updated', { queue: [...record.queue], memberSwap: { from, to } })
+    return { queue: [...record.queue] }
+  }
+
   /** M7：停止全部活跃 Run（优雅退出：各 Run 自行落盘 stopped 状态与已产出内容） */
   stopAll(): number {
     let count = 0
@@ -698,6 +796,7 @@ export class Engine {
     const session = sessions.getSession(sessionId)
     if (!session) throw new Error('会话不存在')
     if (this.activeRunOf(sessionId)) throw new Error('会话已有运行中的任务')
+    this.assertUserCapacity(sessionId)
     const message = sessions.messageById(sessionId, messageId)
     if (!message || message.role !== 'agent' || !message.agentId) throw new Error('只能续写 Agent 消息')
     if (message.status === 'streaming') throw new Error('该消息仍在生成中')
@@ -720,6 +819,8 @@ export class Engine {
       handoffNotes: new Map(),
       waveSignatures: [],
       waveTexts: [],
+      waveWriteCounts: [],
+      waveWrites: newWaveWriteBuffer(),
       forceNextParallel: false,
       turnIndex: 0,
       todosByAgent: new Map(),
@@ -736,7 +837,13 @@ export class Engine {
     }
     this.runs.set(record.id, record)
     this.sessionRuns.set(sessionId, record.id)
-    this.deps.runs.create({ id: record.id, sessionId, state: 'running', queue: [] })
+    this.deps.runs.create({
+      id: record.id,
+      sessionId,
+      state: 'running',
+      queue: [],
+      userId: this.deps.sessions.getSession(sessionId)?.ownerId,
+    })
     // 审核 H-2：执行体 reject 兜底（正常路径 finally 已收尾；finishRun 幂等防重复）
     void this.runResumeLoop(record, message).catch((err) => this.handleLoopReject(record, err, 1))
     return { runId: record.id }
@@ -751,6 +858,7 @@ export class Engine {
     const session = sessions.getSession(sessionId)
     if (!session) throw new Error('会话不存在')
     if (this.activeRunOf(sessionId)) throw new Error('会话已有运行中的任务')
+    this.assertUserCapacity(sessionId)
     const message = sessions.messageById(sessionId, messageId)
     if (!message || message.role !== 'agent' || !message.agentId) throw new Error('只能重新生成 Agent 消息')
     if (message.status === 'streaming') throw new Error('该消息仍在生成中')
@@ -778,6 +886,8 @@ export class Engine {
       handoffNotes: new Map(),
       waveSignatures: [],
       waveTexts: [],
+      waveWriteCounts: [],
+      waveWrites: newWaveWriteBuffer(),
       forceNextParallel: false,
       turnIndex: 0,
       todosByAgent: new Map(),
@@ -794,13 +904,37 @@ export class Engine {
     }
     this.runs.set(record.id, record)
     this.sessionRuns.set(sessionId, record.id)
-    this.deps.runs.create({ id: record.id, sessionId, state: 'running', queue: [] })
+    this.deps.runs.create({
+      id: record.id,
+      sessionId,
+      state: 'running',
+      queue: [],
+      userId: this.deps.sessions.getSession(sessionId)?.ownerId,
+    })
     // 审核 H-2：执行体 reject 兜底（正常路径 finally 已收尾；finishRun 幂等防重复）
     void this.runRegenerateLoop(record, message).catch((err) => this.handleLoopReject(record, err, 1))
     return { runId: record.id }
   }
 
   // ---------- 内部 ----------
+
+  /**
+   * M57：per-user 并发上限（活跃 + 排队；RUN_MAX_PER_USER=0 不限制）。
+   * 会话无属主（单用户兼容模式）时跳过；超限抛中文错误（路由层回 400）。
+   */
+  private assertUserCapacity(sessionId: string): void {
+    const ownerId = this.deps.sessions.getSession(sessionId)?.ownerId
+    if (!ownerId) return
+    // M57 P3：配额行覆盖系统默认（两者都存在取更小值——QuotaService.limitsOf 已合并）
+    const max = this.deps.quotas?.limitsOf(ownerId).maxConcurrentRuns ?? this.deps.cfg.runMaxPerUser
+    if (!max) return
+    const active = [...this.runs.values()].filter(
+      (record) => this.deps.sessions.getSession(record.sessionId)?.ownerId === ownerId,
+    ).length
+    if (active >= max) {
+      throw new Error(`同时进行的任务数已达上限（${max} 个）：请等待现有任务完成或先停止后再试`)
+    }
+  }
 
   private startRun(record: RunRecord): void {
     record.state = 'running'
@@ -818,6 +952,49 @@ export class Engine {
         this.runs.delete(record.id)
         this.maybeStartWaiting()
       })
+  }
+
+  /**
+   * M57 P3：配额超限收束——落系统事件条并即时广播（与并行写冲突提醒同路径）。
+   * 容错：落库 / 广播失败不得阻断 Run 收束。
+   */
+  private notifyQuotaStop(record: RunRecord, detail: string): void {
+    try {
+      const message = this.deps.sessions.appendMessage({
+        sessionId: record.sessionId,
+        runId: record.id,
+        role: 'system',
+        content: `用量配额已超限：${detail}。本次运行已收束。`,
+        mentions: [],
+        status: 'complete',
+      })
+      this.deps.notify.publish({
+        type: 'notify:plan-updated',
+        sessionId: record.sessionId,
+        runId: record.id,
+        payload: { message },
+      })
+    } catch (err) {
+      getLogger().error({ runId: record.id, err }, '配额收束提示落库失败（已继续收束）')
+    }
+  }
+
+  /**
+   * M57 P3：并入属主 personal MCP 的已注册工具（执行模式自动授予；去重）。
+   * 背景：MCP 工具默认需 Agent 工具白名单授权，而 agent 为管理面资产（成员不可编辑）——
+   * personal 服务器由属主自建，在属主会话内直接授予；绑定 / 连接 / 可用性由 filterForSession 复核。
+   */
+  private mergePersonalMcpTools(candidates: AgentTool[], ownerId?: string): AgentTool[] {
+    if (!ownerId || !this.deps.mcp) return candidates
+    const names = this.deps.mcp.personalToolNames(ownerId)
+    if (names.length === 0) return candidates
+    const merged = new Map(candidates.map((tool) => [tool.name, tool]))
+    for (const name of names) {
+      if (merged.has(name)) continue
+      const tool = this.deps.tools.get(name)
+      if (tool) merged.set(name, tool)
+    }
+    return [...merged.values()]
   }
 
   /**
@@ -916,6 +1093,8 @@ export class Engine {
         sessions: this.deps.sessions,
         memory: this.deps.memory,
         usage: this.deps.usage,
+        // M57：共享会话人类署名（沉淀输入文本）
+        userLabelFor: this.deps.userLabelFor,
         poke: this.deps.memories ? () => this.deps.memories!.poke() : undefined,
       })
       const result: DigestResult = await digester.digestRun({ sessionId: record.sessionId, runId: record.id })
@@ -923,12 +1102,20 @@ export class Engine {
         this.trace(record, 'memory:digest', { candidates: result.candidates, added: result.added })
         if (result.added > 0) {
           getLogger().info(
-            { sessionId: record.sessionId, runId: record.id, candidates: result.candidates, added: result.added },
+            {
+              sessionId: record.sessionId,
+              runId: record.id,
+              candidates: result.candidates,
+              added: result.added,
+            },
             '记忆沉淀完成（候选待审）',
           )
         }
       } else if (result.error) {
-        getLogger().warn({ sessionId: record.sessionId, runId: record.id, err: result.error }, '记忆沉淀失败（静默）')
+        getLogger().warn(
+          { sessionId: record.sessionId, runId: record.id, err: result.error },
+          '记忆沉淀失败（静默）',
+        )
       }
     } catch (err) {
       getLogger().warn({ sessionId: record.sessionId, runId: record.id, err }, '记忆沉淀异常（静默）')
@@ -937,7 +1124,10 @@ export class Engine {
 
   /** 审核 H-2：执行体 reject 兜底（续写 / 重生成的轻量 Run；finishRun 幂等，正常路径已收尾时仅剩清理） */
   private handleLoopReject(record: RunRecord, err: unknown, waveIndex: number): void {
-    getLogger().error({ runId: record.id, sessionId: record.sessionId, err }, 'Run 执行体异常终止（兜底收尾）')
+    getLogger().error(
+      { runId: record.id, sessionId: record.sessionId, err },
+      'Run 执行体异常终止（兜底收尾）',
+    )
     this.finishRun(record, 'error', err instanceof Error ? err.message : String(err), waveIndex)
     if (this.sessionRuns.get(record.sessionId) === record.id) this.sessionRuns.delete(record.sessionId)
     this.runs.delete(record.id)
@@ -968,7 +1158,12 @@ export class Engine {
     let errorMessage: string | undefined
     let waveIndex = 0
 
-    this.emit(record, { type: 'run:start', runId: record.id, sessionId: record.sessionId, queue: [...record.queue] })
+    this.emit(record, {
+      type: 'run:start',
+      runId: record.id,
+      sessionId: record.sessionId,
+      queue: [...record.queue],
+    })
     this.trace(record, 'run:start', { queue: [...record.queue] })
     this.deps.notify.publish({
       type: 'notify:run-started',
@@ -999,10 +1194,7 @@ export class Engine {
         for (const message of injected) this.emit(record, { type: 'user:injected', message })
         if (record.queue.length === 0 && injected.length > 0) {
           // 队列已空但仍有插话：按插话 @ / 未发言者 / 首位成员补充接手人，避免消息被吞
-          const parsed = parseMentions(
-            injected.map((m) => m.content).join('\n'),
-            this.deps.prompts.list(),
-          )
+          const parsed = this.parseSessionMentions(session, injected.map((m) => m.content).join('\n'))
           const mentioned = parsed.mentions.filter((id) => session.participantIds.includes(id))
           const fresh = session.participantIds.filter((id) => !record.spoken.includes(id))
           const next =
@@ -1017,6 +1209,14 @@ export class Engine {
       // M16：动态成员变更防御 —— 队列只保留在场成员（移出成员由 members API 走 removeFromQueue 广播）
       record.queue = record.queue.filter((id) => session.participantIds.includes(id))
       if (record.queue.length === 0) break // 无接手人（理论不可达，防御性退出）
+
+      // M57 P3：用量配额闸门（日 token / 月成本）——超限则落系统条提示并以 reason='quota' 收束本 Run
+      const quotaBlock = session.ownerId ? this.deps.quotas?.blockedReason(session.ownerId) : undefined
+      if (quotaBlock) {
+        this.notifyQuotaStop(record, quotaBlock)
+        reason = 'quota'
+        break
+      }
 
       if (waveIndex >= cfg.maxTurnsPerRun) {
         reason = 'turn-limit'
@@ -1118,6 +1318,11 @@ export class Engine {
       const results = outcomes as Array<Extract<TurnOutcome, { kind: 'ok' }>>
 
       // 波末 fan-in：逐成员裁决（decideHandoff）→ 波级合并（mergeWaveSchedule）
+      // M61-D3/D5：波内写跟踪结算（计数入列 → 冲突检测 → 重置；先于 merge 使停滞检测含本波）
+      const waveWrites = record.waveWrites
+      record.waveWriteCounts.push(waveWrites.count)
+      record.waveWrites = newWaveWriteBuffer()
+      this.reportWriteConflicts(record, waveWrites.byAgent, waveIndex)
       record.waveSignatures.push(waveSignature(wave.members))
       record.waveTexts.push(
         handles
@@ -1139,6 +1344,7 @@ export class Engine {
         queue: record.queue,
         signatures: record.waveSignatures,
         waveTexts: record.waveTexts,
+        waveWriteCounts: record.waveWriteCounts,
         spoken: record.spoken,
         fallbackUsed: record.fallbackUsed,
         rounds: wave.members.some((id) => this.agentGroup(id)?.rounds === true),
@@ -1164,6 +1370,7 @@ export class Engine {
           queue: [...record.queue],
           handedToUser: merge.handedToUser,
           loopSuppressed: merge.loopSuppressed,
+          stallSuppressed: merge.stallSuppressed,
           fallbackUsed: merge.fallbackUsed,
         },
         waveIndex,
@@ -1183,7 +1390,8 @@ export class Engine {
           promptTokens: results[i].promptTokens,
           completionTokens: results[i].completionTokens,
           source: results[i].proposal.source,
-          loopSuppressed: merge.loopSuppressed,
+          // M61-D3：停滞抑制与循环抑制同走「抑制收尾」展示路径（TraceDrawer 分开标注）
+          loopSuppressed: merge.loopSuppressed || merge.stallSuppressed,
         })
       }
       // 防御性清理：异常路径不应残留波内 handoff 缓冲
@@ -1208,18 +1416,22 @@ export class Engine {
   /** M16：波内成员发言登记（全波先建消息：seq 连续、turn:start 全部先于任何 turn:end）；M24：携带本成员范式 */
   private startWaveTurn(
     record: RunRecord,
+    /** M77：成员键（分身 = `agentId~soulId`；经典 = agentId）——波内身份/状态/事件归属 */
     agentId: string,
     waveIndex: number,
     mode: TurnMode,
   ): { agentId: string; message: ChatMessage } {
     const { sessions } = this.deps
     record.spoken.push(agentId)
+    const baseId = baseAgentId(agentId)
     const message = sessions.appendMessage({
       sessionId: record.sessionId,
       runId: record.id,
       turnIndex: waveIndex,
       role: 'agent',
-      agentId,
+      // M77：agentId 保持基础角色（存量消费端零改动）；memberKey 记录具体说话实例（分身）
+      agentId: baseId,
+      memberKey: agentId,
       content: '',
       mentions: [],
       status: 'streaming',
@@ -1229,12 +1441,13 @@ export class Engine {
     this.emit(record, {
       type: 'turn:start',
       runId: record.id,
-      agentId,
+      agentId: baseId,
+      memberKey: agentId,
       messageId: message.id,
       turnIndex: waveIndex,
       ...(mode === 'execute' ? {} : { mode }),
     })
-    this.trace(record, 'turn:start', { agentId, messageId: message.id }, waveIndex)
+    this.trace(record, 'turn:start', { agentId: baseId, memberKey: agentId, messageId: message.id }, waveIndex)
     // M3：等待首 token / 上下文准备（含压缩）统一表达为 thinking（首个输出后转 speaking）
     this.publishStatus(record, agentId, 'thinking', 'prepare')
     return { agentId, message }
@@ -1264,7 +1477,8 @@ export class Engine {
     this.emit(record, {
       type: 'turn:end',
       messageId: message.id,
-      agentId,
+      agentId: baseAgentId(agentId),
+      memberKey: agentId,
       mentions,
       queue: [...record.queue],
       status: 'complete',
@@ -1273,7 +1487,8 @@ export class Engine {
       record,
       'turn:end',
       {
-        agentId,
+        agentId: baseAgentId(agentId),
+        memberKey: agentId,
         messageId: message.id,
         mentions,
         queue: [...record.queue],
@@ -1289,7 +1504,8 @@ export class Engine {
       sessionId: record.sessionId,
       runId: record.id,
       payload: {
-        agentId,
+        agentId: baseAgentId(agentId),
+        memberKey: agentId,
         messageId: message.id,
         mentions,
         queue: [...record.queue],
@@ -1307,19 +1523,124 @@ export class Engine {
     return this.deps.prompts.groups().find((g) => g.id === agent.group)
   }
 
-  /** 会话实时在场名单（id + 名；ToolRuntime 惰性 participants / 成员校验共用） */
+  /** 会话实时在场名单（M77：成员实例投影——id = 成员键，name = 展示 token；ToolRuntime 惰性 participants / 成员校验共用） */
   private liveRoster(sessionId: string): Array<{ id: string; name: string }> {
-    return (this.deps.sessions.getSession(sessionId)?.participantIds ?? [])
-      .map((id) => this.deps.prompts.get(id))
-      .filter((a): a is AgentDefinition => Boolean(a))
-      .map((a) => ({ id: a.id, name: a.name }))
+    const session = this.deps.sessions.getSession(sessionId)
+    if (!session) return []
+    return resolveMembers(session, this.deps.prompts).map((m) => ({ id: m.key, name: m.label }))
+  }
+
+  /** M77：会话 @ 解析（成员实例 token 表；裸名 = 主实例（编制序首位），多实例时 `@名字·灵魂名` 点名；全伞 = 逐一点名） */
+  private parseSessionMentions(session: Session, text: string): ParseResult {
+    return parseMentionsWithTokens(text, buildMentionTokens(resolveMembers(session, this.deps.prompts)))
+  }
+
+  /** M77：角色 id / 成员键 → 在场成员键（精确命中优先；否则该角色首个实例） */
+  private resolveMemberKey(session: Session, idOrKey: string): string | undefined {
+    if (session.participantIds.includes(idOrKey)) return idOrKey
+    const base = baseAgentId(idOrKey)
+    return session.participantIds.find((key) => baseAgentId(key) === base)
+  }
+
+  /**
+   * M77：成员键 → 展示标签（自描述回退链）：在场实例标签 > 键内嵌灵魂还原（历史消息 / 已移除 / 已换键的
+   * 实例：`名字·灵魂名`）> 角色名 > 键。经典键（无内嵌灵魂）不补后缀；灵魂资产已删时回退角色名。
+   */
+  private memberLabelOf(sessionId: string, key: string): string {
+    const session = this.deps.sessions.getSession(sessionId)
+    if (session) {
+      const hit = resolveMembers(session, this.deps.prompts).find((m) => m.key === key)
+      if (hit) return hit.label
+    }
+    const agent = this.deps.prompts.get(key)
+    if (!agent) return key
+    const embedded = soulIdOfMember(key)
+    const soul = embedded ? this.deps.prompts.soul(key) : undefined
+    return soul ? `${agent.name}·${soul.meta.name}` : agent.name
+  }
+
+  /** M77：会话成员标签表（memberKey → 展示 token；请求 meta / 目录「已在场」共用） */
+  private memberLabelsOf(sessionId: string): Record<string, string> {
+    const session = this.deps.sessions.getSession(sessionId)
+    if (!session) return {}
+    const labels: Record<string, string> = {}
+    for (const m of resolveMembers(session, this.deps.prompts)) labels[m.key] = m.label
+    return labels
+  }
+
+  /** 温度解析：「统一温度」开关（设置面板热切换）开启时忽略角色级配置，全部角色使用全局温度 */
+  private temperatureOf(agent?: AgentDefinition): number {
+    const { cfg } = this.deps
+    return cfg.temperatureOverride ? cfg.temperature : (agent?.temperature ?? cfg.temperature)
+  }
+
+  /**
+   * M61-D5：并行波写冲突提醒 —— 两成员修改同一文件时落系统事件条（role=system，不进 LLM 窗口）
+   * + trace 留痕；仅真重叠产出（单成员波 / 无重叠零开销）。跟踪失败静默，绝不阻断主流程。
+   */
+  private reportWriteConflicts(
+    record: RunRecord,
+    byAgent: Map<string, Set<string>>,
+    waveIndex: number,
+  ): void {
+    const pairs = detectWriteConflicts(byAgent)
+    if (pairs.length === 0) return
+    this.trace(record, 'wave:write-conflict', { pairs }, waveIndex)
+    const nameOf = (id: string): string => this.deps.prompts.get(id)?.name ?? id
+    const detail = pairs
+      .map((p) => `${nameOf(p.a)} 与 ${nameOf(p.b)} 均修改了 ${p.paths.join('、')}`)
+      .join('；')
+    const message = this.deps.sessions.appendMessage({
+      sessionId: record.sessionId,
+      runId: record.id,
+      role: 'system',
+      content: `并行写冲突提醒：${detail}。请收敛方核对合并，避免互相覆盖。`,
+      mentions: [],
+      status: 'complete',
+    })
+    // 复用 plan-updated 通道即时插入系统事件条（与平台路由提示同路径）
+    this.deps.notify.publish({
+      type: 'notify:plan-updated',
+      sessionId: record.sessionId,
+      runId: record.id,
+      payload: { message },
+    })
+  }
+
+  /**
+   * 输出截断提示（finish_reason=length）：正文达到单次输出上限（max_tokens）被截断——
+   * 落系统事件条（role=system，不进 LLM 窗口，与并行写冲突提示同路径）让用户知晓不完整
+   * 并给出可行动路径；不修改消息状态（内容已停止，非失败）。
+   */
+  private appendTruncationNotice(record: RunRecord, agentId: string, message: ChatMessage): void {
+    const name = this.deps.prompts.get(baseAgentId(agentId))?.name ?? agentId
+    const sys = this.deps.sessions.appendMessage({
+      sessionId: record.sessionId,
+      runId: record.id,
+      role: 'system',
+      content: `${name} 的发言达到单次输出上限被截断（正文可能不完整）：可对该消息「重新生成」，或让 ${name} 分批补齐剩余内容。`,
+      mentions: [],
+      status: 'complete',
+    })
+    this.trace(record, 'turn:truncated', { agentId, messageId: message.id })
+    this.deps.notify.publish({
+      type: 'notify:plan-updated',
+      sessionId: record.sessionId,
+      runId: record.id,
+      payload: { message: sys },
+    })
   }
 
   /**
    * M48：平台召集（共享内核 + trace）——落库 / 广播 / 事件条与成员 API 语义一致
    * （措辞「召集了」，主语「平台」）。source：route（平台路由决策）/ handoff（成员转交未在场者的自动增援）。
    */
-  private enlistByPlatform(record: RunRecord, agentIds: string[], reason: string, source: 'route' | 'handoff'): string[] {
+  private enlistByPlatform(
+    record: RunRecord,
+    agentIds: string[],
+    reason: string,
+    source: 'route' | 'handoff',
+  ): string[] {
     const result = inviteMembersCore(
       { sessions: this.deps.sessions, prompts: this.deps.prompts, notify: this.deps.notify },
       { sessionId: record.sessionId, agentIds, reason, verb: '召集了', actorName: '平台' },
@@ -1331,10 +1652,17 @@ export class Engine {
 
   /** M48：应用路由派发 —— 任务便条注入（接手者回合显示「上一棒期望」）+ 队列填充 + 多目标并行 */
   private applyRouteAssignments(record: RunRecord, assignments: RouteAssignment[], reason: string): void {
-    for (const { agentId, task } of assignments) {
+    for (const { agentId, task, mode } of assignments) {
       if (record.queue.includes(agentId)) continue
       const notes = record.handoffNotes.get(agentId) ?? []
-      notes.push({ from: '平台', targets: [agentId], reason, expectedOutput: task })
+      // M61-D1：模式软建议（平台建议，非强制——执行权限仍由范式机制与工具白名单决定）
+      const hint =
+        mode === 'plan'
+          ? '（平台建议：先 write_plan 提交规划再动手）'
+          : mode === 'review'
+            ? '（平台建议：按评审范式核对后 submit_review）'
+            : ''
+      notes.push({ from: '平台', targets: [agentId], reason, expectedOutput: hint ? `${task}${hint}` : task })
       record.handoffNotes.set(agentId, notes)
       record.queue.push(agentId)
     }
@@ -1342,14 +1670,53 @@ export class Engine {
   }
 
   /**
+   * M61-D7：路由降级排序 —— 在场成员按「所属场景 chain 中位置」靠前者优先（上游角色优先接手）。
+   * 不在任何 chain 的成员保持原序靠后；稳定排序（同 rank 按编制序）。
+   */
+  private fallbackOrder(session: { participantIds: string[] }): string[] {
+    const rankOf = (id: string): number => {
+      const group = this.agentGroup(id)
+      if (!group) return 998
+      // M77：成员键按基础角色计链序（分身与经典实例同链位）
+      const i = group.chain.indexOf(baseAgentId(id))
+      return i === -1 ? 997 : i
+    }
+    return [...session.participantIds].sort((a, b) => rankOf(a) - rankOf(b))
+  }
+
+  /** M61-D1：工作区交付件清单（浅层扫描 ≤30 条 / 截断 600 字符；失败静默返回空串） */
+  private listDeliverables(sessionId: string): string {
+    try {
+      const root = this.deps.artifacts.ensureSessionDir(sessionId)
+      const out: string[] = []
+      const walk = (dir: string, prefix: string, depth: number): void => {
+        if (out.length >= 30 || depth > 2) return
+        for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+          if (out.length >= 30) return
+          if (entry.name.startsWith('.')) continue
+          const rel = prefix ? `${prefix}/${entry.name}` : entry.name
+          if (entry.isDirectory()) walk(path.join(dir, entry.name), rel, depth + 1)
+          else out.push(rel)
+        }
+      }
+      walk(root, '', 0)
+      return out.join('、').slice(0, 600)
+    } catch {
+      return ''
+    }
+  }
+
+  /**
    * M48：平台路由步（PRS）——未 @ 消息 / 空编制开场的接手决策（非角色回合：不占波次、不产生消息）。
-   * 流程：组装输入（需求 + 上下文 + 目录）→ 结构化调用 → 召集落库 → 任务便条注入 → 队列填充；
-   * 降级：失败且有编制 → 在场首位接手（trace 留 fallback 标记）；空编制无兜底 → 事件条提示并收尾。
+   * 流程：组装输入（需求 + 上下文 + 目录 + M61 会话简报）→ 结构化调用 → 召集落库 → 任务便条注入 → 队列填充；
+   * 降级：失败且有编制 → 场景链首在场成员接手（M61-D7；trace 留 fallback 标记）；空编制无兜底 → 事件条提示并收尾。
    */
   private async routeByPlatform(record: RunRecord): Promise<void> {
     const { prompts, sessions } = this.deps
     const session = sessions.getSession(record.sessionId)
     if (!session) return
+    // M77：成员标签表（分身 = 名字·灵魂名；目录「已在场」与上下文署名为可读性服务）
+    const memberLabels = this.memberLabelsOf(record.sessionId)
     const userMessage = [...sessions.messages(record.sessionId)].reverse().find((m) => m.role === 'user')
     if (!userMessage) return
     // 最近上下文（帮助理解「继续」类指代；渲染截断控体积）
@@ -1358,27 +1725,54 @@ export class Engine {
       .filter((m) => m.id !== userMessage.id && m.role !== 'system' && m.content.trim() !== '')
       .slice(-4)
       .map((m) => {
-        const who = m.role === 'user' ? '用户' : (prompts.get(m.agentId ?? '')?.name ?? m.agentId ?? '成员')
+        // M77：上下文署名优先成员标签（分身 = 名字·灵魂名）
+        const who =
+          m.role === 'user'
+            ? '用户'
+            : m.memberKey
+              ? this.memberLabelOf(record.sessionId, m.memberKey)
+              : (prompts.get(m.agentId ?? '')?.name ?? m.agentId ?? '成员')
         return `[${who}] ${m.content.trim().slice(0, 160)}`
       })
       .join('\n')
       .slice(0, 800)
+    // M61-D1：路由输入增强 —— 会话阶段 / 最近接手者（去重参考）/ 已有交付件（防重复创建）
+    const agentMsgs = sessions.messages(record.sessionId).filter((m) => m.role === 'agent')
+    const recentHandlers = [
+      ...new Set(
+        agentMsgs
+          .slice(-3)
+          .map((m) => m.memberKey ?? m.agentId)
+          .filter((id): id is string => Boolean(id)),
+      ),
+    ]
+      .map((id) => `${this.memberLabelOf(record.sessionId, id)}(${id})`)
+      .join('、')
     const outcome = await runPlatformRoute({
       cfg: this.deps.cfg,
       provider: this.deps.provider,
-      catalog: buildRosterCatalogBlock(prompts, session.participantIds),
+      catalog: buildRosterCatalogBlock(prompts, session.participantIds, memberLabels),
       userText: userMessage.content,
       contextText,
+      stage: agentMsgs.length === 0 ? 'opening' : 'ongoing',
+      recentHandlers,
+      deliverables: this.listDeliverables(record.sessionId),
       presentIds: [...session.participantIds],
       // M50：空场景成员不进 PRS 可召集集（幻觉输出同样被 coerceRoutePlan 丢弃）
-      knownIds: new Set(prompts.list().filter((a) => a.group !== BLANK_SCENE_ID).map((a) => a.id)),
+      knownIds: new Set(
+        prompts
+          .list()
+          .filter((a) => a.group !== BLANK_SCENE_ID)
+          .map((a) => a.id),
+      ),
       usage: this.deps.usage,
       runId: record.id,
       sessionId: record.sessionId,
       signal: record.controller.signal,
     })
     if (!outcome.ok) {
-      const fallback = session.participantIds[0]
+      // M61-D7：降级接手从「编制首位」升级为「场景链首」在场成员（上游角色优先）
+      const fallback = this.fallbackOrder(session)[0]
       this.trace(record, 'routing:dispatched', { fallback: true, error: outcome.error ?? '' })
       if (!fallback) {
         // 空编制且路由失败：可见提示 + 直接收尾（绝不静默）
@@ -1399,18 +1793,36 @@ export class Engine {
         })
         return
       }
-      this.applyRouteAssignments(record, [{ agentId: fallback, task: '按你的职责推进该需求' }], '平台路由失败，交由首位成员接手')
+      this.applyRouteAssignments(
+        record,
+        [{ agentId: fallback, task: '按你的职责推进该需求' }],
+        '平台路由失败，交由首位成员接手',
+      )
       return
     }
     // 召集（PRS 决策的成员先落库，再派发；事件条「平台 召集了 …」可审计）
     if (outcome.members.length > 0) {
       this.enlistByPlatform(record, outcome.members, outcome.reason || '平台路由召集', 'route')
     }
-    const presentNow = new Set(sessions.getSession(record.sessionId)?.participantIds ?? [])
-    const valid = outcome.assignments.filter((a) => presentNow.has(a.agentId))
+    // M77：派发目标归一为在场成员键（角色 id → 经典实例 / 该角色首个实例）
+    const currentSession = sessions.getSession(record.sessionId)
+    const presentNow = new Set(currentSession?.participantIds ?? [])
+    const valid = outcome.assignments
+      .map((a) => ({
+        ...a,
+        agentId: currentSession ? (this.resolveMemberKey(currentSession, a.agentId) ?? a.agentId) : a.agentId,
+      }))
+      .filter((a) => presentNow.has(a.agentId))
     if (valid.length === 0) {
-      const fallback = sessions.getSession(record.sessionId)?.participantIds[0]
-      if (fallback) this.applyRouteAssignments(record, [{ agentId: fallback, task: '按你的职责推进该需求' }], outcome.reason)
+      // M61-D7：同降级路径 —— 场景链首成员接手
+      const current = sessions.getSession(record.sessionId)
+      const fallback = current ? this.fallbackOrder(current)[0] : undefined
+      if (fallback)
+        this.applyRouteAssignments(
+          record,
+          [{ agentId: fallback, task: '按你的职责推进该需求' }],
+          outcome.reason,
+        )
       return
     }
     this.trace(record, 'routing:dispatched', { assignments: valid, reason: outcome.reason })
@@ -1435,6 +1847,20 @@ export class Engine {
     const reviewTargets = this.reviewTargetsFor(appliedSteps.filter((s) => s.ownerAgentId === agentId))
     const incomingHandoffs = record.handoffNotes.get(agentId) ?? []
     record.handoffNotes.delete(agentId)
+    // M61-D4：接单回执 —— 消费交接便条即记录一次「已接单」（审计交接链闭环；纯观测）
+    if (incomingHandoffs.length > 0) {
+      this.trace(
+        record,
+        'handoff:accepted',
+        {
+          agentId,
+          from: incomingHandoffs.map((h) => h.from).slice(0, 4),
+          count: incomingHandoffs.length,
+          reason: incomingHandoffs[0]?.reason?.slice(0, 120),
+        },
+        turnIndex,
+      )
+    }
     const turnExtra = {
       mode: opts.mode,
       planSteps: appliedSteps
@@ -1456,14 +1882,19 @@ export class Engine {
     // M24：范式工具白名单（plan / review = 只读 + 范式工具）+ 本回合动态授权（派发步骤的 update_plan_step）
     // M27：MCP 工具按「服务器启用 + 已连接 + 会话绑定」过滤（未绑定不进入模型清单；执行期再校验兼容中途解绑）
     // M28：tool_search 恒并入候选（引擎授权；是否进 schema 由发现态决定）
-    const toolCandidates = this.deps.tools.forAgent(agent, opts.mode, [
+    const baseCandidates = this.deps.tools.forAgent(agent, opts.mode, [
       ...(appliedSteps.length > 0 ? ['update_plan_step'] : []),
       'tool_search',
     ])
+    // M57 P3：personal MCP 自动授予（仅 execute 模式；plan / review 保持只读白名单语义）
+    const toolCandidates =
+      opts.mode && opts.mode !== 'execute'
+        ? baseCandidates
+        : this.mergePersonalMcpTools(baseCandidates, session.ownerId)
     // M47：环境门控 —— 未启用的工具不进模型清单与可发现范围（防「必然失败」调用；执行期守卫仍在）
     const gitVisible = this.deps.isGitMode ? this.deps.isGitMode(record.sessionId) : true
     const availableTools = (
-      this.deps.mcp ? this.deps.mcp.filterForSession(record.sessionId, toolCandidates) : toolCandidates
+      this.deps.mcp ? this.deps.mcp.filterForSession(record.sessionId, toolCandidates, session.ownerId) : toolCandidates
     ).filter((tool) => {
       if (toolUnavailableReason(tool.name, cfg)) return false
       return gitVisible || !isGitToolName(tool.name)
@@ -1515,8 +1946,12 @@ export class Engine {
     try {
       // 竞态兜底：run 在本回合开始前已被停止
       if (turn.signal.aborted) throw abortError()
+      // 交付规格闭环：深度档放宽工具步数上限（骨架 + 多节填充 + 自检需要更多步）
+      const maxSteps = prepared.deliverableSpec === 'deep' ? Math.max(cfg.maxToolSteps, 12) : cfg.maxToolSteps
       let step = 0
-      while (step < cfg.maxToolSteps) {
+      /** 截断发生在本回合最后一子轮（无后续工具轮可补齐）——仅此时提示 */
+      let truncatedAtEnd = false
+      while (step < maxSteps) {
         // M28：每子轮重算工具清单 —— 发现启用时 = core ∪ 已激活（tool_search 激活在子轮间即时生效）；
         // 未启用时 = 全量（仅隐藏 tool_search，保持与 M28 前一致）
         const turnTools = discovery.enabled
@@ -1525,8 +1960,11 @@ export class Engine {
         const request: ChatRequest = {
           system,
           messages: [...window, { role: 'user', content: turnInstruction }, ...toolMessages],
+          // 多 Provider：模型名命中模型服务清单 → 经该服务调用（未命中 = 系统默认）
           model: agent.model,
-          temperature: agent.temperature ?? cfg.temperature,
+          // M57 P3：BYOK 凭据按会话属主解析
+          sessionId: record.sessionId,
+          temperature: this.temperatureOf(agent),
           thinking: cfg.llmThinking,
           tools: turnTools.length > 0 ? this.deps.tools.toSchema(turnTools) : undefined,
           meta: {
@@ -1536,11 +1974,15 @@ export class Engine {
             stepIndex: turnIndex,
             availableSkills: skills.list().map((s) => s.name),
             soul: effectiveSoul,
+            // M77：成员标签表（mock 转交行 / 纪要署名；分身 = 名字·灵魂名）
+            memberLabels: this.memberLabelsOf(record.sessionId),
             ...(opts.mode === 'execute' ? {} : { mode: opts.mode }),
           },
         }
 
         const pendingCalls: LlmToolCall[] = []
+        /** 本子轮截断（finish_reason=length）：每子轮重置——有后续工具轮 = 模型已继续补齐，不提示 */
+        let truncated = false
         /** 本子轮思考内容：开启思考时随 assistant(tool_calls) 消息回传给 API（硬性要求） */
         let stepReasoning = ''
         try {
@@ -1556,7 +1998,13 @@ export class Engine {
               parentSignal: turn.signal,
               onRetry: (info) => {
                 getLogger().warn(
-                  { runId: record.id, agentId, attempt: info.attempt, delayMs: info.delayMs, reason: info.reason },
+                  {
+                    runId: record.id,
+                    agentId,
+                    attempt: info.attempt,
+                    delayMs: info.delayMs,
+                    reason: info.reason,
+                  },
                   'LLM 请求失败，自动重试',
                 )
                 this.emit(record, {
@@ -1586,6 +2034,8 @@ export class Engine {
               promptTokens += chunk.usage.promptTokens
               completionTokens += chunk.usage.completionTokens
               this.recordTurnUsage(record, agentId, request.model, chunk.usage)
+            } else if (chunk.type === 'truncated') {
+              truncated = true
             }
           }
         } catch (streamErr) {
@@ -1628,7 +2078,10 @@ export class Engine {
           throw streamErr
         }
 
-        if (pendingCalls.length === 0) break
+        if (pendingCalls.length === 0) {
+          truncatedAtEnd = truncated
+          break
+        }
         toolMessages.push({
           role: 'assistant',
           content: '',
@@ -1639,12 +2092,15 @@ export class Engine {
         step++
       }
 
+      // 输出截断治理：正文被单次输出上限截断 → 系统事件条提示（不阻塞流程，可重新生成 / 分批补齐）
+      if (truncatedAtEnd) this.appendTruncationNotice(record, agentId, message)
+
       // M16：转交提案收集（裁决与波级合并移至 mergeWaveSchedule；handoff 工具优先，文本 @ 兼容回退）
       // M24：条目式收集（携带来源与期望产出；非 user 目标留存便条，待其发言注入「上一棒期望」）
       // M48：目标不在场但资产存在 → 平台自动召集（成员增援无需手动邀请；落库后 decideHandoff 正常接手）
       // M55：收尾净化先于 @ 解析（仿写日志块内可能出现伪 @ 交还标记）
       this.sanitizeAndAudit(record, message)
-      const parsed = parseMentions(message.content, prompts.list())
+      const parsed = this.parseSessionMentions(session, message.content)
       const entries = record.pendingHandoffs.get(message.id) ?? []
       record.pendingHandoffs.delete(message.id)
       const toolHandoffs: string[] = []
@@ -1656,7 +2112,8 @@ export class Engine {
           const notes = record.handoffNotes.get(target) ?? []
           notes.push(entry)
           record.handoffNotes.set(target, notes)
-          if (!session.participantIds.includes(target) && this.deps.prompts.get(target)) enlistTargets.add(target)
+          if (!session.participantIds.includes(target) && this.deps.prompts.get(target))
+            enlistTargets.add(target)
         }
       }
       if (enlistTargets.size > 0) {
@@ -1775,7 +2232,9 @@ export class Engine {
         const group = calls.slice(index, end)
         const results: ToolResult[] = readBatch
           ? await Promise.all(
-              group.map((call) => this.runToolCall(record, message, call, entries.get(call.id)!, runtime, signal)),
+              group.map((call) =>
+                this.runToolCall(record, message, call, entries.get(call.id)!, runtime, signal),
+              ),
             )
           : [await this.runToolCall(record, message, group[0], entries.get(group[0].id)!, runtime, signal)]
         // 按调用顺序应用副作用并回灌（handoff 顺序 / 工具消息顺序）
@@ -1825,10 +2284,18 @@ export class Engine {
     const { cfg, artifacts } = this.deps
     // M46：实时在场名单闭包（惰性 participants 数据源；同回合召集后即时反映）
     const liveParticipants = (): Array<{ id: string; name: string }> => this.liveRoster(record.sessionId)
+    // M77：成员级身份（分身实例）——计划/任务/发现态按成员键归属；agentId 保持基础角色（归因/记忆）
+    const memberId = message.memberKey ?? message.agentId!
     const runtime: ToolRuntime = {
       sessionId: record.sessionId,
       runId: record.id,
       agentId: message.agentId!,
+      memberKey: memberId,
+      // M57：会话属主（remember 的 global 记忆按用户隔离；单用户兼容模式缺省）
+      userId: this.deps.sessions.getSession(record.sessionId)?.ownerId,
+      // M57 P2：触发者（共享会话连接最小权限复核：以发起本 Run 的成员为准，而非会话属主）
+      triggerUserId: record.triggerUserId,
+      connectionGuard: this.deps.connectionGuard,
       workspace: artifacts.ensureSessionDir(record.sessionId),
       artifacts,
       skills: this.deps.skills,
@@ -1840,7 +2307,7 @@ export class Engine {
       // M24：计划 / 评审通道（范式工具数据面；缺省时工具自行返回未启用）
       plans: this.deps.plans,
       reviews: this.deps.reviews,
-      planSteps: this.planStepsFor(record, message.agentId!),
+      planSteps: this.planStepsFor(record, memberId),
       submitPlan:
         this.deps.plans && this.deps.planReviews
           ? (input: PlanSubmitInput, signal?: AbortSignal) => this.submitPlan(record, message, input, signal)
@@ -1857,11 +2324,10 @@ export class Engine {
         const match = this.deps.prompts.list().find((a) => a.group !== BLANK_SCENE_ID && a.name === token)
         return match ? { id: match.id, name: match.name } : undefined
       },
-      todos: this.todosFor(record, message.agentId!),
+      todos: this.todosFor(record, memberId),
       allowRunCommand: cfg.allowRunCommand,
       allowedCommands: cfg.allowedCommands,
       allowSensitive: cfg.allowSensitive,
-      webFetchAllowedDomains: cfg.webFetchAllowedDomains,
       webSearch: cfg.webSearch,
       httpUserAgent: cfg.httpUserAgent,
       httpMinIntervalMs: cfg.httpMinIntervalMs,
@@ -1884,7 +2350,7 @@ export class Engine {
       searchTools: this.deps.toolSearch
         ? async (query: string, limit?: number) => {
             const service = this.deps.toolSearch
-            const state = record.discoveryByAgent.get(message.agentId!)
+            const state = record.discoveryByAgent.get(message.memberKey ?? message.agentId!)
             // M47：未装配 / 发现未启用 = 全部工具已直接可用（非失败语义，防误报与无谓重试）
             if (!service || !state?.enabled) {
               return { ok: true, activated: [], direct: true, note: '当前所有工具均已直接可用，无需检索' }
@@ -1977,7 +2443,7 @@ export class Engine {
 
   /** 延迟工具执行门：发现启用 + tier=deferred + 未激活 → 拒绝（引导先 tool_search）；null = 放行 */
   private discoveryGate(record: RunRecord, message: ChatMessage, call: LlmToolCall): ToolResult | null {
-    const state = record.discoveryByAgent.get(message.agentId!)
+    const state = record.discoveryByAgent.get(message.memberKey ?? message.agentId!)
     if (!state?.enabled) return null
     if (this.deps.tools.get(call.name)?.tier !== 'deferred') return null
     if (record.activatedTools.has(call.name)) return null
@@ -2031,7 +2497,7 @@ export class Engine {
     signal: AbortSignal,
   ): Promise<ToolResult> {
     // M3：工具执行期间 Agent 处于 thinking（前端状态点）
-    this.publishStatus(record, message.agentId!, 'thinking', 'tool')
+    this.publishStatus(record, message.memberKey ?? message.agentId!, 'thinking', 'tool')
     // M7：回合信号写入 runtime（审批挂起时随 stop 取消）
     runtime.turnSignal = signal
     // M7：高危工具强制审批（APPROVAL_MODE=risky|all）→ 未通过不执行，回灌可修正反馈
@@ -2088,11 +2554,17 @@ export class Engine {
       durationMs,
       summary: result.summary?.slice(0, 160),
     })
+    // M61-D3/D5：成功写动作 → 波内写跟踪（提取失败静默返回空集，绝不影响主流程）
+    if (result.ok && message.agentId) {
+      recordWrite(record.waveWrites, message.agentId, extractWritePaths(call.name, entry.args))
+    }
     // M25：remember 成功 → 嵌入排队（worker 异步消费，失败静默不影响工具结果）
     if (call.name === 'remember' && result.ok) this.trace(record, 'memory:embed', { queued: true })
-    this.publishStatus(record, message.agentId!, 'speaking', 'tool-done')
+    this.publishStatus(record, message.memberKey ?? message.agentId!, 'speaking', 'tool-done')
     entry.status = result.ok ? 'ok' : 'error'
     entry.summary = result.summary
+    // M31 修订：结构化元信息随工具记录持久化（消息侧「在画布查看」等精确定位依据）
+    if (result.meta) entry.meta = result.meta
     entry.endedAt = new Date().toISOString()
     this.deps.sessions.touch(record.sessionId, message.id)
     this.emit(record, { type: 'tool:result', messageId: message.id, call: { ...entry } })
@@ -2101,8 +2573,8 @@ export class Engine {
 
   /**
    * M7：高风险工具审批门返回值：非 null = 需要用户批准。
-   * APPROVAL_MODE=off 关闭；all 全部工具；risky（默认）覆盖：
-   * APPROVAL_TOOLS 显式列表 + git_commit / run_command + write_file 覆盖写已有文件 + 敏感文件（ALLOW_SENSITIVE 已放开时）。
+   * APPROVAL_MODE=off 关闭；all 全部工具；risky（ 默认）覆盖：
+   * APPROVAL_TOOLS 显式列表 + git_commit / git_restore / run_command + write_file 覆盖写已有文件 + 敏感文件（ALLOW_SENSITIVE 已放开时）。
    */
   private approvalGate(
     message: ChatMessage,
@@ -2113,7 +2585,9 @@ export class Engine {
     if (cfg.approvalMode === 'off') return null
     if (call.name === 'request_approval') return null // 审批工具自身即协议入口，不重复拦截
     const args = parseToolArgs(call.arguments)
-    const agentName = this.deps.prompts.get(message.agentId!)?.name ?? message.agentId ?? 'Agent'
+    const agentName = message.memberKey
+      ? this.memberLabelOf(message.sessionId, message.memberKey)
+      : (this.deps.prompts.get(message.agentId ?? '')?.name ?? message.agentId ?? 'Agent')
     const argsJson = JSON.stringify(args)
     const argsBrief = argsJson.length > 1200 ? `${argsJson.slice(0, 1200)}…` : argsJson
     const generic = {
@@ -2138,6 +2612,17 @@ export class Engine {
       return {
         action: `${agentName}请求提交 git 变更`,
         detail: `提交信息：${String(args.message ?? '（未提供）')}\n工作区：${runtime.workspace}`,
+      }
+    }
+    // git_restore：丢弃未提交改动不可逆，与 git_commit 同级拦截（staged=true 仅撤回暂存，风险较低仍统一拦截）
+    if (call.name === 'git_restore') {
+      return {
+        action: `${agentName}请求还原文件（丢弃未提交改动）`,
+        detail: `文件：${String(args.path ?? '（未提供）')}\n方式：${
+          args.staged === true
+            ? '仅撤回暂存（保留工作区改动）'
+            : '丢弃工作区改动（不可逆，请确认此改动已无用）'
+        }`,
       }
     }
     if (call.name === 'run_command') {
@@ -2200,7 +2685,14 @@ export class Engine {
     gate: { action: string; detail: string; options?: string[] },
     signal: AbortSignal,
   ): Promise<ToolResult | null> {
-    const outcome = await this.requestApproval(record, message, gate.action, gate.detail, gate.options, signal)
+    const outcome = await this.requestApproval(
+      record,
+      message,
+      gate.action,
+      gate.detail,
+      gate.options,
+      signal,
+    )
     if (outcome.decision === 'approve' || outcome.decision === 'custom') return null
     const summary = outcome.cancelled
       ? '审批取消（运行已停止）'
@@ -2218,7 +2710,7 @@ export class Engine {
     entry.endedAt = new Date().toISOString()
     this.deps.sessions.touch(record.sessionId, message.id)
     this.emit(record, { type: 'tool:result', messageId: message.id, call: { ...entry } })
-    this.publishStatus(record, message.agentId!, 'speaking', 'approval-denied')
+    this.publishStatus(record, message.memberKey ?? message.agentId!, 'speaking', 'approval-denied')
     if (!outcome.cancelled) this.recordToolMetric(record, message.agentId!, call.name, false, 0)
     return { ok: false, summary, detail }
   }
@@ -2282,12 +2774,18 @@ export class Engine {
   ): Promise<PlanSubmitOutcome> {
     const { plans, planReviews } = this.deps
     if (!plans || !planReviews) throw new Error('计划通道未启用')
-    const agentId = message.agentId!
+    // M77：计划作者/步骤归属用成员键（分身实例；经典 = agentId）
+    const agentId = message.memberKey ?? message.agentId!
     record.planSubmissions++
     // 修订路径：本 Run 内作者被驳回 → 同 id 版本递增重提（v2 现场修订）
     const rejected = plans.latestRejected(record.id, agentId)
     let plan = rejected
-      ? plans.revise(rejected.id, { goal: input.goal, title: input.title, steps: input.steps, risks: input.risks })
+      ? plans.revise(rejected.id, {
+          goal: input.goal,
+          title: input.title,
+          steps: input.steps,
+          risks: input.risks,
+        })
       : undefined
     if (!plan) {
       // 重规划：本 Run 中作者已有 approved / executing 计划 → 旧版 supersede（新版重新挂起）
@@ -2588,7 +3086,13 @@ export class Engine {
   }
 
   /** M5：工具指标落库（指标失败不得影响运行主流程） */
-  private recordToolMetric(record: RunRecord, agentId: string, toolName: string, ok: boolean, durationMs: number): void {
+  private recordToolMetric(
+    record: RunRecord,
+    agentId: string,
+    toolName: string,
+    ok: boolean,
+    durationMs: number,
+  ): void {
     try {
       this.deps.metrics.record({ toolName, ok, durationMs, agentId, sessionId: record.sessionId })
     } catch {
@@ -2667,8 +3171,8 @@ export class Engine {
     // M2：工具结果按 TOOL_RESULT_MAX_TOKENS 截断，附「offset 续读」提示
     // M7：失败也优先回灌 detail（审批拒绝等场景的完整可修正反馈在 detail）
     const raw = result.ok
-      ? result.detail ?? result.summary
-      : result.detail ?? `工具执行失败：${result.summary}`
+      ? (result.detail ?? result.summary)
+      : (result.detail ?? `工具执行失败：${result.summary}`)
     const clipped = truncateToTokens(
       raw,
       cfg.toolResultMaxTokens,
@@ -2717,7 +3221,12 @@ export class Engine {
   }
 
   /** M9：运行轨迹打点（观测失败不影响主流程） */
-  private trace(record: RunRecord, type: string, payload: Record<string, unknown> = {}, turnIndex?: number): void {
+  private trace(
+    record: RunRecord,
+    type: string,
+    payload: Record<string, unknown> = {},
+    turnIndex?: number,
+  ): void {
     if (!this.deps.events) return
     try {
       this.deps.events.record({
@@ -2726,6 +3235,8 @@ export class Engine {
         turnIndex: turnIndex ?? record.turnIndex,
         type,
         payload,
+        // M57：用户归因（会话属主；单用户兼容模式缺省）
+        userId: this.deps.sessions.getSession(record.sessionId)?.ownerId,
       })
     } catch {
       // 观测失败不影响主流程
@@ -2796,8 +3307,13 @@ export class Engine {
   }
 
   /** M4：回合用量落库（cost 按单价表估算）并流上广播 */
-  private recordTurnUsage(record: RunRecord, agentId: string, model: string | undefined, usage: LlmUsage): void {
-    const resolvedModel = model || this.deps.cfg.llmModel
+  private recordTurnUsage(
+    record: RunRecord,
+    agentId: string,
+    model: string | undefined,
+    usage: LlmUsage,
+  ): void {
+    const resolvedModel = model || this.deps.billingModelFor?.(record.sessionId) || this.deps.cfg.llmModel
     const costUsd = this.deps.usage.record({
       runId: record.id,
       sessionId: record.sessionId,
@@ -2806,6 +3322,8 @@ export class Engine {
       promptTokens: usage.promptTokens,
       completionTokens: usage.completionTokens,
       kind: 'turn',
+      // M57：用户归因（会话属主）
+      userId: this.deps.sessions.getSession(record.sessionId)?.ownerId,
     })
     const snapshot: UsageSnapshot = {
       runId: record.id,
@@ -2824,7 +3342,7 @@ export class Engine {
   private async runResumeLoop(record: RunRecord, message: ChatMessage): Promise<void> {
     const { sessions, cfg, prompts } = this.deps
     const session = sessions.getSession(record.sessionId)!
-    const agentId = message.agentId!
+    const agentId = message.memberKey ?? message.agentId!
     const agent = prompts.get(agentId)
     let reason: RunEndReason = 'completed'
     let errorMessage: string | undefined
@@ -2851,11 +3369,12 @@ export class Engine {
       this.emit(record, {
         type: 'turn:start',
         runId: record.id,
-        agentId,
+        agentId: baseAgentId(agentId),
+        memberKey: agentId,
         messageId: message.id,
         turnIndex: message.turnIndex ?? 0,
       })
-      this.trace(record, 'turn:start', { agentId, messageId: message.id }, turnIndex)
+      this.trace(record, 'turn:start', { agentId: baseAgentId(agentId), memberKey: agentId, messageId: message.id }, turnIndex)
 
       const prepared = await this.deps.context.prepareTurn({
         sessionId: record.sessionId,
@@ -2874,11 +3393,12 @@ export class Engine {
           { role: 'assistant', content: message.content },
           {
             role: 'user',
-            content: '（你上一条回复被中断了。请从中断处自然续写剩余内容：不要重复已经说过的部分，不要重新开头。）',
+            content:
+              '（你上一条回复被中断了。请从中断处自然续写剩余内容：不要重复已经说过的部分，不要重新开头。）',
           },
         ],
         model: agent?.model,
-        temperature: agent?.temperature ?? cfg.temperature,
+        temperature: this.temperatureOf(agent),
         thinking: false,
         meta: {
           agentId,
@@ -2886,20 +3406,19 @@ export class Engine {
           spokenAgentIds: [...record.spoken],
           stepIndex: message.turnIndex ?? 0,
           soul: prompts.soul(agentId, session.memberSouls?.[agentId])?.meta.id,
+          memberLabels: this.memberLabelsOf(record.sessionId),
         },
       }
 
+      let truncated = false
       let reportedSpeaking = false
-      for await (const chunk of resilientStream(
-        (signal) => this.deps.provider.chatStream(request, signal),
-        {
-          maxAttempts: Math.max(1, cfg.llmMaxRetries),
-          baseDelayMs: cfg.llmRetryBaseDelayMs,
-          firstTokenTimeoutMs: cfg.firstTokenTimeoutMs,
-          idleTimeoutMs: cfg.streamIdleTimeoutMs,
-          parentSignal: turn.signal,
-        },
-      )) {
+      for await (const chunk of resilientStream((signal) => this.deps.provider.chatStream(request, signal), {
+        maxAttempts: Math.max(1, cfg.llmMaxRetries),
+        baseDelayMs: cfg.llmRetryBaseDelayMs,
+        firstTokenTimeoutMs: cfg.firstTokenTimeoutMs,
+        idleTimeoutMs: cfg.streamIdleTimeoutMs,
+        parentSignal: turn.signal,
+      })) {
         if (chunk.type === 'text') {
           if (!reportedSpeaking) {
             reportedSpeaking = true
@@ -2912,17 +3431,22 @@ export class Engine {
           promptTokens += chunk.usage.promptTokens
           completionTokens += chunk.usage.completionTokens
           this.recordTurnUsage(record, agentId, request.model, chunk.usage)
+        } else if (chunk.type === 'truncated') {
+          truncated = true
         }
       }
 
       // M55：续写收尾净化（幂等；先于落库与下一回合上下文装配）
       this.sanitizeAndAudit(record, message)
+      // 输出截断治理：续写再次触顶 → 系统事件条提示（正文仍不完整）
+      if (truncated) this.appendTruncationNotice(record, agentId, message)
       message.status = 'complete'
       sessions.touch(record.sessionId, message.id)
       this.emit(record, {
         type: 'turn:end',
         messageId: message.id,
-        agentId,
+        agentId: baseAgentId(agentId),
+        memberKey: agentId,
         mentions: message.mentions ?? [],
         queue: [],
         status: 'complete',
@@ -2985,7 +3509,7 @@ export class Engine {
   private async runRegenerateLoop(record: RunRecord, message: ChatMessage): Promise<void> {
     const { sessions, cfg, prompts } = this.deps
     const session = sessions.getSession(record.sessionId)!
-    const agentId = message.agentId!
+    const agentId = message.memberKey ?? message.agentId!
     const agent = prompts.get(agentId)
     let reason: RunEndReason = 'completed'
     let errorMessage: string | undefined
@@ -3010,11 +3534,12 @@ export class Engine {
       this.emit(record, {
         type: 'turn:start',
         runId: record.id,
-        agentId,
+        agentId: baseAgentId(agentId),
+        memberKey: agentId,
         messageId: message.id,
         turnIndex: message.turnIndex ?? 0,
       })
-      this.trace(record, 'turn:start', { agentId, messageId: message.id }, turnIndex)
+      this.trace(record, 'turn:start', { agentId: baseAgentId(agentId), memberKey: agentId, messageId: message.id }, turnIndex)
 
       const prepared = await this.deps.context.prepareTurn({
         sessionId: record.sessionId,
@@ -3030,7 +3555,7 @@ export class Engine {
         system: prepared.system,
         messages: prepared.messages,
         model: agent?.model,
-        temperature: agent?.temperature ?? cfg.temperature,
+        temperature: this.temperatureOf(agent),
         thinking: cfg.llmThinking,
         meta: {
           agentId,
@@ -3038,20 +3563,19 @@ export class Engine {
           spokenAgentIds: [...record.spoken],
           stepIndex: message.turnIndex ?? 0,
           soul: prompts.soul(agentId, session.memberSouls?.[agentId])?.meta.id,
+          memberLabels: this.memberLabelsOf(record.sessionId),
         },
       }
 
+      let truncated = false
       let reportedSpeaking = false
-      for await (const chunk of resilientStream(
-        (signal) => this.deps.provider.chatStream(request, signal),
-        {
-          maxAttempts: Math.max(1, cfg.llmMaxRetries),
-          baseDelayMs: cfg.llmRetryBaseDelayMs,
-          firstTokenTimeoutMs: cfg.firstTokenTimeoutMs,
-          idleTimeoutMs: cfg.streamIdleTimeoutMs,
-          parentSignal: turn.signal,
-        },
-      )) {
+      for await (const chunk of resilientStream((signal) => this.deps.provider.chatStream(request, signal), {
+        maxAttempts: Math.max(1, cfg.llmMaxRetries),
+        baseDelayMs: cfg.llmRetryBaseDelayMs,
+        firstTokenTimeoutMs: cfg.firstTokenTimeoutMs,
+        idleTimeoutMs: cfg.streamIdleTimeoutMs,
+        parentSignal: turn.signal,
+      })) {
         if (chunk.type === 'text') {
           if (!reportedSpeaking) {
             reportedSpeaking = true
@@ -3068,17 +3592,22 @@ export class Engine {
           promptTokens += chunk.usage.promptTokens
           completionTokens += chunk.usage.completionTokens
           this.recordTurnUsage(record, agentId, request.model, chunk.usage)
+        } else if (chunk.type === 'truncated') {
+          truncated = true
         }
       }
 
       // M55：重生成收尾净化（幂等；先于落库与下一回合上下文装配）
       this.sanitizeAndAudit(record, message)
+      // 输出截断治理：重生成再次触顶 → 系统事件条提示
+      if (truncated) this.appendTruncationNotice(record, agentId, message)
       message.status = 'complete'
       sessions.touch(record.sessionId, message.id)
       this.emit(record, {
         type: 'turn:end',
         messageId: message.id,
-        agentId,
+        agentId: baseAgentId(agentId),
+        memberKey: agentId,
         mentions: [],
         queue: [],
         status: 'complete',

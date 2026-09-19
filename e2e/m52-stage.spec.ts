@@ -12,7 +12,8 @@
  * 6) M52-C · roundtable 窄屏降级：席位横条 + M58 无产物不渲染汇聚板抽屉；
  * 7) M52-D · arena 席位发言流：左右席下栏投影（空态 → 该席发言条目 + 轮次徽标）；
  * 8) M58 · 面板无数据不展示：六面板就绪判定接入宿主（无数据零工作区结构）；标题合行
- *    （折叠 / 关闭钮收口进面板标题行）+ 折叠 / 关闭 / 恢复交互全链。
+ *    （折叠 / 关闭钮收口进面板标题行）+ 折叠 / 关闭 / 恢复交互全链；
+ * 9) 批九 · dock 右区宽度：拖拽到最宽 = 容器一半（半屏上限）；双击复位回自适应。
  */
 import { expect, test } from '@playwright/test'
 import { COMPOSER_PLACEHOLDER, createSession, expectYourTurn, openApp, sendMessage } from './helpers'
@@ -143,14 +144,35 @@ test('M52-B · arena（辩论场）：计分板 + 左右席 + 发消息后回合
   // 空态已被条目替换
   await expect(page.locator('.scene-arena-left .scene-side-empty')).toHaveCount(0)
 
-  // M60（§81）：侧栏宽度自适应——clamp(164px, 宿主 20%, 280px)，全屏 / 大屏不再固定 164 窄条
+  // M60（§81）· 续修订三轮：侧栏宽度自适应——clamp(164px, 宿主 22%, 340px)，全屏 / 大屏不再固定 164 窄条
   const bodyBox = (await page.locator('.scene-arena-body').boundingBox())!
   const leftBox = (await page.locator('.scene-arena-left').boundingBox())!
-  expect(Math.abs(leftBox.width - Math.max(164, Math.min(280, bodyBox.width * 0.2)))).toBeLessThan(2)
+  const rightBox = (await page.locator('.scene-arena-right').boundingBox())!
+  expect(Math.abs(leftBox.width - Math.max(164, Math.min(340, bodyBox.width * 0.22)))).toBeLessThan(2)
+  // 左右两栏同口径等宽（同一 clamp 公式 + 同一包含块 .scene-arena-body）
+  expect(
+    Math.abs(leftBox.width - rightBox.width),
+    `left=${leftBox.width} right=${rightBox.width}`,
+  ).toBeLessThan(2)
+  // 续修订二轮：滚动条占位一致性——两侧恒预留 gutter（scrollbar-gutter: stable），
+  // 经典滚动条（鼠标模式）仅占溢出一侧曾令左右内容区标尺差 ~15px（观感「宽度不一致」）
+  const gutterLeft = await page.locator('.scene-arena-left').evaluate((el) => getComputedStyle(el).scrollbarGutter)
+  const gutterRight = await page.locator('.scene-arena-right').evaluate((el) => getComputedStyle(el).scrollbarGutter)
+  expect(gutterLeft).toBe('stable')
+  expect(gutterRight).toBe('stable')
+  // 两侧内容区宽度（clientWidth）严格一致
+  const clientWs = await page.locator('.scene-arena-side').evaluateAll((els) => els.map((el) => el.clientWidth))
+  expect(clientWs).toHaveLength(2)
+  expect(Math.abs((clientWs[0] ?? 0) - (clientWs[1] ?? 0))).toBeLessThan(1)
   // 视口放宽 → 侧栏随宿主变宽（比例跟随，非固定值）
   await page.setViewportSize({ width: 1728, height: 1000 })
   const wideLeft = (await page.locator('.scene-arena-left').boundingBox())!
+  const wideRight = (await page.locator('.scene-arena-right').boundingBox())!
   expect(wideLeft.width).toBeGreaterThan(leftBox.width)
+  expect(
+    Math.abs(wideLeft.width - wideRight.width),
+    `left=${wideLeft.width} right=${wideRight.width}`,
+  ).toBeLessThan(2)
 })
 
 test('M52-B · dock·board（创作工作室）：无数据不渲染工作区', async ({ page }) => {
@@ -306,6 +328,50 @@ test('M52-C2 · 融资资本（dock·console）：有产出后出现 + 折叠 / 
   await page.getByTitle('显示工作区').click()
   await expect(page.locator('.scene-dock-aside')).toBeVisible()
   await expect(page.getByText('看板面板')).toBeVisible()
+})
+
+test('批九 · dock 右区宽度：默认自适应 · 拖到最宽 = 容器一半 · 双击复位回自适应', async ({ page }) => {
+  await page.setViewportSize({ width: 1680, height: 900 })
+  await openApp(page)
+  await createSession(page, { scene: '融资资本', title: `E2E-M52-宽度-${Date.now()}` })
+
+  // 发消息 → 工作区就绪
+  await sendMessage(page, '请梳理本轮融资的关键节点与材料清单，产出落工作区。')
+  await expectYourTurn(page)
+  const aside = page.locator('.scene-dock-aside')
+  await expect(aside).toBeVisible()
+
+  // 默认自适应：容器 1/3（clamp 380–600），且不越「最多一半」上限
+  const dockBox = (await page.locator('.scene-dock').boundingBox())!
+  const initialW = (await aside.boundingBox())!.width
+  expect(initialW).toBeGreaterThanOrEqual(379)
+  expect(initialW).toBeLessThanOrEqual(Math.min(600, Math.floor(dockBox.width / 2)) + 1)
+
+  // 拖拽把手到容器最左缘 → 收敛到「最多一半」
+  const grip = page.locator('.scene-dock-grip')
+  const gripBox = (await grip.boundingBox())!
+  const gripY = gripBox.y + gripBox.height / 2
+  await page.mouse.move(gripBox.x + gripBox.width / 2, gripY)
+  await page.mouse.down()
+  await page.mouse.move(dockBox.x + 2, gripY, { steps: 8 })
+  await page.mouse.up()
+  await expect(async () => {
+    const w = (await aside.boundingBox())!.width
+    expect(Math.abs(w - dockBox.width / 2)).toBeLessThanOrEqual(2)
+  }).toPass()
+
+  // 双击把手 → 复位回自适应宽（与初始一致）
+  await grip.dblclick()
+  await expect(async () => {
+    const w = (await aside.boundingBox())!.width
+    expect(Math.abs(w - initialW)).toBeLessThanOrEqual(1)
+  }).toPass()
+
+  // 窗口变宽 → 自适应宽跟随（1/3 口径生效：跨宽带梯度到 600 封顶）
+  await page.setViewportSize({ width: 2400, height: 900 })
+  const grownBox = (await page.locator('.scene-dock').boundingBox())!
+  await expect.poll(async () => (await aside.boundingBox())!.width).toBeGreaterThan(initialW + 20)
+  expect((await aside.boundingBox())!.width).toBeLessThanOrEqual(Math.min(600, Math.floor(grownBox.width / 2)) + 1)
 })
 
 test('M52-C2 · 投资研究（dock·versus）：无数据不渲染工作区', async ({ page }) => {

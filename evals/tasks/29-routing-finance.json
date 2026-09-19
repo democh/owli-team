@@ -1,0 +1,18 @@
+{
+  "id": "routing-finance",
+  "name": "跨场景路由：财务需求自动召集财务法务编制（M61 D1/D6）",
+  "participants": [],
+  "prompt": "帮我梳理这个月的财务测算与税务风险，给出关键口径。",
+  "maxTurns": 6,
+  "assertions": [
+    { "type": "invited_members", "values": ["finance", "tax"] },
+    { "type": "agent_spoke", "values": ["finance"] },
+    { "type": "artifact_exists", "path": "docs/财务测算-财务.md" },
+    { "type": "artifact_exists", "path": "docs/税务清单-财务.md" },
+    { "type": "scheduling", "routesMin": 1, "handoffAcceptedMin": 1 },
+    { "type": "no_loop" },
+    { "type": "no_stall" },
+    { "type": "turns_lte", "value": 6 },
+    { "type": "run_end_reason", "value": "completed" }
+  ]
+}

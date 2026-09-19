@@ -22,29 +22,29 @@ interface CoachChecklist {
 /** 逐场景空态文案（与 board 同模式：7 场景语汇各异，未收录场景用中性默认兜底） */
 interface CoachCopy {
   emptyText: string
-  emptyHint: string
 }
 
 const COACH_COPY: Record<string, CoachCopy> = {
   // 健康生活：三轨打卡格 + 周计划
-  health: { emptyText: '打卡与周计划将在这里显示', emptyHint: '教练给出计划后即可在此打卡，点亮进度实时同步' },
+  health: { emptyText: '打卡与周计划将在这里显示' },
   // 学习成长：学习路径 + 打卡
-  learning: { emptyText: '学习路径与打卡将在这里显示', emptyHint: '教练规划路径后即可按节点打卡，进度实时同步' },
+  learning: { emptyText: '学习路径与打卡将在这里显示' },
   // 出行旅行：行程表 + 预算条
-  travel: { emptyText: '行程与预算将在这里显示', emptyHint: '教练排好行程后即可逐日查看，预算与日程实时同步' },
+  travel: { emptyText: '行程与预算将在这里显示' },
   // 财富管理：预算环 + 目标进度
-  wealth: { emptyText: '预算与目标进度将在这里显示', emptyHint: '教练定下目标后即可在此跟进，储蓄进度实时同步' },
+  wealth: { emptyText: '预算与目标进度将在这里显示' },
   // 个人管理：事务清单 + 习惯打卡
-  personal: { emptyText: '事务清单与提醒将在这里显示', emptyHint: '教练梳理事务后即可逐项跟进，提醒与打卡实时同步' },
+  personal: { emptyText: '事务清单与提醒将在这里显示' },
   // 职业发展：求职进度环 + 产出物清单
-  career: { emptyText: '求职进度与产出物将在这里显示', emptyHint: '教练规划阶段后即可在此跟进，产出物清单实时同步' },
+  career: { emptyText: '求职进度与产出物将在这里显示' },
   // 照护助手：排班表 + 就医 / 康养清单
-  care: { emptyText: '照护排班与清单将在这里显示', emptyHint: '教练排出班次后即可逐项勾选，清单进度实时同步' },
+  care: { emptyText: '照护排班与清单将在这里显示' },
+  // M69 情感关系：沟通练习清单与进度
+  relationship: { emptyText: '沟通练习与进度将在这里显示' },
 }
 
 const COACH_COPY_DEFAULT: CoachCopy = {
   emptyText: '清单与进度将在这里显示',
-  emptyHint: '教练给出清单后，进度与产出会自动跟进',
 }
 
 /** checklist 容器无标题时的兜底（场景语汇「XX 清单」；未收录场景用中性默认） */
@@ -56,6 +56,7 @@ const COACH_TITLES: Record<string, string> = {
   personal: '事务清单',
   career: '求职清单',
   care: '照护清单',
+  relationship: '练习清单',
 }
 
 const COACH_TITLE_DEFAULT = '清单'
@@ -115,7 +116,7 @@ export function CoachPanel(): React.JSX.Element {
   if (!checklist) {
     return (
       <PanelShell title="陪跑面板" icon={CalendarCheck}>
-        <PanelEmpty icon={CalendarCheck} text={copy.emptyText} hint={copy.emptyHint} />
+        <PanelEmpty icon={CalendarCheck} text={copy.emptyText} />
       </PanelShell>
     )
   }
@@ -124,7 +125,13 @@ export function CoachPanel(): React.JSX.Element {
     <PanelShell title="陪跑面板" icon={CalendarCheck}>
       <div className="scene-coach">
         <div className="scene-coach-top">
-          <ProgressRing value={pct} size={72} label="完成" sublabel={`${done}/${cells.length}`} />
+          <ProgressRing
+            value={pct}
+            size={72}
+            label="完成"
+            sublabel={`${done}/${cells.length}`}
+            hint={`已完成 ${done} / ${cells.length} 项`}
+          />
           <div className="scene-coach-meta">
             <div className="scene-coach-title">{checklist.title || listTitle}</div>
             <button

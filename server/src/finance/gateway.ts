@@ -28,11 +28,20 @@ import { inferAssetType, inferExchange, type FinSymbol, type SymbolMasterRow } f
 import {
   fetchKline as emFetchKline,
   fetchQuotes as emFetchQuotes,
-  fetchScreenRows,
-  fetchSymbolList,
+  fetchScreenRowsSweep,
+  fetchSymbolListSweep,
   searchSymbols,
+  type ClistCursor,
+  type ClistSweepResult,
 } from './sources/eastmoney.js'
-import { computeNavReturns, fetchFundBasic, fetchFundNav } from './sources/fund.js'
+import {
+  computeNavReturns,
+  fetchFundArchive,
+  fetchFundBasic,
+  fetchFundDividends,
+  fetchFundHoldings,
+  fetchFundNav,
+} from './sources/fund.js'
 import { dedupeNews, fetchMarketNews, fetchNotices } from './sources/news.js'
 import { fetchQuotes as sinaFetchQuotes } from './sources/sina.js'
 import { fetchQuotes as tencentFetchQuotes } from './sources/tencent.js'
@@ -88,6 +97,68 @@ export interface GatewayHealth {
   cooldownUntil?: string
   lastError?: string
 }
+
+// ---------- 分页 sweep 持久化（symbol_master / screen_base 增量加载） ----------
+
+/**
+ * 分页 sweep 持久化结构（finance_meta）：
+ * - rows 为对外展示视图（重扫期间 = 旧行兜底 + 已拉增量）；
+ * - pending 为当前轮 sweep 积累的新行（完成后整表替换，可剔除已退市标的）；
+ * - complete 缺省（undefined）= 旧格式存量数据，按已完成处理。
+ */
+interface PagedMeta<Row> {
+  rows: Row[]
+  source: string
+  complete?: boolean
+  cursor?: ClistCursor
+  pending?: Row[]
+}
+
+/** sweep 行去重键（同 code 同 type 唯一） */
+function sweepKey(row: { code: string; type: string }): string {
+  return `${row.type}:${row.code}`
+}
+
+/** 合并行集（键去重，incoming 覆盖 base） */
+function mergeSweepRows<Row extends { code: string; type: string }>(base: Row[], incoming: Row[]): Row[] {
+  if (incoming.length === 0) return base
+  const map = new Map<string, Row>()
+  for (const row of base) map.set(sweepKey(row), row)
+  for (const row of incoming) map.set(sweepKey(row), row)
+  return [...map.values()]
+}
+
+/** 后台定时器（unref：不阻塞进程退出；测试环境下与用例无冲突） */
+function bgSleep(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, ms)
+    timer.unref?.()
+  })
+}
+
+/** 单 metaKey 的 sweep 互斥（读-改-写 meta 串行化；后台与前台共享同一锁） */
+const sweepLocks = new Map<string, Promise<unknown>>()
+function withSweepLock<T>(metaKey: string, task: () => Promise<T>): Promise<T> {
+  const prev = sweepLocks.get(metaKey) ?? Promise.resolve()
+  const run = prev.then(task, task)
+  sweepLocks.set(
+    metaKey,
+    run.then(
+      () => undefined,
+      () => undefined,
+    ),
+  )
+  return run
+}
+
+/** 前台单次 sweep 页数预算（页间限速 ~1.2s → 约 8-10s，留足工具 20s 超时余量） */
+const SWEEP_PAGES_PER_CALL = 6
+/** 后台续拉每批页数（无工具超时约束，保持与前台同级节奏） */
+const SWEEP_PAGES_BACKGROUND = 8
+/** 后台批次间隔（贴合域级限速节奏，避免额外突发） */
+const SWEEP_BACKGROUND_DELAY_MS = 1_500
+/** 后台续拉轮数上限（防护：异常接口持续返数据时避免无限循环） */
+const SWEEP_BACKGROUND_MAX_ROUNDS = 24
 
 export interface FinanceGateway {
   quote(syms: FinSymbol[], opts?: { source?: SourcePref }): Promise<GatewayResult<Quote[]>>
@@ -846,7 +917,19 @@ export function createFinanceGateway(deps: GatewayDeps): FinanceGateway {
         label: 'eastmoney-fund',
         layer: 'node',
         run: async () => {
-          const info = await fetchFundBasic(code, sourceCtx())
+          // 主信息（名称/净值/费率/规模）必选；档案扩展（跟踪标的/持仓/分红）best-effort 并行，单点失败静默
+          const ctx = sourceCtx()
+          const [infoR, archiveR, holdingsR, dividendsR] = await Promise.allSettled([
+            fetchFundBasic(code, ctx),
+            fetchFundArchive(code, ctx),
+            fetchFundHoldings(code, ctx),
+            fetchFundDividends(code, ctx),
+          ])
+          if (infoR.status !== 'fulfilled') throw infoR.reason
+          const info = infoR.value
+          const archive = archiveR.status === 'fulfilled' ? archiveR.value : {}
+          const holdings = holdingsR.status === 'fulfilled' ? holdingsR.value : []
+          const dividends = dividendsR.status === 'fulfilled' ? dividendsR.value : []
           const returns = computeNavReturns(info.navTrend)
           const profile: FundProfile = {
             code,
@@ -855,7 +938,14 @@ export function createFinanceGateway(deps: GatewayDeps): FinanceGateway {
             source: 'eastmoney-fund',
             asOf: nowIso,
           }
-          if (info.feeRate !== undefined) profile.feeRate = info.feeRate
+          const scale = info.scale ?? archive.scale
+          if (scale !== undefined) profile.scale = scale
+          // 管理费率以 jbgk 档案为准（pingzhongdata fund_Rate 实为申购费率，仅作兜底）
+          const feeRate = archive.feeRate ?? info.feeRate
+          if (feeRate !== undefined) profile.feeRate = feeRate
+          if (archive.trackingIndex) profile.trackingIndex = archive.trackingIndex
+          if (holdings.length > 0) profile.holdings = holdings
+          if (dividends.length > 0) profile.dividends = dividends
           if (Object.keys(returns).length > 0) profile.returns = returns
           return profile
         },
@@ -964,69 +1054,189 @@ export function createFinanceGateway(deps: GatewayDeps): FinanceGateway {
     }
   }
 
-  async function loadSymbolList(
+  // ---------- 分页递增加载（symbol_master / screen_base） ----------
+
+  /** 后台续拉在途标记（metaKey 级，防重复调度） */
+  const bgSweeps = new Set<string>()
+  /** 前台并发合并（同 metaKey + pref 的并发加载共享同一 promise） */
+  const pagedInFlight = new Map<string, Promise<unknown>>()
+
+  /**
+   * 执行一批 sweep：读游标 → 拉页 → 合并落库。
+   * - complete && 过期：保留旧行作展示兑底，从 pn=1 重扫（完成后整表替换）；
+   * - 未完成：续拉下一批（pending 累计本轮新行）；
+   * - requireIncomplete=true（后台）：已在途中发现轮次完成 → 不再发起多余扫轮。
+   */
+  async function runSweepBatch<Row extends { code: string; type: string }>(
+    metaKey: string,
+    source: string,
+    sweepFn: (cursor: ClistCursor | undefined, budget: number) => Promise<ClistSweepResult<Row>>,
+    budget: number,
+    requireIncomplete = false,
+  ): Promise<{ merged: Row[]; done: boolean }> {
+    return withSweepLock(metaKey, async () => {
+      const hit = cache.metaGet<PagedMeta<Row>>(metaKey)
+      const base = hit?.value.rows ?? []
+      const complete = hit ? hit.value.complete !== false : false
+      if (requireIncomplete && complete) return { merged: base, done: true }
+      const res = await sweepFn(complete ? undefined : hit?.value.cursor, budget)
+      const merged = mergeSweepRows(base, res.rows)
+      if (res.done) {
+        // 整表替换（pending 为本轮全量）；异常空轮不覆盖已有数据
+        const pending = [...(complete ? [] : (hit?.value.pending ?? [])), ...res.rows]
+        const fresh = [...new Map(pending.map((row) => [sweepKey(row), row])).values()]
+        cache.metaSet(metaKey, { rows: fresh.length > 0 ? fresh : base, source, complete: true } satisfies PagedMeta<Row>, nowFn())
+      } else {
+        const pending = [...(complete ? [] : (hit?.value.pending ?? [])), ...res.rows]
+        cache.metaSet(
+          metaKey,
+          { rows: merged, source, complete: false, cursor: res.next, pending } satisfies PagedMeta<Row>,
+          nowFn(),
+        )
+      }
+      return { merged, done: res.done }
+    })
+  }
+
+  /** 后台续拉：多批推进直至完成（失败静默停止——交给前台按需重试与健康度标记） */
+  function scheduleBackgroundSweep<Row extends { code: string; type: string }>(
+    metaKey: string,
+    sweepFn: (cursor: ClistCursor | undefined, budget: number) => Promise<ClistSweepResult<Row>>,
+  ): void {
+    if (bgSweeps.has(metaKey)) return
+    bgSweeps.add(metaKey)
+    const loop = async (): Promise<void> => {
+      try {
+        for (let round = 0; round < SWEEP_BACKGROUND_MAX_ROUNDS; round++) {
+          if (isCooling('eastmoney') || isCooling('akshare')) break
+          await bgSleep(SWEEP_BACKGROUND_DELAY_MS)
+          const batch = await runSweepBatch(metaKey, 'eastmoney', sweepFn, SWEEP_PAGES_BACKGROUND, true)
+          if (batch.done) break
+        }
+      } catch {
+        // 源冷却 / 风控 / 中断：静默放弃（前台调用会重新触发）
+      } finally {
+        bgSweeps.delete(metaKey)
+      }
+    }
+    void loop()
+  }
+
+  /**
+   * 增量游标加载器（node sweep → py 兜底 → 过期兜底；pref 语义与降级链一致）。
+   * 后台续拉进行中时，前台不再竞争 sweep 锁（直接返回当前覆盖，避免工具超时）。
+   */
+  async function loadPaged<Row extends { code: string; type: string }>(
     metaKey: string,
     ttlMs: number,
     capability: string,
     pref: SourcePref,
-  ): Promise<GatewayResult<SymbolMasterRow[]>> {
-    const time = nowFn()
-    const hit = cache.metaGet<{ rows: SymbolMasterRow[]; source: string }>(metaKey)
-    if (hit && ageFresh(hit.updatedAt, ttlMs, time) && hit.value.rows.length > 0) {
-      return { data: hit.value.rows, source: hit.value.source, asOf: hit.updatedAt, cache: 'hit' }
-    }
-    const pyAvail = await pyStatusFn()
-    const chain: ChainStep<SymbolMasterRow[]>[] = [
-      { label: 'eastmoney', layer: 'node', run: () => fetchSymbolList(sourceCtx()) },
-      { label: 'akshare', layer: 'py', run: async () => mapPySymbolRows(await runPyFn('quote', { all: true })) },
-    ]
-    try {
-      const res = await runChain(chain, capability, pref, pyAvail)
-      cache.metaSet(metaKey, { rows: res.data, source: res.source }, time)
-      return res
-    } catch (err) {
-      if (hit && hit.value.rows.length > 0) {
+    sweepFn: (cursor: ClistCursor | undefined, budget: number) => Promise<ClistSweepResult<Row>>,
+    pyFallback: () => Promise<Row[]>,
+  ): Promise<GatewayResult<Row[]>> {
+    const run = async (): Promise<GatewayResult<Row[]>> => {
+      const time = nowFn()
+      const hit = cache.metaGet<PagedMeta<Row>>(metaKey)
+      const base = hit?.value.rows ?? []
+      const complete = hit ? hit.value.complete !== false : false
+      if (hit && base.length > 0 && complete && ageFresh(hit.updatedAt, ttlMs, time)) {
+        return { data: base, source: hit.value.source, asOf: hit.updatedAt, cache: 'hit' }
+      }
+      const failures: string[] = []
+      const staleFallback = (): GatewayResult<Row[]> | undefined => {
+        if (base.length === 0) return undefined
+        const notes = [...failures, `返回${complete ? '过期' : '增量'}${capability}（${base.length} 行）`]
         return {
-          data: hit.value.rows,
-          source: hit.value.source,
-          asOf: hit.updatedAt,
+          data: base,
+          source: hit?.value.source ?? 'cache',
+          asOf: hit?.updatedAt ?? time.toISOString(),
           cache: 'stale',
-          degraded: `${errorMessage(err)}；返回过期主数据（${hit.value.rows.length} 行）`,
+          degraded: notes.join('；'),
         }
       }
-      throw err
-    }
-  }
-
-  async function loadScreenBase(pref: SourcePref): Promise<GatewayResult<ScreenRow[]>> {
-    const time = nowFn()
-    const hit = cache.metaGet<{ rows: ScreenRow[]; source: string }>('screen_base')
-    if (hit && ageFresh(hit.updatedAt, SCREEN_BASE_TTL_MS, time) && hit.value.rows.length > 0) {
-      return { data: hit.value.rows, source: hit.value.source, asOf: hit.updatedAt, cache: 'hit' }
-    }
-    const pyAvail = await pyStatusFn()
-    const chain: ChainStep<ScreenRow[]>[] = [
-      { label: 'eastmoney', layer: 'node', run: () => fetchScreenRows(sourceCtx()) },
-      { label: 'akshare', layer: 'py', run: async () => mapPyScreenRows(await runPyFn('quote', { all: true })) },
-    ]
-    try {
-      const res = await runChain(chain, '筛选底表', pref, pyAvail)
-      cache.metaSet('screen_base', { rows: res.data, source: res.source }, time)
-      return res
-    } catch (err) {
-      if (hit && hit.value.rows.length > 0) {
-        return {
-          data: hit.value.rows,
-          source: hit.value.source,
-          asOf: hit.updatedAt,
-          cache: 'stale',
-          degraded: `${errorMessage(err)}；返回过期筛选底表（${hit.value.rows.length} 行）`,
+      if (pref !== 'py') {
+        if (bgSweeps.has(metaKey) && base.length > 0) {
+          // 后台正在续拉：前台直接交付当前覆盖（不再开销一次工具内的多页拉取）
+          return {
+            data: base,
+            source: hit?.value.source ?? 'eastmoney',
+            asOf: hit?.updatedAt ?? time.toISOString(),
+            cache: 'stale',
+            degraded: `${capability}后台增量加载中（当前覆盖 ${base.length} 行）`,
+          }
+        }
+        if (isCooling('eastmoney')) {
+          failures.push('eastmoney：冷却期跳过')
+        } else {
+          try {
+            const batch = await runSweepBatch(metaKey, 'eastmoney', sweepFn, SWEEP_PAGES_PER_CALL)
+            if (batch.merged.length === 0) throw new GatewayError('东财列表返回为空')
+            sourceOk('eastmoney')
+            if (!batch.done) scheduleBackgroundSweep(metaKey, sweepFn)
+            const notes = [...failures]
+            if (!batch.done) {
+              notes.push(`${capability}增量加载中（已覆盖 ${batch.merged.length} 行，后台继续拉取中）`)
+            }
+            return {
+              data: batch.merged,
+              source: 'eastmoney',
+              asOf: nowFn().toISOString(),
+              cache: 'miss',
+              ...(notes.length > 0 ? { degraded: notes.join('；') } : {}),
+            }
+          } catch (err) {
+            const message = errorMessage(err)
+            sourceFail('eastmoney', message)
+            failures.push(`eastmoney：${message}`)
+          }
         }
       }
-      throw err
+      // py 兜底（pref=py 或 node 失败且无本地数据；有本地数据时不跑慢源，直接走 stale）
+      if (base.length === 0 || pref === 'py') {
+        if (pref === 'node') throw new GatewayError(`${capability}不可用：${failures.join('；')}`)
+        const pyAvail = await pyStatusFn()
+        if (pyAvail === 'absent') {
+          failures.push('akshare：Python 环境缺失')
+        } else {
+          try {
+            const rows = await pyFallback()
+            if (rows.length === 0) throw new GatewayError('akshare 列表返回为空')
+            sourceOk('akshare')
+            cache.metaSet(metaKey, { rows, source: 'akshare', complete: true } satisfies PagedMeta<Row>, nowFn())
+            return {
+              data: rows,
+              source: 'akshare',
+              asOf: nowFn().toISOString(),
+              cache: 'miss',
+              ...(failures.length > 0 ? { degraded: failures.join('；') } : {}),
+            }
+          } catch (err) {
+            const message = errorMessage(err)
+            sourceFail('akshare', message)
+            failures.push(`akshare：${message}`)
+          }
+        }
+        const stale = staleFallback()
+        if (stale) return stale
+        throw new GatewayError(`${capability}不可用：${failures.join('；')}`)
+      }
+      // 已有（过期 / 不完整）本地数据：降级返回并注明
+      const stale = staleFallback()
+      if (stale) return stale
+      throw new GatewayError(`${capability}不可用：${failures.join('；')}`)
     }
+    const key = `${metaKey}:${pref}`
+    const existing = pagedInFlight.get(key)
+    if (existing) return existing as Promise<GatewayResult<Row[]>>
+    const promise = run().finally(() => pagedInFlight.delete(key))
+    pagedInFlight.set(key, promise)
+    return promise
   }
 
+  /**
+   * 标的检索：本地主数据优先，不完整时在线 suggest 补全（合并去重）。
+   * 主数据完整且命中时不再发在线请求（本地为权威）。
+   */
   async function search(
     query: string,
     opts: { limit?: number; source?: SourcePref } = {},
@@ -1039,21 +1249,40 @@ export function createFinanceGateway(deps: GatewayDeps): FinanceGateway {
     let rows: SymbolMasterRow[] = []
     let degraded: string | undefined
     try {
-      const master = await loadSymbolList('symbol_master', SYMBOL_MASTER_TTL_MS, '证券主数据', pref)
+      const master = await loadPaged(
+        'symbol_master',
+        SYMBOL_MASTER_TTL_MS,
+        '证券主数据',
+        pref,
+        (cursor, budget) => fetchSymbolListSweep(cursor, budget, sourceCtx()),
+        async () => mapPySymbolRows(await runPyFn('quote', { all: true })),
+      )
       rows = matchRows(master.data, q, limit)
+      if (master.degraded) degraded = `本地主数据：${master.degraded}`
     } catch (err) {
       degraded = `本地主数据不可用：${errorMessage(err)}`
     }
-    if (rows.length === 0) {
+    // 主数据未完成全量时（增量中），本地命中不足则在线补充
+    const meta = cache.metaGet<PagedMeta<SymbolMasterRow>>('symbol_master')
+    const incomplete = meta ? meta.value.complete === false : true
+    if (rows.length === 0 || (incomplete && rows.length < limit)) {
       try {
         // 在线补充（东财 suggest：支持拼音首字母；失败静默——搜索为增强能力）
-        const online = await searchSymbols(q, sourceCtx())
+        const online = await searchSymbols(q, sourceCtx(), Math.min(limit, 20))
         if (online.length > 0) {
-          return {
-            data: matchRows(online, q, limit).length > 0 ? matchRows(online, q, limit) : online.slice(0, limit),
-            source: 'eastmoney-suggest',
-            asOf: time.toISOString(),
-            cache: 'miss',
+          const filtered = matchRows(online, q, limit)
+          const best = filtered.length > 0 ? filtered : online
+          const seen = new Set(rows.map((row) => sweepKey(row)))
+          const extra = best.filter((row) => !seen.has(sweepKey(row)))
+          const merged = [...rows, ...extra].slice(0, limit)
+          if (merged.length > 0) {
+            return {
+              data: merged,
+              source: rows.length > 0 ? 'local+suggest' : 'eastmoney-suggest',
+              asOf: time.toISOString(),
+              cache: 'miss',
+              ...(degraded ? { degraded } : {}),
+            }
           }
         }
       } catch {
@@ -1079,8 +1308,23 @@ export function createFinanceGateway(deps: GatewayDeps): FinanceGateway {
     fundNav,
     news,
     symbolMaster: (opts = {}) =>
-      loadSymbolList('symbol_master', SYMBOL_MASTER_TTL_MS, '证券主数据', opts.source ?? 'auto'),
-    screenBase: (opts = {}) => loadScreenBase(opts.source ?? 'auto'),
+      loadPaged(
+        'symbol_master',
+        SYMBOL_MASTER_TTL_MS,
+        '证券主数据',
+        opts.source ?? 'auto',
+        (cursor, budget) => fetchSymbolListSweep(cursor, budget, sourceCtx()),
+        async () => mapPySymbolRows(await runPyFn('quote', { all: true })),
+      ),
+    screenBase: (opts = {}) =>
+      loadPaged(
+        'screen_base',
+        SCREEN_BASE_TTL_MS,
+        '筛选底表',
+        opts.source ?? 'auto',
+        (cursor, budget) => fetchScreenRowsSweep(cursor, budget, sourceCtx()),
+        async () => mapPyScreenRows(await runPyFn('quote', { all: true })),
+      ),
     search,
     health(): GatewayHealth[] {
       const time = nowFn().getTime()

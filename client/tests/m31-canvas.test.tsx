@@ -17,6 +17,7 @@ import type {
   CanvasNode,
   CanvasNodeData,
   CanvasNodeType,
+  MediaProviderInfo,
 } from '@multi-agent/shared'
 import {
   absolutePosition,
@@ -38,6 +39,7 @@ import {
   quoteForComposer,
   reorderNodes,
   reparentNodes,
+  searchNodes,
   sizeOf,
   SNAP_THRESHOLD,
   tidyGrid,
@@ -46,6 +48,7 @@ import {
 } from '../src/lib/canvas'
 import { buildTemplate, CANVAS_TEMPLATES } from '../src/lib/canvas-templates'
 import { useCanvasStore } from '../src/stores/canvas-store'
+import { useMediaStore } from '../src/stores/media-store'
 import { useSessionStore } from '../src/stores/session-store'
 import { EmptyCanvas } from '../src/components/canvas/EmptyCanvas'
 import { CanvasUiContext } from '../src/components/canvas/CanvasUiContext'
@@ -291,6 +294,80 @@ describe('画框收纳与吸附（M31）', () => {
     const box = boundingBox([mk('note', 'a', 0, 0, { text: 'a' }), mk('image', 'b', 100, 100, {})])
     expect(box).toEqual({ x: 0, y: 0, width: 380, height: 300 })
     expect(boundingBox([])).toBeNull()
+  })
+})
+
+// ---------- M31 修订：画布内查找 与 等距吸附 ----------
+
+describe('searchNodes 画布内查找（M31 修订）', () => {
+  const doc: CanvasDoc = {
+    v: 1,
+    sessionId: 's-search',
+    version: 1,
+    updatedAt: T0,
+    viewport: { x: 0, y: 0, zoom: 1 },
+    nodes: [
+      mk('note', 'nd_note', 0, 0, { text: '登录页草图与路由' }),
+      mk('prompt', 'nd_prompt', 300, 0, { text: 'Login Page', negative: '' }),
+      mk('kline', 'nd_kline', 600, 0, { symbol: 'sh600519', name: '贵州茅台' }),
+      mk('image', 'nd_img', 900, 0, { artifact: 'canvas/media/a.png', prompt: '一只猫' }),
+    ],
+    edges: [],
+  }
+
+  it('按文本 / 提示词 / 标的 / 路径匹配；大小写不敏感；空查询返回空', () => {
+    expect(searchNodes(doc, '   ')).toEqual([])
+    expect(searchNodes(doc, '登录').map((h) => h.id)).toEqual(['nd_note'])
+    expect(searchNodes(doc, 'login').map((h) => h.id)).toEqual(['nd_prompt']) // 大小写不敏感
+    expect(searchNodes(doc, '茅台').map((h) => h.id)).toEqual(['nd_kline'])
+    expect(searchNodes(doc, 'media/a.png').map((h) => h.id)).toEqual(['nd_img'])
+    expect(searchNodes(doc, '不存在的内容')).toEqual([])
+  })
+
+  it('snippet 含类型标签与匹配片段；label 取节点标签', () => {
+    const hit = searchNodes(doc, '登录')[0]!
+    expect(hit.snippet).toContain('便签')
+    expect(hit.snippet).toContain('登录')
+    expect(hit.label).toContain('登录')
+  })
+
+  it('limit：命中超上限时截断（默认 12 / 可指定）', () => {
+    const many: CanvasDoc = {
+      ...doc,
+      nodes: Array.from({ length: 15 }, (_, i) => mk('note', `nd_${i}`, i * 10, 0, { text: `节点 x${i}` })),
+    }
+    expect(searchNodes(many, 'x')).toHaveLength(12)
+    expect(searchNodes(many, 'x', 5)).toHaveLength(5)
+  })
+})
+
+describe('computeSnap 等距吸附（M31 修订）', () => {
+  const left: SnapRect = { x: 0, y: 0, width: 100, height: 50 }
+  const right: SnapRect = { x: 300, y: 0, width: 100, height: 50 }
+
+  it('水平夹击近似等距 → 吸附到等距中点 + 两条 dist 标记', () => {
+    const res = computeSnap({ x: 146, y: 200, width: 100, height: 50 }, [left, right]) // 目标 150，差 4 ≤ 阈值
+    expect(res.position.x).toBe(150)
+    const dist = res.guides.filter((g) => g.kind === 'dist')
+    expect(dist.map((g) => g.position).sort((a, b) => a - b)).toEqual([125, 275]) // 两侧间隙中点
+    expect(dist.every((g) => g.orientation === 'v')).toBe(true)
+  })
+
+  it('差距超阈值不吸附（无 dist 标记，位置保持）', () => {
+    const res = computeSnap({ x: 130, y: 200, width: 100, height: 50 }, [left, right])
+    expect(res.position.x).toBe(130)
+    expect(res.guides.filter((g) => g.kind === 'dist')).toHaveLength(0)
+  })
+
+  it('垂直夹击同理（上 / 下邻 → y 吸附；x 不受影响）', () => {
+    const top: SnapRect = { x: 0, y: 0, width: 100, height: 100 }
+    const bottom: SnapRect = { x: 0, y: 300, width: 100, height: 100 }
+    const res = computeSnap({ x: 200, y: 146, width: 50, height: 100 }, [top, bottom])
+    expect(res.position.y).toBe(150)
+    expect(res.position.x).toBe(200)
+    const dist = res.guides.filter((g) => g.kind === 'dist')
+    expect(dist).toHaveLength(2)
+    expect(dist.every((g) => g.orientation === 'h')).toBe(true)
   })
 })
 
@@ -561,8 +638,24 @@ describe('canvas-store 编辑动作与历史（M31）', () => {
 
 // ---------- EmptyCanvas ----------
 
+/** 媒体能力门控夹具（M31 修订）：全能力的提供方 → 四模板齐备 */
+const FULL_MEDIA_PROVIDER: MediaProviderInfo = {
+  connectionId: 'conn_test',
+  connectionName: '测试生图生视频',
+  provider: 'comfyui',
+  capabilities: ['text2image', 'image2image', 'text2video', 'image2video', 'firstlast2video'],
+  models: [],
+  workflows: [],
+}
+
 describe('EmptyCanvas 空态模板（M31）', () => {
-  it('渲染四模板卡片与快捷提示', () => {
+  beforeEach(() => {
+    // 能力门控夹具复位（避免跨用例泄漏；beforeEach 时上轮组件已卸载，无 act 警告）
+    useMediaStore.setState({ providers: [], providersLoaded: false })
+  })
+
+  it('渲染四模板卡片与快捷提示（已配置生图 / 生视频）', () => {
+    useMediaStore.setState({ providers: [FULL_MEDIA_PROVIDER], providersLoaded: true })
     render(<EmptyCanvas onApply={vi.fn()} />)
     expect(screen.getByText('空白画布')).toBeInTheDocument()
     for (const t of CANVAS_TEMPLATES) {
@@ -572,7 +665,26 @@ describe('EmptyCanvas 空态模板（M31）', () => {
     expect(screen.getByText('拖入图片 / 视频')).toBeInTheDocument()
   })
 
-  it('点击模板卡片回调对应 id', async () => {
+  it('未配置媒体能力：创作台 / 分镜台不出现，脑图工坊 / 素材墙恒显（M31 修订）', () => {
+    render(<EmptyCanvas onApply={vi.fn()} />)
+    expect(screen.queryByText('创作台')).not.toBeInTheDocument()
+    expect(screen.queryByText('分镜台')).not.toBeInTheDocument()
+    expect(screen.getByText('脑图工坊')).toBeInTheDocument()
+    expect(screen.getByText('素材墙')).toBeInTheDocument()
+  })
+
+  it('仅配置生图：创作台出现、分镜台仍隐藏（能力拆分粒度）', () => {
+    useMediaStore.setState({
+      providers: [{ ...FULL_MEDIA_PROVIDER, capabilities: ['text2image'] }],
+      providersLoaded: true,
+    })
+    render(<EmptyCanvas onApply={vi.fn()} />)
+    expect(screen.getByText('创作台')).toBeInTheDocument()
+    expect(screen.queryByText('分镜台')).not.toBeInTheDocument()
+  })
+
+  it('点击模板卡片回调对应 id（已配置能力）', async () => {
+    useMediaStore.setState({ providers: [FULL_MEDIA_PROVIDER], providersLoaded: true })
     const onApply = vi.fn()
     const user = userEvent.setup()
     render(<EmptyCanvas onApply={onApply} />)

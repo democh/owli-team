@@ -76,6 +76,9 @@ function seedAgents(agentsDir: string): void {
     path.join(agentsDir, 'development', 'critic', 'AGENT.md'),
     agentMd('critic', '挑刺官', ['tools: [mcp__echo__*]']),
   )
+  // M57 P3：solo 白名单不含任何 mcp 模式（personal 自动授予用例的对照组）
+  fs.mkdirSync(path.join(agentsDir, 'development', 'solo'), { recursive: true })
+  fs.writeFileSync(path.join(agentsDir, 'development', 'solo', 'AGENT.md'), agentMd('solo', '独行客', ["tools: ['read_file']"]))
 }
 
 const STUB_REMOTE_TOOLS = [
@@ -298,5 +301,78 @@ describe('M27：approvalGate 的 MCP 审批规则', () => {
     )
     const runId = await runTurn(env, env.engine, session.id, '普通对话')
     expect(approvalRows(env, runId)).toHaveLength(0)
+  })
+})
+
+describe('M57 P3：personal MCP（属主会话自动授予 + 非属主隔离）', () => {
+  it('属主会话：白名单无 mcp 的 solo 也自动获得 personal 工具；非属主 / 无属主会话不可见', async () => {
+    const { env, engine, store, manager } = makeEngineEnv()
+    const alice = env.users.create({ username: 'alice', displayName: 'Alice', passwordHash: 'x', role: 'member' })
+    const server = store.create({
+      name: 'mine',
+      transport: 'stdio',
+      config: { command: 'stub' },
+      scope: 'personal',
+      ownerId: alice.id,
+    })
+    expect(server.scope).toBe('personal')
+    expect(server.ownerId).toBe(alice.id)
+    await manager.connect(server.id)
+
+    const ownedSession = env.sessions.create(['solo'], '属主会话', { ownerId: alice.id })
+    store.bind(ownedSession.id, server.id)
+    const orphanSession = env.sessions.create(['solo'], '无属主会话') // 兼容语义：session.ownerId 缺省
+    store.bind(orphanSession.id, server.id)
+
+    const { toolsLists } = scriptProvider(env, () => [handoffUser, done])
+    await runTurn(env, engine, ownedSession.id, '干活')
+    const owned = toolsLists[toolsLists.length - 1]!
+    // solo 白名单只有 read_file；personal 工具仍被自动并入（execute 模式）
+    expect(owned).toContain('read_file')
+    expect(owned).toContain('mcp__mine__echo')
+    expect(owned).toContain('mcp__mine__write_note')
+
+    await runTurn(env, engine, orphanSession.id, '干活')
+    const orphan = toolsLists[toolsLists.length - 1]!
+    expect(orphan).not.toContain('mcp__mine__echo') // 非属主会话：绑定也不可见
+  })
+
+  it('manager 单元：personalToolNames / filterForSession(ownerId) / 执行侧最小权限（ctx.userId）', async () => {
+    const { env, store, manager } = makeEngineEnv()
+    const alice = env.users.create({ username: 'alice', displayName: 'Alice', passwordHash: 'x', role: 'member' })
+    const bob = env.users.create({ username: 'bob', displayName: 'Bob', passwordHash: 'x', role: 'member' })
+    const server = store.create({
+      name: 'mine',
+      transport: 'stdio',
+      config: { command: 'stub' },
+      scope: 'personal',
+      ownerId: alice.id,
+    })
+    await manager.connect(server.id)
+    const session = env.sessions.create(['solo'], 'S', { ownerId: alice.id })
+    store.bind(session.id, server.id)
+
+    expect(manager.personalToolNames(alice.id).sort()).toEqual(['mcp__mine__echo', 'mcp__mine__write_note'])
+    expect(manager.personalToolNames(bob.id)).toEqual([])
+
+    const names = (ownerId?: string): string[] =>
+      manager.filterForSession(session.id, env.tools.list(), ownerId).map((tool) => tool.name)
+    expect(names(alice.id)).toContain('mcp__mine__echo')
+    expect(names(bob.id)).not.toContain('mcp__mine__echo')
+    expect(names(undefined)).not.toContain('mcp__mine__echo')
+
+    // 执行侧最小权限：他人触发（ctx.userId = bob）→ 拒绝；属主 → 放行
+    const tool = env.tools.get('mcp__mine__echo')!
+    const asBob = await tool.execute(
+      { text: 'x' },
+      { sessionId: session.id, userId: bob.id } as unknown as Parameters<typeof tool.execute>[1],
+    )
+    expect(asBob.ok).toBe(false)
+    expect(asBob.summary).toContain('他人私有')
+    const asAlice = await tool.execute(
+      { text: 'x' },
+      { sessionId: session.id, userId: alice.id } as unknown as Parameters<typeof tool.execute>[1],
+    )
+    expect(asAlice.ok).toBe(true)
   })
 })

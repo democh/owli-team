@@ -16,7 +16,8 @@
  * （cooling / cooldownUntil / lastError），便于「数据变慢/降级」时排查是否触发风控。
  */
 import { Router } from 'express'
-import type { Response } from 'express'
+import type { Request, Response } from 'express'
+import type { AuthUser } from '../auth/service.js'
 import { z } from 'zod'
 import { probePython } from '../finance/bridge/probe.js'
 import { GAME_MODELS, GameError, MODEL_LABELS, runGame } from '../finance/game/index.js'
@@ -83,6 +84,10 @@ const gameBody = z.object({
 export function createFinanceRouter(deps: ApiDeps): Router {
   const router = Router()
 
+  const userOf = (req: Request): AuthUser | undefined => (req as Request & { user?: AuthUser }).user
+  /** M57：自选 / 环境回显的用户口径（'' = 单用户兼容模式） */
+  const watchUserIdOf = (req: Request): string => userOf(req)?.id ?? ''
+
   const requireFinance = (res: Response): boolean => {
     if (!deps.finance || !deps.financeStore) {
       res.status(503).json({ error: '金融数据未启用（FINANCE_ENABLED=false 或网关未装配）' })
@@ -122,7 +127,8 @@ export function createFinanceRouter(deps: ApiDeps): Router {
       py,
       /** 数据源健康度（反爬联动：冷却中的源被路由跳过） */
       health: deps.finance!.health(),
-      watchlistCount: deps.financeStore!.count(),
+      // M57：自选按用户（多用户；单用户兼容模式 '' 口径）
+      watchlistCount: deps.financeStore!.count(watchUserIdOf(req)),
       settings: {
         quoteRefreshMs: deps.cfg.financeQuoteRefreshMs,
         minIntervalMs: deps.cfg.financeMinIntervalMs,
@@ -135,9 +141,9 @@ export function createFinanceRouter(deps: ApiDeps): Router {
 
   // ---------------------------------------------------------------- 自选列表
 
-  router.get('/finance/watchlist', (_req, res) => {
+  router.get('/finance/watchlist', (req, res) => {
     if (!requireFinance(res)) return
-    res.json({ items: deps.financeStore!.list() })
+    res.json({ items: deps.financeStore!.list(watchUserIdOf(req)) })
   })
 
   router.post('/finance/watchlist', async (req, res) => {
@@ -161,6 +167,8 @@ export function createFinanceRouter(deps: ApiDeps): Router {
       type: sym.type,
       name: sym.name ?? sym.symbol,
       ...(body.note ? { note: body.note } : {}),
+      // M57：按用户归属
+      userId: watchUserIdOf(req),
     })
     res.json({
       item,
@@ -171,8 +179,9 @@ export function createFinanceRouter(deps: ApiDeps): Router {
 
   router.delete('/finance/watchlist/:symbol', (req, res) => {
     if (!requireFinance(res)) return
+    const userId = watchUserIdOf(req)
     const raw = req.params.symbol.trim()
-    const items = deps.financeStore!.list()
+    const items = deps.financeStore!.list(userId)
     let hit = items.find((item) => item.symbol === raw)
     if (!hit) {
       // 容错：前端传 6 位代码（sh600519 → 600519）；命中多条要求完整 symbol
@@ -183,7 +192,7 @@ export function createFinanceRouter(deps: ApiDeps): Router {
       hit = matches[0]
     }
     if (!hit) return res.status(404).json({ error: `自选列表中不存在「${raw}」` })
-    deps.financeStore!.remove(hit.symbol)
+    deps.financeStore!.remove(hit.symbol, userId)
     res.json({ ok: true, removed: hit })
   })
 

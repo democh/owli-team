@@ -3,20 +3,20 @@
  * 可用提供方（「设置 → 媒体生成」中启用连接的能力 / 模型 / 工作流模板；M56 起全局，不区分会话）、
  * 完成自动落画布、终态提示。
  *
- * 分工：服务端 MediaService 是任务真相；本 store 只做「展示镜像 + 落画布 + 提示」，
+ * 分工：服务端 MediaService 是任务真相；本 store 只做「展示镜像 + 提示」，
  * 不承担轮询补拉（WS 有 seq 去重与降级轮询兜底）。
+ * M31 修订：产物落画布由服务端完成（创建落占位 / 终态结算）——本 store 不再前端放置（防双写），
+ * 仅按 job.placedCanvas 分流提示文案；节点内 pending 进度由本次订阅的 jobs 快照驱动。
  */
 import { create } from 'zustand'
 import { toast } from 'sonner'
 import type { CanvasGenerationParams, MediaJob, MediaJobInput, MediaProviderInfo } from '@multi-agent/shared'
-import { createNode, NODE_SIZE } from '../lib/canvas'
-import { CAPABILITY_LABEL, outputKindOf, outputSummary } from '../lib/media'
-import { useCanvasStore } from './canvas-store'
+import { CAPABILITY_LABEL, outputSummary } from '../lib/media'
 
-/** 已放置到画布的任务 id（WS 重放 / HTTP+WS 双通道的幂等；画布文档本身已持久化节点） */
-const placedJobs = new Set<string>()
 /** 客户端任务清单上限（服务端每会话 50 条；冗余 10 条容错） */
 const JOBS_LIMIT = 60
+/** ensureProviders 并发去重（模块级：绕过 set 状态的异步窗口） */
+let providersRefreshing = false
 
 /** 生成面板输入引用（右键「生成变体 / 设为首帧」写入；面板打开时消费） */
 export interface GenRef {
@@ -41,6 +41,10 @@ interface MediaState {
   jobs: MediaJob[]
   /** 全局可用媒体连接（生成面板的能力 / 模型 / 工作流来源；「设置 → 媒体生成」配置，不区分会话） */
   providers: MediaProviderInfo[]
+  /** 提供方是否已至少拉取过一次（能力门控：未加载完成前按「无能力」渲染，杜绝门控元素闪现） */
+  providersLoaded: boolean
+  /** M31 修订：任务快照是否已成功拉取过一次（僵尸占位自愈的判定门槛：拉取失败不得误判） */
+  jobsLoaded: boolean
   loading: boolean
   /** 最近一次提交 / 重试失败文案（面板内联展示） */
   lastError?: string
@@ -55,6 +59,8 @@ interface MediaState {
   load(sessionId: string): Promise<void>
   /** 仅刷新提供方（「设置 → 媒体生成」中启用 / 停用变更后回来时调用；全局清单，与会话无关） */
   refreshProviders(): Promise<void>
+  /** 幂等确保提供方已加载（画布挂载消费；并发去重，已加载过则跳过） */
+  ensureProviders(): Promise<void>
   /** 任务快照统一入口（WS 通知与 HTTP 响应共用；幂等 upsert + 终态提示 + 完成落画布） */
   ingest(job: MediaJob): void
   createJob(input: MediaJobInput): Promise<MediaJob | undefined>
@@ -71,49 +77,11 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
   return (await res.json()) as T
 }
 
-/** 成功任务的产物落画布（携带 canvasTarget 且画布已加载；多产物横向排开） */
-function placeOutputs(job: MediaJob): number {
-  const target = job.canvasTarget
-  const canvas = useCanvasStore.getState()
-  if (!target || canvas.sessionId !== job.sessionId || !canvas.doc || job.outputs.length === 0) return 0
-  if (placedJobs.has(job.id)) return 0
-  placedJobs.add(job.id)
-
-  const kind = outputKindOf(job.capability)
-  const size = NODE_SIZE[kind]
-  const params: CanvasGenerationParams = {
-    capability: job.capability,
-    model: job.model,
-    negative: job.negative,
-    width: job.params.width,
-    height: job.params.height,
-    steps: job.params.steps,
-    seed: job.params.seed,
-    duration: job.params.duration,
-    workflowId: job.params.workflowId,
-  }
-  const nodes = job.outputs.map((rel, index) => {
-    const position = { x: target.x + index * (size.width + 24), y: target.y }
-    if (kind === 'video') {
-      return createNode('video', position, {
-        artifact: rel,
-        source: 'generate',
-        jobId: job.id,
-        prompt: job.prompt,
-        params,
-        firstFrame: job.inputs.firstFrame,
-        lastFrame: job.inputs.lastFrame,
-      })
-    }
-    return createNode('image', position, { artifact: rel, source: 'generate', jobId: job.id, prompt: job.prompt, params })
-  })
-  canvas.addNodes(nodes)
-  return nodes.length
-}
-
 export const useMediaStore = create<MediaState>((set, get) => ({
   jobs: [],
   providers: [],
+  providersLoaded: false,
+  jobsLoaded: false,
   loading: false,
   panelOpen: false,
   genRef: EMPTY_REF,
@@ -133,7 +101,8 @@ export const useMediaStore = create<MediaState>((set, get) => ({
 
   load: async (sessionId) => {
     if (get().sessionId !== sessionId) {
-      set({ sessionId, jobs: [], providers: [], lastError: undefined })
+      // 切会话：只清会话任务；providers 为全局清单（M56），与会话无关，保留避免能力门控闪烁
+      set({ sessionId, jobs: [], jobsLoaded: false, lastError: undefined })
     }
     set({ loading: true })
     try {
@@ -142,7 +111,7 @@ export const useMediaStore = create<MediaState>((set, get) => ({
         request<{ providers: MediaProviderInfo[] }>('/api/media/providers'),
       ])
       if (get().sessionId !== sessionId) return // 已切走：丢弃过期响应
-      set({ jobs: jobsRes.jobs, providers: providersRes.providers, loading: false })
+      set({ jobs: jobsRes.jobs, jobsLoaded: true, providers: providersRes.providers, providersLoaded: true, loading: false })
     } catch {
       if (get().sessionId !== sessionId) return
       // 服务未装配（503）/ 网络抖动：静默降级，面板按提供方空态给「去设置」引导
@@ -153,9 +122,19 @@ export const useMediaStore = create<MediaState>((set, get) => ({
   refreshProviders: async () => {
     try {
       const res = await request<{ providers: MediaProviderInfo[] }>('/api/media/providers')
-      set({ providers: res.providers })
+      set({ providers: res.providers, providersLoaded: true })
     } catch {
       /* 保留现有清单，等下次刷新 */
+    }
+  },
+
+  ensureProviders: async () => {
+    if (get().providersLoaded || providersRefreshing) return
+    providersRefreshing = true
+    try {
+      await get().refreshProviders()
+    } finally {
+      providersRefreshing = false
     }
   },
 
@@ -171,10 +150,9 @@ export const useMediaStore = create<MediaState>((set, get) => ({
     if (before && isTerminal(before.status)) return // 终态只提示一次
 
     if (job.status === 'succeeded') {
-      const placed = placeOutputs(job)
-      toast(
-        `${CAPABILITY_LABEL[job.capability]}完成：${outputSummary(job)}${placed > 0 ? '，已落到画布' : '，产物已保存到交付件'}`,
-      )
+      // M31 修订：落位由服务端完成（占位→产出）；此处仅提示（placedCanvas 标记落位结果）
+      const placed = job.placedCanvas === true
+      toast(`${CAPABILITY_LABEL[job.capability]}完成：${outputSummary(job)}${placed ? '，已落到画布' : '，产物已保存到交付件'}`)
     } else if (job.status === 'failed') {
       toast.error(`媒体生成失败：${job.error ?? '未知错误'}`)
     }

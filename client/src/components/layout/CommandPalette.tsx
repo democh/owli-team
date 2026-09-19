@@ -23,6 +23,7 @@ import {
   CalendarClock,
   Database,
   Frame,
+  Images,
   Keyboard,
   Layers,
   ListTodo,
@@ -41,12 +42,14 @@ import {
   StickyNote,
   Terminal,
   Trophy,
+  UserCog,
   UserPlus,
   Users,
   Waypoints,
   GitBranch,
 } from 'lucide-react'
 import type { AgentDefinition } from '@multi-agent/shared'
+import { baseAgentId } from '@multi-agent/shared'
 import { toast } from 'sonner'
 import { resolveIcon } from '../../lib/avatar-icons'
 import { attachActiveRunFor, useRunStore } from '../../stores/run-store'
@@ -54,6 +57,7 @@ import { useAgentStore } from '../../stores/agent-store'
 import { useCanvasStore, type CanvasActionKind } from '../../stores/canvas-store'
 import { useSessionStore } from '../../stores/session-store'
 import { useLiveDockStore } from '../../stores/live-dock-store'
+import { useAuthStore } from '../../stores/auth-store'
 import { useUiStore } from '../../stores/ui-store'
 import { useWsStore } from '../../stores/ws-store'
 import { AgentAvatar } from '../agents/AgentAvatar'
@@ -68,6 +72,8 @@ export function CommandPalette(): React.JSX.Element {
   const open = useUiStore((s) => s.commandOpen)
   const setOpen = useUiStore((s) => s.setCommandOpen)
   const quietMode = useUiStore((s) => s.quietMode)
+  // M57：管理面命令（Agent / Skill / MCP / 连接 / 用户）仅 admin 展示
+  const isAdmin = useAuthStore((s) => s.isAdmin)
   const sessions = useSessionStore((s) => s.sessions)
   const currentId = useSessionStore((s) => s.currentId)
   const active = useRunStore((s) => s.active)
@@ -77,9 +83,9 @@ export function CommandPalette(): React.JSX.Element {
   const presets = useAgentStore((s) => s.presets)
   const groups = useAgentStore((s) => s.groups)
   const session = sessions.find((s) => s.id === currentId)
-  // M16：当前会话未在场成员（一键邀请，无需打开对话框）
+  // M16：当前会话未在场成员（一键邀请）；M77：在场判定按基础角色（分身在场 = 该角色已在场）
   const invitable = React.useMemo(
-    () => (session ? agents.filter((a) => !session.participantIds.includes(a.id)) : []),
+    () => (session ? agents.filter((a) => !session.participantIds.some((key) => baseAgentId(key) === a.id)) : []),
     [agents, session],
   )
 
@@ -222,7 +228,7 @@ export function CommandPalette(): React.JSX.Element {
           <Command.Group heading="邀请成员加入会话" className={GROUP_CLS}>
             {invitable.map((a) => (
               <Command.Item key={a.id} value={`invite ${a.name}`} className={ITEM_CLS} onSelect={() => run(() => void invite(a))}>
-                <AgentAvatar agent={a} size={14} animated={false} className="shrink-0 rounded" />
+                <AgentAvatar agent={a} size={14} animated={false} className="shrink-0" />
                 {a.name}
                 <span className="truncate text-[11px] text-muted-foreground">{a.role}</span>
                 <UserPlus className="ml-auto size-3 shrink-0 text-muted-foreground" />
@@ -232,37 +238,58 @@ export function CommandPalette(): React.JSX.Element {
         )}
 
         <Command.Group heading="视图" className={GROUP_CLS}>
+          {isAdmin && (
+            <>
+              <Command.Item
+                value="view agents agent management 角色管理 agent 管理 控制台 资产"
+                className={ITEM_CLS}
+                onSelect={() => run(() => useUiStore.getState().setAppView('agents'))}
+              >
+                <Bot className="size-3.5 shrink-0 text-muted-foreground" />
+                Agent 管理
+              </Command.Item>
+              <Command.Item
+                value="view skills skill management 技能管理 skill 管理 控制台 资产"
+                className={ITEM_CLS}
+                onSelect={() => run(() => useUiStore.getState().setAppView('skills'))}
+              >
+                <Sparkles className="size-3.5 shrink-0 text-muted-foreground" />
+                Skill 管理
+              </Command.Item>
+              <Command.Item
+                value="view mcp mcp 管理 servers 服务器 crud 工具接入 stdio http"
+                className={ITEM_CLS}
+                onSelect={() => run(() => useUiStore.getState().setAppView('mcp'))}
+              >
+                <Plug className="size-3.5 shrink-0 text-muted-foreground" />
+                MCP 管理
+              </Command.Item>
+              <Command.Item
+                value="view connections 连接管理 连接中心 数据库 mysql postgres sqlite ssh 操作"
+                className={ITEM_CLS}
+                onSelect={() => run(() => useUiStore.getState().setAppView('connections'))}
+              >
+                <Cable className="size-3.5 shrink-0 text-muted-foreground" />
+                连接管理
+              </Command.Item>
+              <Command.Item
+                value="view users 用户管理 账号 成员 邀请 角色 密码"
+                className={ITEM_CLS}
+                onSelect={() => run(() => useUiStore.getState().setAppView('users'))}
+              >
+                <UserCog className="size-3.5 shrink-0 text-muted-foreground" />
+                用户管理
+              </Command.Item>
+            </>
+          )}
+          {/* M68：素材库——全员可见的个人资源视图（非管理面） */}
           <Command.Item
-            value="view agents agent management 角色管理 agent 管理 控制台 资产"
+            value="view materials 素材库 library 图片 视频 上传 个人资源"
             className={ITEM_CLS}
-            onSelect={() => run(() => useUiStore.getState().setAppView('agents'))}
+            onSelect={() => run(() => useUiStore.getState().setAppView('materials'))}
           >
-            <Bot className="size-3.5 shrink-0 text-muted-foreground" />
-            Agent 管理
-          </Command.Item>
-          <Command.Item
-            value="view skills skill management 技能管理 skill 管理 控制台 资产"
-            className={ITEM_CLS}
-            onSelect={() => run(() => useUiStore.getState().setAppView('skills'))}
-          >
-            <Sparkles className="size-3.5 shrink-0 text-muted-foreground" />
-            Skill 管理
-          </Command.Item>
-          <Command.Item
-            value="view mcp mcp 管理 servers 服务器 crud 工具接入 stdio http"
-            className={ITEM_CLS}
-            onSelect={() => run(() => useUiStore.getState().setAppView('mcp'))}
-          >
-            <Plug className="size-3.5 shrink-0 text-muted-foreground" />
-            MCP 管理
-          </Command.Item>
-          <Command.Item
-            value="view connections 连接管理 连接中心 数据库 mysql postgres sqlite ssh 操作"
-            className={ITEM_CLS}
-            onSelect={() => run(() => useUiStore.getState().setAppView('connections'))}
-          >
-            <Cable className="size-3.5 shrink-0 text-muted-foreground" />
-            连接管理
+            <Images className="size-3.5 shrink-0 text-muted-foreground" />
+            素材库
           </Command.Item>
           <Command.Item
             value="view settings 设置 偏好 配置 runtime 模型 记忆 金融"
@@ -434,7 +461,7 @@ export function CommandPalette(): React.JSX.Element {
                 })
               }
             >
-              <AgentAvatar agent={a} size={14} animated={false} className="shrink-0 rounded" />
+              <AgentAvatar agent={a} size={14} animated={false} className="shrink-0" />
               {a.name}
               <span className="truncate text-[11px] text-muted-foreground">{a.role}</span>
             </Command.Item>

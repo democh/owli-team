@@ -35,9 +35,9 @@
 | `data/app.db` | SQLite 主库（会话/消息/运行/记忆（含 M25 向量表）/摘要/任务/审批/usage/trace/feedback + FTS） | WAL 模式，备份时连同 `app.db-wal`、`app.db-shm` 一起拷贝 |
 | `data/settings.json` | 运行期设置覆盖层（UI 可改） | 原子替换写入 |
 | `data/logs/app-<date>.log` | pino 结构化日志（含 traceId=runId） | 跨日自动换文件，保留 7 天 |
-| `data/worktrees/<sid>` | git worktree（M6 worktree 模式） | 删除会话时默认丢弃 |
-| `data/canvas/<sid>.json` | 会话级画布文档（M31；JSON 单文档 + `version` 乐观锁） | 原子写（tmp/rename）+ debounce flush；备份直接拷贝 |
-| `workspace/<sid>/` | 会话工作区（sandbox 模式交付件 + uploads） | 删除会话时可选择保留 |
+| `data/worktrees/<sid>` | git worktree（M6 worktree 模式；M57 新会话落 `u_<uid>/<sid>`，既有目录原位保留） | 删除会话时默认丢弃 |
+| `data/canvas/<sid>.json` | 会话级画布文档（M31；JSON 单文档 + `version` 乐观锁；M57 新文档落 `u_<uid>/<sid>.json`） | 原子写（tmp/rename）+ debounce flush；备份直接拷贝 |
+| `workspace/<sid>/` | 会话工作区（sandbox 模式交付件 + uploads；M57 新会话落 `workspace/u_<uid>/<sid>/`，历史平面目录兼容回退可读） | 删除会话时可选择保留；删除账号时随 `u_<uid>` 整树清理 |
 | `data/sessions/*.json` | v1 旧版 JSON 会话（仅历史遗留） | 启动时一次性幂等导入（`.imported` 标记），原文件保留不删 |
 | `data/.connection-key` | 连接中心 / MCP 凭据加密密钥（0600 自动生成） | 备份必带；丢失 / 更换后既有连接与 MCP 凭据不可解密，需重新录入（`CONNECTION_SECRET_KEY` env 优先） |
 
@@ -48,7 +48,7 @@
 **优先级**：`data/settings.json`（UI 修改 / `PUT /api/settings`）> 环境变量 > 内置默认值。
 
 - 改 env 需重启；UI 设置面板修改的字段**就地生效、无需重启**；
-- 可经 UI 覆盖的字段（`GET /api/settings` 的 `fields`）：`llmModel`、`summaryModel`、`judgeModel`、`temperature`、`maxTurnsPerRun`、`contextBudgetTokens`、`keepRecentTurns`、`toolResultMaxTokens`、`toolDetailKeep`、`toolTimeoutMs`、`handoffMode`、`approvalMode`、`approvalTimeoutMs`、`allowRunCommand`、`allowSensitive`、`notifyPollMs`、`embeddingConnectionId`、`memoryRecallEnabled`、`memoryRecallTopK`、`memoryRecallMinScore`、`memoryRecallBudgetTokens`、`memoryDigestMode`（末六项为 M25 向量记忆）；
+- 可经 UI 覆盖的字段（`GET /api/settings` 的 `fields`）：`llmModel`、`summaryModel`、`judgeModel`、`temperature`、`temperatureOverride`、`maxTurnsPerRun`、`contextBudgetTokens`、`keepRecentTurns`、`toolResultMaxTokens`、`toolDetailKeep`、`toolTimeoutMs`、`handoffMode`、`approvalMode`、`approvalTimeoutMs`、`allowRunCommand`、`allowSensitive`、`notifyPollMs`、`embeddingConnectionId`、`memoryRecallEnabled`、`memoryRecallTopK`、`memoryRecallMinScore`、`memoryRecallBudgetTokens`、`memoryDigestMode`（末六项为 M25 向量记忆）；
 - 启动日志打印生效配置表（`describeConfig`）；非法 env 值「回退默认 + 告警」，但 `BIND_ALL=true` 且无 `AUTH_TOKEN` 会**拒绝启动**。
 
 ## 4. 环境变量全表
@@ -60,7 +60,7 @@
 | `PORT` | `8787` | 监听端口 |
 | `BIND_ALL` | `false` | `true` = 监听 `0.0.0.0`（暴露局域网），此时强制要求 `AUTH_TOKEN` |
 | `AUTH_TOKEN` | 空 | 鉴权令牌（`Authorization: Bearer` 或 cookie `auth_token`）；配置即启用校验；浏览器首次访问 `/?token=<AUTH_TOKEN>` 种 cookie |
-| `ALLOWED_ORIGINS` | 空 | CORS 白名单（逗号分隔）；留空 = 仅本机来源 |
+| `ALLOWED_ORIGINS` | 空 | CORS / 写请求 Origin 校验白名单（逗号分隔）；留空 = 仅本机来源 |
 | `MESSAGE_RATE_LIMIT` | `30` | `/api/sessions/:id/messages` 每 IP 每分钟上限（超限 429） |
 | `LOG_LEVEL` | `info` | `trace\|debug\|info\|warn\|error\|silent`（测试环境默认 silent） |
 
@@ -75,10 +75,12 @@
 | `LLM_MOCK_DELAY_MS` | `8` | Mock 分片延时（ms），调大可观察流式 / 插话 / 停止 |
 | `LLM_THINKING` | `false` | 思考模式：开启后流式产出 `reasoning` 通道并折叠展示 |
 | `LLM_REASONING_EFFORT` | `high` | 思考强度（仅思考模式生效）：`low\|high\|max` |
+| `LLM_MAX_OUTPUT_TOKENS` | `8192` | 单次输出上限（`max_tokens` 显式下发；`0` = 交给服务商默认）。流末触顶 → 系统条提示（ADR 0186） |
 | `LLM_JSON_MODE` | `json_object` | 结构化输出形态（M2 摘要 / M9 judge）：`json_object\|json_schema\|off` |
 | `SUMMARY_MODEL` | 空 | 摘要模型（留空 = 复用 `LLM_MODEL`） |
 | `JUDGE_MODEL` | 空 | 评测裁判模型（留空 = 复用摘要模型） |
 | `LLM_TEMPERATURE` | `0.6` | 采样温度（角色 front-matter 可覆盖） |
+| `LLM_TEMPERATURE_OVERRIDE` | `false` | 统一温度：开启后忽略角色 front-matter 的 `temperature`，全部角色使用 `LLM_TEMPERATURE`（设置面板可热切换） |
 | `LLM_MAX_CONCURRENCY` | `3` | 全局并发信号量（超出排队） |
 | `LLM_MAX_RETRIES` | `3` | 可重试错误的退避重试次数 |
 | `LLM_RETRY_BASE_DELAY_MS` | `500` | 重试基础退避（指数 + 抖动） |
@@ -123,10 +125,11 @@
 | `ALLOWED_COMMANDS` | 空 | `run_command` 白名单前缀（逗号分隔；留空 = 内置安全清单） |
 | `ALLOWED_ROOTS` | 空 | 允许挂载为项目根的目录白名单（逗号分隔；留空 = 仅限 `workspace/` 内） |
 | `ALLOW_SENSITIVE` | `false` | 放开敏感文件（`.env*` / `.ssh` / `*.pem` / `id_rsa*`）读写；即便放开仍走审批 |
-| `WEB_FETCH_ALLOWED_DOMAINS` | 空 | `web_fetch` 白名单域名（留空 = 工具不可用） |
-| `WEB_SEARCH_ENABLED` | `false` | 开启 `web_search`（百度检索）；未配 API Key 时抓取结果页 |
+| `WEB_FETCH_ALLOWED_DOMAINS`（已移除） | — | `web_fetch` 已无域名白名单（任意 http/https 地址可抓取；见 ADR 0136） |
+| `WEB_SEARCH_ENABLED`（已移除） | — | `web_search` 已无启用开关（始终可用；见 ADR 0136） |
 | `BAIDU_SEARCH_API_KEY` | 空 | 千帆「百度搜索」API Key（配置后走官方 API，结构化结果、无风控） |
 | `BAIDU_SEARCH_API_URL` | 千帆 web_search 端点 | 官方 API 地址（一般无需修改） |
+| `WEB_SEARCH_ENGINES` | 空（内置 `baidu,bing,sogou,so360`） | 免 Key 引擎降级链（逗号分隔；被风控/冷却的引擎自动切换到下一个；见 ADR 0184） |
 | `HTTP_USER_AGENT` | 空 | 联网工具浏览器 UA 覆盖（留空 = 内置 Chrome 桌面版） |
 | `HTTP_MIN_INTERVAL_MS` | `1200` | 同域名最小请求间隔（反爬限速；`0` = 不限速） |
 | `HTTP_TIMEOUT_MS` | `15000` | 单次联网请求超时（毫秒） |
@@ -257,10 +260,35 @@
 - **反爬联动**：同一来源连续失败 ≥2 次进入 5 分钟冷却（网关路由自动跳过），成功后清零；冷却状态经 `GET /api/finance/env` 的 `health` 透出（cooling / cooldownUntil / lastError）；
 - **数据延迟**：行情结果带 `asOf` 数据时点；非交易时段不轮询（交易日 / 节假日按 `finance_meta` 日历缓存 12h 判定）；降级原因链 `degraded` 与过期回退 `cache: 'stale'` 在响应中显式标注。
 
+### 4.13 多用户（M57；团队部署）
+
+| 变量 | 默认 | 说明 |
+| --- | --- | --- |
+| `SESSION_TTL_DAYS` | `30` | 登录会话滑动过期（天；每次访问续期） |
+| `SESSION_ABSOLUTE_TTL_DAYS` | `90` | 登录会话绝对过期（天；不可续期上限） |
+| `LOGIN_LOCKOUT_THRESHOLD` | `5` | 登录连续失败锁定阈值（次） |
+| `LOGIN_LOCKOUT_MS` | `900000` | 登录失败锁定时长（毫秒） |
+| `LOGIN_RATE_LIMIT` | `10` | 登录接口 IP 限流（次/分钟） |
+| `RUN_MAX_PER_USER` | `2` | 每用户活跃 + 排队 Run 上限（`0` = 不限制） |
+| `TRUST_PROXY` | 空 | 反向代理信任（nginx 单跳填 `1`；`true` = 全信任；空 = 关闭）。开启后限流 / 审计取 `X-Forwarded-For` 真实 IP |
+| `AUTH_COOKIE_SECURE` | `false` | HTTPS（网关终止 TLS）下置 `true`：`sid` cookie 加 Secure |
+
+- **启用步骤**：启动后浏览器访问 `http://<主机>:<端口>/` → 兼容模式直达应用；点右上角「账号」→「创建管理员并启用多用户」完成首启（存量数据自动回填其名下，之后经登录页登录）；升级前行为与旧版一致（`AUTH_TOKEN` 仍生效）；
+- **nginx 网关要点**：`proxy_set_header X-Forwarded-For/X-Forwarded-Proto/Host`；WebSocket 升级需 `proxy_set_header Upgrade/Connection` 且 `proxy_read_timeout` ≥ 心跳间隔；上传通道（`/api/sessions/*/attachments`、`/media/upload`）单请求最大 200MB，需调整 `client_max_body_size`（默认 1m 会拦）；TLS 终止在网关（应用不内置 HTTPS），DNS/HSTS 由网关层负责；
+- **防枚举**：登录失败统一文案（用户名错 / 密码错不可区分）；成员/管理员由「用户管理」页维护（邀请制，无开放注册）；禁用 / 重置密码即时吊销全部会话；
+- **会话共享（P2）**：会话属主可经 `/api/sessions/:id/shares` 邀请成员（`editor` 可读写 / `viewer` 只读，可自助 `POST /api/sessions/:id/leave` 退出）；共享变更落审计 `session.share-*`；删除账号 / 会话时共享记录级联清理；跨用户不可见性不变（无共享关系一律 404）。
+- **连接最小权限（P2）**：成员使用 SSH / 数据库工具时，仅可用 `member_use=1` 的 system 连接（执行侧以「本 Run 触发者」复核，admin / 兼容模式不限；会话绑定不能绕过）；`ssh.exec` / `db.*` 审计含触发者 `userId`。
+- **配额（P3）**：用户管理台行内「配额」按钮可设并发 / 日 token / 月成本 / 会话数 / 存储上限（留空 = 不限；日/月按服务器本地时区重置）；超限行为：任务并发 400 / 用量波次边界收束（`run:end reason=quota` + 系统条）/ 建会话 403 / 上传 403；个人「设置 → 我的用量」只读查看；配额变更审计 `auth.quota-set`。
+- **个人连接（P3）**：成员可在「设置 → 我的连接」自建数据库 / SSH（仅本人可见可用），在**会话头部「资源」入口**绑定即用（会话资源弹窗：连接 / MCP 两页签，成员自助绑定面；viewer 只读）；管理员在连接编辑器用「允许成员使用」开关控制 system 连接开放度（关后成员列表隐藏 / 绑定 403 / 工具执行拦截）；删除账号自动清理其个人连接。
+- **模型直连 BYOK（P3）**：成员可在「设置 → 模型直连（BYOK）」保存自己的 LLM API Key（加密存储、永不回显；baseUrl / model 留空 = 跟随系统默认）；其会话的全部模型调用（含摘要 / 沉淀 / 脑图）走本人凭据，成本仍按本人归因（usage 记录实际模型）；「恢复系统默认」即时清除；`LLM_MOCK=true` 时 BYOK 不参与。
+- **个人 MCP（P3）**：成员可在「设置 → 我的 MCP」自建 stdio / http 服务器（仅本人可见；保存即测试连接）；在**会话头部「资源」入口**绑定后即用——其工具在**属主会话内自动授予**（无需管理员编辑 Agent 工具白名单）；system MCP  仍由管理员在 MCP 管理台维护（成员可绑定使用）；删除账号自动断连并清理其 personal 服务器。运维注意：`/mcp/*` 已改为路由级门控（管理面 admin / personal 资源级 ownerOrAdmin），新增子路由必须显式声明权限。
+- **兼容与弃用**：`AUTH_TOKEN` 映射最早创建的管理员（弃用告警），下一大版本移除；账号不存在（未 setup）时接口行为与旧版完全一致。
+
 ## 5. 安全说明
 
 - **本地即安全**：默认仅监听 `127.0.0.1`；暴露局域网必须 `BIND_ALL=true` + `AUTH_TOKEN`，启动时打印提醒，token 校验覆盖全部 `/api/*` 与 `/ws` 握手；浏览器通过 `/?token=<AUTH_TOKEN>` 一次性种 `HttpOnly` cookie，后续请求自动携带；
 - **CORS 收窄**：`ALLOWED_ORIGINS` 白名单；留空时仅放行本机来源，跨站页面无法静默调用 API；
+- **写请求 Origin 校验**：非 GET 请求校验 Origin（同源 / 白名单 / 本机来源放行，跨站 403；无 Origin 的 CLI / 测试请求放行）——开发模式经 Vite 代理（5173 → 8787，changeOrigin 改写 Host）开箱即用；
 - **限流**：消息发送接口按 IP 限流（`MESSAGE_RATE_LIMIT`），防误触刷爆模型额度；
 - **路径白名单**：项目挂载根必须在 `ALLOWED_ROOTS` 内；工具文件访问全部经 `resolveInRoot`（归一化 + 前缀校验 + 符号链接逃逸拦截）；
 - **敏感文件**：默认拒绝读写；`ALLOW_SENSITIVE=true` 放开后仍强制审批；
@@ -285,6 +313,7 @@ npm run e2e                        # Playwright 自动用 mock 模式（含审�
 | --- | --- |
 | 连通性冒烟 | `npm run llm:ping "你好"` |
 | 旧 JSON 导入 | `npm run migrate:json`（幂等 + 条数校验） |
+| 工作区布局搬迁（M57） | `npm run migrate:workspace`（幂等；`-- --dry-run` 预览；未搬迁数据服务端兼容回退仍可读） |
 | 校验 Agent 包 / 技能文档 | `npm run check:agents` / `npm run check:skills` |
 | 迁移旧 prompt 资产 | `npm run migrate:agents`（幂等；`--prune` 清理旧文件） |
 | 全量门禁 | `npm run typecheck && npm run test && npm run lint` |

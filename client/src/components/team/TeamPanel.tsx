@@ -33,6 +33,7 @@ import {
   Wrench,
 } from 'lucide-react'
 import type { AgentDefinition, AgentRunState, ChatMessage, Plan, SessionSummary, SkillMeta } from '@multi-agent/shared'
+import { baseAgentId, soulIdOfMember } from '@multi-agent/shared'
 import { useAgentStore } from '../../stores/agent-store'
 import { useLivePanelStore } from '../../stores/live-panel-store'
 import { usePlanStore } from '../../stores/plan-store'
@@ -60,6 +61,7 @@ import { SoulPicker } from '../agents/SoulPicker'
 import { StatsView } from './StatsView'
 import { PANEL_DEFS, GROUPS, PanelBadge, type PanelSlots } from '../panels/registry'
 import { patAgent } from '../../lib/agent-actions'
+import { labelOfMemberKey, memberViews, type MemberView } from '../../lib/members'
 
 /** 计划为空时的稳定引用（避免选择器每帧返回新数组导致重渲染） */
 const EMPTY_PLANS: Plan[] = []
@@ -104,46 +106,51 @@ function skillTitle(skillMeta: SkillMeta[], id: string): string {
   return meta ? `${id} · ${meta.description}` : `${id}（技能）`
 }
 
-/** M12：迷你档案浮层 —— 人设一句话 / 能力 / 最近 3 次出手 / 常用交接对象（会话统计，空时回退预设路线） */
+/** M12：迷你档案浮层 —— 人设一句话 / 能力 / 最近 3 次出手 / 常用交接对象（会话统计，空时回退预设路线）
+ *  M77：按成员实例（成员键）统计与署名——同角多魂下分身各自成档（`@卢娜·禅意`）
+ */
 function MiniDossier({
-  agent,
+  member,
   messages,
   onClose,
 }: {
-  agent: AgentDefinition
+  member: MemberView
   messages: ChatMessage[]
   onClose: () => void
 }): React.JSX.Element {
   const agents = useAgentStore((s) => s.agents)
+  const session = useSessionStore((s) => s.sessions.find((x) => x.id === s.currentId))
   const focusMessage = useUiStore((s) => s.focusMessage)
+  const agent = member.agent
 
   const own = React.useMemo(
-    () => messages.filter((m) => m.role === 'agent' && m.agentId === agent.id),
-    [messages, agent.id],
+    () => messages.filter((m) => m.role === 'agent' && (m.memberKey ?? m.agentId) === member.key),
+    [messages, member.key],
   )
   const recent = own.slice(-3).reverse()
   const frequent = React.useMemo(() => {
     const count = new Map<string, number>()
     for (const m of own) {
       for (const t of m.mentions) {
-        if (t === 'user' || t === agent.id) continue
+        if (t === 'user' || t === member.key) continue
         count.set(t, (count.get(t) ?? 0) + 1)
       }
     }
     return [...count.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3)
-  }, [own, agent.id])
+  }, [own, member.key])
   const handoffList: { id: string; n: number; preset: boolean }[] =
     frequent.length > 0 ? frequent.map(([id, n]) => ({ id, n, preset: false })) : agent.handoff.map((id) => ({ id, n: 0, preset: true }))
-  const nameOf = (id: string): string => agents.find((a) => a.id === id)?.name ?? id
+  // M77：交接对象展示走成员标签自描述回退（分身 / 已离场均不裸秀键）
+  const nameOf = (id: string): string => labelOfMemberKey(agents, session, id)
 
   return (
     <Dialog open onOpenChange={(v) => !v && onClose()}>
       <DialogContent className="max-h-[80vh] max-w-sm overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2.5 pr-6 text-[14px]">
-            <AgentAvatar agent={agent} size={40} animated={false} className="shrink-0 rounded-lg ring-1 ring-primary/15" />
+            <AgentAvatar agent={agent} size={40} animated={false} className="shrink-0 ring-1 ring-primary/15" />
             <span className="min-w-0">
-              <span className="block truncate">{agent.name}</span>
+              <span className="block truncate">{member.label}</span>
               <span className="block truncate text-[11px] font-normal text-muted-foreground">
                 {agent.role} · {agent.title}
               </span>
@@ -180,7 +187,7 @@ function MiniDossier({
               </ul>
             ) : (
               <p className="rounded-lg bg-muted/60 px-2.5 py-1.5 text-[11.5px] text-muted-foreground">
-                还没出过手 —— 输入 <span className="font-medium text-foreground">@{agent.name}</span> 开启第一棒。
+                还没出过手 —— 输入 <span className="font-medium text-foreground">@{member.label}</span> 开启第一棒。
               </p>
             )}
           </section>
@@ -201,10 +208,9 @@ function MiniDossier({
                     )}
                   >
                     <AgentAvatar
-                      agent={agents.find((a) => a.id === id)}
+                      agent={agents.find((a) => a.id === baseAgentId(id))}
                       size={16}
                       animated={false}
-                      className="rounded-full"
                     />
                     {nameOf(id)}
                     {!preset && <span className="text-primary">×{n}</span>}
@@ -245,10 +251,10 @@ function MiniDossier({
 }
 
 function MembersView({
-  participants,
+  members,
   messages,
 }: {
-  participants: AgentDefinition[]
+  members: MemberView[]
   messages: ChatMessage[]
 }): React.JSX.Element {
   const groups = useAgentStore((s) => s.groups)
@@ -256,8 +262,8 @@ function MembersView({
   const currentId = useSessionStore((s) => s.currentId)
   const session = useSessionStore((s) => s.sessions.find((x) => x.id === s.currentId))
   const setInviteOpen = useUiStore((s) => s.setInviteOpen)
-  // M12：单击成员卡打开迷你档案
-  const [dossier, setDossier] = React.useState<AgentDefinition>()
+  // M12：单击成员卡打开迷你档案（M77：档案按成员实例）
+  const [dossier, setDossier] = React.useState<MemberView>()
   // M16：新成员入场高亮（participantIds diff 一次性脉冲；安静模式由 CSS 关闭动画）
   const [freshIds, setFreshIds] = React.useState<Set<string>>(new Set())
   const participantKey = session?.participantIds.join(',') ?? ''
@@ -276,40 +282,43 @@ function MembersView({
   }, [participantKey])
 
   // M16：成员按场景分组小节（groups 顺序；未注册组殿后），组内保持编制顺序；组内共有技能上提到小节头
+  // M77：分组与计数按成员实例（同角多魂各自成卡）
   const sections = React.useMemo(() => {
-    const byGroup = new Map<string, AgentDefinition[]>()
-    for (const a of participants) {
-      const list = byGroup.get(a.group) ?? []
-      list.push(a)
-      byGroup.set(a.group, list)
+    const byGroup = new Map<string, MemberView[]>()
+    for (const m of members) {
+      const list = byGroup.get(m.agent.group) ?? []
+      list.push(m)
+      byGroup.set(m.agent.group, list)
     }
-    const out: Array<{ group?: (typeof groups)[number]; members: AgentDefinition[]; common: string[] }> = []
+    const out: Array<{ group?: (typeof groups)[number]; members: MemberView[]; common: string[] }> = []
     const seen = new Set<string>()
     for (const g of groups) {
-      const members = byGroup.get(g.id)
-      if (members?.length) {
-        out.push({ group: g, members, common: sharedSkills(members) })
+      const list = byGroup.get(g.id)
+      if (list?.length) {
+        out.push({ group: g, members: list, common: sharedSkills(list.map((m) => m.agent)) })
         seen.add(g.id)
       }
     }
-    for (const [gid, members] of byGroup) if (!seen.has(gid)) out.push({ members, common: sharedSkills(members) })
+    for (const [gid, list] of byGroup)
+      if (!seen.has(gid)) out.push({ members: list, common: sharedSkills(list.map((m) => m.agent)) })
     return out
-  }, [participants, groups])
+  }, [members, groups])
 
-  /** 会话战绩：本会话发言条数 / 交付件数（卡片次行右对齐收口；无记录 = 未出手） */
+  /** 会话战绩：本会话发言条数 / 交付件数（M77 按成员键归口：分身各自计数；无记录 = 未出手） */
   const stats = React.useMemo(() => {
     const m = new Map<string, { speaks: number; artifacts: number }>()
     for (const msg of messages) {
       if (msg.role !== 'agent' || !msg.agentId) continue
-      const cur = m.get(msg.agentId) ?? { speaks: 0, artifacts: 0 }
+      const key = msg.memberKey ?? msg.agentId
+      const cur = m.get(key) ?? { speaks: 0, artifacts: 0 }
       cur.speaks += 1
       cur.artifacts += msg.artifacts?.length ?? 0
-      m.set(msg.agentId, cur)
+      m.set(key, cur)
     }
     return m
   }, [messages])
 
-  if (participants.length === 0) {
+  if (members.length === 0) {
     return <div className="px-3 py-8 text-center text-[12.5px] text-muted-foreground">选择一个会话查看出战成员</div>
   }
 
@@ -341,14 +350,14 @@ function MembersView({
             ))}
           </div>
           <div className="space-y-1.5">
-            {members.map((a) => (
+            {members.map((member) => (
               <MemberCard
-                key={a.id}
-                agent={a}
-                fresh={freshIds.has(a.id)}
-                canRemove={participants.length > 1}
-                stat={stats.get(a.id)}
-                extraSkills={(a.skills ?? []).filter((sk) => !common.includes(sk))}
+                key={member.key}
+                member={member}
+                fresh={freshIds.has(member.key)}
+                canRemove={members.length > 1}
+                stat={stats.get(member.key)}
+                extraSkills={(member.agent.skills ?? []).filter((sk) => !common.includes(sk))}
                 onOpenDossier={setDossier}
               />
             ))}
@@ -368,7 +377,7 @@ function MembersView({
         邀请成员
       </Button>
 
-      {dossier && <MiniDossier agent={dossier} messages={messages} onClose={() => setDossier(undefined)} />}
+      {dossier && <MiniDossier member={dossier} messages={messages} onClose={() => setDossier(undefined)} />}
     </div>
   )
 }
@@ -379,32 +388,38 @@ function MembersView({
  * 次行：灵魂切换 + 能力（前 3 + 余量）+ 个性技能（场景通用技能已上提到小节头）+ 工具数 + 会话战绩（发言 / 交付），右对齐收口。
  */
 function MemberCard({
-  agent: a,
+  member,
   fresh,
   canRemove,
   stat,
   extraSkills,
   onOpenDossier,
 }: {
-  agent: AgentDefinition
+  /** M77：成员实例（同角多魂各自成卡；key 为成员键） */
+  member: MemberView
   fresh: boolean
   canRemove: boolean
   /** 会话战绩（发言条数 / 交付件数；未出手 = undefined） */
   stat?: { speaks: number; artifacts: number }
   /** 个性技能（已扣除小节头展示的通用技能） */
   extraSkills: string[]
-  onOpenDossier: (a: AgentDefinition) => void
+  onOpenDossier: (member: MemberView) => void
 }): React.JSX.Element {
-  const state = useAgentStore((s) => s.statuses[a.id] ?? 'idle')
+  const a = member.agent
+  const state = useAgentStore((s) => s.statuses[member.key] ?? 'idle')
   const groups = useAgentStore((s) => s.groups)
   const skillMeta = useAgentStore((s) => s.skills)
   const currentId = useSessionStore((s) => s.currentId)
-  const soulOverride = useSessionStore((s) => s.sessions.find((x) => x.id === s.currentId)?.memberSouls?.[a.id])
+  // M77：分身实例的灵魂内嵌在键里；经典实例用会话覆盖（soulOverride = 当前生效灵魂）
+  const classicOverride = useSessionStore((s) =>
+    member.pinned ? undefined : s.sessions.find((x) => x.id === s.currentId)?.memberSouls?.[member.key],
+  )
+  const soulOverride = member.pinned ? member.soul?.id : classicOverride
   const setMemberSoul = useSessionStore((s) => s.setMemberSoul)
   const removeMember = useSessionStore((s) => s.removeMember)
   const insertToComposer = useUiStore((s) => s.insertToComposer)
   // M14：指挥台队列位次（发言中由状态表达；等待者提示「排队第 N 位」，与 Composer 成员条同口径）
-  const queueIdx = useRunStore((s) => s.queue.indexOf(a.id))
+  const queueIdx = useRunStore((s) => s.queue.indexOf(member.key))
   // M24：计划徽章（本会话与本人相关的计划：待批准 / 执行中步骤进度）
   const plans = usePlanStore((s) => (s.sessionId === currentId ? s.plans : EMPTY_PLANS))
   const [removing, setRemoving] = React.useState(false)
@@ -421,12 +436,15 @@ function MemberCard({
     let done = 0
     let total = 0
     for (const plan of plans) {
-      if (plan.status === 'submitted' && (plan.agentId === a.id || plan.steps.some((s) => (s.ownerAgentId ?? plan.agentId) === a.id))) {
+      if (
+        plan.status === 'submitted' &&
+        (plan.agentId === member.key || plan.steps.some((s) => (s.ownerAgentId ?? plan.agentId) === member.key))
+      ) {
         pending++
       }
       if (plan.status === 'executing' || plan.status === 'approved') {
         for (const s of plan.steps) {
-          if ((s.ownerAgentId ?? plan.agentId) !== a.id) continue
+          if ((s.ownerAgentId ?? plan.agentId) !== member.key) continue
           total++
           if (s.status === 'done' || s.status === 'skipped') done++
         }
@@ -439,15 +457,15 @@ function MemberCard({
       return { label: `计划 ${done}/${total}`, className: 'bg-violet-500/10 text-violet-700', title: `派发步骤进度：${done}/${total}（完成后用 update_plan_step 汇报）` }
     }
     return undefined
-  }, [plans, a.id])
+  }, [plans, member.key])
 
   /** M16：切换灵魂（会话覆盖；null = 恢复默认）——成功 toast，事件条由服务端 system 消息广播回放 */
   const changeSoul = async (soul: string | null): Promise<void> => {
     if (!currentId) return
     try {
-      await setMemberSoul(currentId, a.id, soul)
+      await setMemberSoul(currentId, member.key, soul)
       const meta = soul ? a.souls?.find((s) => s.id === soul) : undefined
-      toast(meta ? `${a.name} 换上了『${meta.name}』灵魂` : `${a.name} 恢复了默认灵魂`)
+      toast(meta ? `${member.label} 换上了『${meta.name}』灵魂` : `${member.label} 恢复了默认灵魂`)
     } catch (err) {
       toast.error((err as Error).message)
     }
@@ -457,9 +475,9 @@ function MemberCard({
   const confirmRemove = async (): Promise<void> => {
     if (!currentId) return
     try {
-      await removeMember(currentId, a.id)
+      await removeMember(currentId, member.key)
       setRemoving(false)
-      toast(`${a.name} 离开了协作`)
+      toast(`${member.label} 离开了协作`)
     } catch (err) {
       toast.error((err as Error).message)
     }
@@ -469,12 +487,12 @@ function MemberCard({
     <div
       role="button"
       tabIndex={0}
-      title={`查看 ${a.name} 的档案`}
-      onClick={() => onOpenDossier(a)}
+      title={`查看 ${member.label} 的档案`}
+      onClick={() => onOpenDossier(member)}
       onKeyDown={(e) => {
         if (e.key === 'Enter' || e.key === ' ') {
           e.preventDefault()
-          onOpenDossier(a)
+          onOpenDossier(member)
         }
       }}
       style={group ? { borderLeftColor: group.theme[0], borderLeftWidth: 2 } : undefined}
@@ -485,14 +503,14 @@ function MemberCard({
       )}
     >
       <div className="flex items-center gap-2">
-        <AgentAvatar agent={a} size={32} state={state} className="rounded-md" />
+        <AgentAvatar agent={a} size={32} state={state} />
         <div className="flex min-w-0 flex-1 items-baseline gap-1.5">
-          <span className="truncate text-[12.5px] font-semibold">{a.name}</span>
+          <span className="truncate text-[12.5px] font-semibold">{member.label}</span>
           <span className="truncate text-[10.5px] text-muted-foreground">{a.role}</span>
         </div>
         {state !== 'idle' && (
           <span
-            title={queued ? `指挥台队列：${a.name} 排队第 ${queueIdx + 1} 位` : `${a.name} · ${STATE_TEXT[state]}`}
+            title={queued ? `指挥台队列：${member.label} 排队第 ${queueIdx + 1} 位` : `${member.label} · ${STATE_TEXT[state]}`}
             className={cn(
               'flex shrink-0 items-center gap-1 text-[10px] tabular-nums',
               queued ? 'text-amber-600' : STATE_TONE[state],
@@ -513,11 +531,11 @@ function MemberCard({
             variant="ghost"
             size="icon-sm"
             className="size-6 text-muted-foreground hover:text-primary"
-            title={`@ 召唤 ${a.name}`}
+            title={`@ 召唤 ${member.label}`}
             disabled={!currentId}
             onClick={(e) => {
               e.stopPropagation()
-              insertToComposer(`@${a.name} `)
+              insertToComposer(`@${member.label} `)
             }}
           >
             <AtSign className="size-3.5" />
@@ -526,11 +544,11 @@ function MemberCard({
             variant="ghost"
             size="icon-sm"
             className="size-6 text-muted-foreground hover:text-primary"
-            title={`拍一拍 ${a.name}`}
+            title={`拍一拍 ${member.label}`}
             disabled={!currentId}
             onClick={(e) => {
               e.stopPropagation()
-              void patAgent(a)
+              void patAgent(a, member.label)
             }}
           >
             <Hand className="size-3.5" />
@@ -539,7 +557,7 @@ function MemberCard({
             variant="ghost"
             size="icon-sm"
             className="size-6 text-muted-foreground hover:text-destructive"
-            title={canRemove ? `移出 ${a.name}` : '会话至少保留 1 名成员'}
+            title={canRemove ? `移出 ${member.label}` : '会话至少保留 1 名成员'}
             disabled={!currentId || !canRemove}
             onClick={(e) => {
               e.stopPropagation()
@@ -554,8 +572,18 @@ function MemberCard({
       <div className="mt-1.5 flex flex-wrap items-center gap-1">
         {(a.souls?.length ?? 0) > 0 && (
           <>
-            <SoulPicker agent={a} override={soulOverride} onPick={(soul) => void changeSoul(soul)} />
-            {soulOverride !== undefined && (
+            <SoulPicker
+              agent={a}
+              override={soulOverride}
+              pinned={member.pinned}
+              onPick={(soul) => void changeSoul(soul)}
+            />
+            {member.pinned && (
+              <span className="text-[9.5px] text-muted-foreground" title="同角多魂：该成员是独立分身实例">
+                分身
+              </span>
+            )}
+            {!member.pinned && classicOverride !== undefined && (
               <span className="text-[9.5px] text-muted-foreground" title="本会话已覆盖角色默认灵魂">
                 会话覆盖
               </span>
@@ -611,7 +639,7 @@ function MemberCard({
 
       {removing && (
         <div className="mt-1.5 flex items-center gap-1.5 rounded-md bg-destructive/5 px-2 py-1.5 text-[11px]">
-          <span className="min-w-0 flex-1 truncate text-destructive">移出「{a.name}」？历史发言会保留</span>
+          <span className="min-w-0 flex-1 truncate text-destructive">移出「{member.label}」？历史发言会保留</span>
           <Button
             size="xs"
             variant="destructive"
@@ -640,7 +668,7 @@ function MemberCard({
 
 // ---------- 邀请成员（M16） ----------
 
-/** 邀请对话框：AgentPicker（已在场禁用）+ 灵魂预选；运行中允许，新成员下一回合生效 */
+/** 邀请对话框：AgentPicker（已在场标注 + 可追加分身）+ 灵魂预选；运行中允许，新成员下一回合生效 */
 function InviteDialog({ session }: { session: SessionSummary }): React.JSX.Element {
   const open = useUiStore((s) => s.inviteOpen)
   const setOpen = useUiStore((s) => s.setInviteOpen)
@@ -673,8 +701,16 @@ function InviteDialog({ session }: { session: SessionSummary }): React.JSX.Eleme
     setBusy(true)
     try {
       await addMembers(session.id, picked, souls)
+      const agentsNow = useAgentStore.getState().agents
       const names = picked
-        .map((id) => useAgentStore.getState().agents.find((x) => x.id === id)?.name ?? id)
+        .map((key) => {
+          const agent = agentsNow.find((x) => x.id === baseAgentId(key))
+          if (!agent) return key
+          // M77：分身入编展示「名字·灵魂名」
+          const soulId = soulIdOfMember(key)
+          const soul = soulId ? agent.souls?.find((s) => s.id === soulId) : undefined
+          return soul ? `${agent.name}·${soul.name}` : agent.name
+        })
         .join('、')
       toast(`${names} 加入协作，@TA 开麦`)
       setOpen(false)
@@ -697,7 +733,7 @@ function InviteDialog({ session }: { session: SessionSummary }): React.JSX.Eleme
             onChange={setPicked}
             souls={souls}
             onSoulChange={handleSoul}
-            disabledIds={session.participantIds}
+            memberKeys={session.participantIds}
           />
         </div>
         <div className="mt-4 flex items-center justify-end gap-2">
@@ -736,10 +772,11 @@ function excerptOf(content: string): string {
 function RelayCard({ step, showLink }: { step: RelayStep; showLink: boolean }): React.JSX.Element {
   const agents = useAgentStore((s) => s.agents)
   const focusMessage = useUiStore((s) => s.focusMessage)
+  const session = useSessionStore((s) => s.sessions.find((x) => x.id === s.currentId))
   const m = step.message
   const handedToUser = m.mentions.includes('user')
   const targets = m.mentions.filter((x) => x !== 'user')
-  const nameOf = (id: string): string => agents.find((a) => a.id === id)?.name ?? id
+  const nameOf = (id: string): string => labelOfMemberKey(agents, session, id)
   const excerpt = excerptOf(m.content)
   const artifactNames = (m.artifacts ?? []).map((p) => p.split('/').pop() ?? p)
   const toolCount = m.toolCalls?.length ?? 0
@@ -754,23 +791,23 @@ function RelayCard({ step, showLink }: { step: RelayStep; showLink: boolean }): 
         className="group w-full rounded-xl border bg-card p-2.5 text-left transition-all hover:border-primary/30 hover:shadow-lift"
       >
         <div className="flex items-center gap-1.5">
-          <AgentAvatar agent={step.agent} size={26} animated={false} className="rounded-full ring-2 ring-primary/10" />
+          <AgentAvatar agent={step.agent} size={26} animated={false} className="ring-2 ring-primary/10" />
           <ArrowRight className="size-3 shrink-0 text-primary/40" />
           {!handedToUser && (
             <div className="flex -space-x-1.5">
               {targets.map((id) => (
                 <AgentAvatar
                   key={id}
-                  agent={agents.find((a) => a.id === id)}
+                  agent={agents.find((a) => a.id === baseAgentId(id))}
                   size={26}
                   animated={false}
-                  className="rounded-full ring-2 ring-card"
+                  className="ring-2 ring-card"
                 />
               ))}
             </div>
           )}
           <span className="ml-1 min-w-0 flex-1 truncate text-[12px] font-medium">
-            {step.agent?.name ?? m.agentId}
+            {labelOfMemberKey(agents, session, m.memberKey ?? m.agentId ?? '')}
             <span className="mx-1 text-muted-foreground/70">→</span>
             <span className={handedToUser ? 'text-primary' : ''}>{toLabel}</span>
           </span>
@@ -814,6 +851,7 @@ function RelayChain({ steps }: { steps: RelayStep[] }): React.JSX.Element | null
   const queue = useRunStore((s) => s.queue)
   const active = useRunStore((s) => s.active)
   const agents = useAgentStore((s) => s.agents)
+  const session = useSessionStore((s) => s.sessions.find((x) => x.id === s.currentId))
 
   const nodes = React.useMemo(() => {
     const seen = new Set<string>()
@@ -843,18 +881,21 @@ function RelayChain({ steps }: { steps: RelayStep[] }): React.JSX.Element | null
       aria-label="接力进度链"
     >
       {nodes.map((n, i) => {
-        const a = agents.find((x) => x.id === n.id)
+        // M77：节点 id = 成员键（分身各自成节点、与队列键同源 → 当前高亮可命中）；头像取基础角色、署名走回退链
+        const a = agents.find((x) => x.id === baseAgentId(n.id))
         const isCurrent = n.id === current
         return (
           <React.Fragment key={n.id}>
             {i > 0 && <ArrowRight className="mx-0.5 size-3 shrink-0 text-muted-foreground/40" />}
-            <span className="relative shrink-0" title={`${a?.name ?? n.id}${n.done ? ' · 已出手' : ' · 排队中'}`}>
+            <span
+              className="relative shrink-0"
+              title={`${labelOfMemberKey(agents, session, n.id)}${n.done ? ' · 已出手' : ' · 排队中'}`}
+            >
               <AgentAvatar
                 agent={a}
                 size={22}
                 animated={false}
                 className={cn(
-                  'rounded-full',
                   isCurrent
                     ? 'ring-2 ring-primary'
                     : n.done
@@ -894,6 +935,9 @@ export function RelayQueue(): React.JSX.Element | null {
   const queue = useRunStore((s) => s.queue)
   const reorder = useRunStore((s) => s.reorderQueue)
   const agents = useAgentStore((s) => s.agents)
+  // M77：队列条目为成员键（分身）；展示名走成员标签（同角多实例 = 名字·灵魂名）
+  const session = useSessionStore((s) => s.sessions.find((x) => x.id === s.currentId))
+  const nameOf = React.useCallback((id: string): string => labelOfMemberKey(agents, session, id), [agents, session])
   // M24：计划派发提示（队列成员名下最近的未完成步骤 → chip title）
   const plans = usePlanStore((s) => s.plans)
 
@@ -924,7 +968,7 @@ export function RelayQueue(): React.JSX.Element | null {
     void reorder(next)
   }
 
-  const firstName = agents.find((a) => a.id === items[0])?.name ?? items[0]
+  const firstName = items.length > 0 ? nameOf(items[0]!) : undefined
 
   return (
     <li className="rounded-xl border border-dashed border-primary/40 bg-primary/5 p-2.5 shadow-sm shadow-primary/10">
@@ -950,8 +994,8 @@ export function RelayQueue(): React.JSX.Element | null {
       {items.length > 0 && (
         <div className="mt-1.5 flex flex-wrap items-center gap-1" aria-label="指挥台排队">
           {items.map((id, i) => {
-            const a = agents.find((x) => x.id === id)
-            const name = a?.name ?? id
+            const a = agents.find((x) => x.id === baseAgentId(id))
+            const name = nameOf(id)
             const planStep = stepHintOf(id)
             return (
               <span
@@ -974,7 +1018,7 @@ export function RelayQueue(): React.JSX.Element | null {
                 >
                   {i + 1}
                 </span>
-                <AgentAvatar agent={a} size={16} animated={false} className="rounded-full" />
+                <AgentAvatar agent={a} size={16} animated={false} />
                 <span className="max-w-[72px] truncate font-medium">{name}</span>
                 {planStep && <ClipboardList className="size-3 shrink-0 text-violet-500/80" aria-label="有计划派发步骤" />}
                 <button
@@ -1084,25 +1128,52 @@ export function TeamPanel(): React.JSX.Element {
   const messages = React.useMemo(() => messagesOf({ byId, order }), [byId, order])
 
   const session = sessions.find((s) => s.id === currentId)
+  // M77：成员实例视图（成员卡/计数按实例；档案与图谱仍按角色）；participants 为去重后的基础角色（接力/战绩视图）
+  const memberList = React.useMemo(() => memberViews(agents, session), [agents, session])
   const participants = React.useMemo(() => {
-    const ids = new Set(session?.participantIds ?? [])
-    return agents.filter((a) => ids.has(a.id))
-  }, [agents, session])
+    const seen = new Set<string>()
+    const out: AgentDefinition[] = []
+    for (const m of memberList) {
+      if (seen.has(m.agentId)) continue
+      seen.add(m.agentId)
+      out.push(m.agent)
+    }
+    return out
+  }, [memberList])
+
+  // M77：成员键 → 显示克隆（id = 成员键、name = 标签）——接力链节点 / 接力卡头像按实例；
+  // 单实例（经典键或仅一分身）返回基础角色 / 仅换 id 的克隆（零外观变化）
+  const memberAgentOf = React.useCallback(
+    (key: string | undefined): AgentDefinition | undefined => {
+      if (!key) return undefined
+      const base = agents.find((a) => a.id === baseAgentId(key))
+      if (!base) return undefined
+      const label = labelOfMemberKey(agents, session, key)
+      if (label === base.name) return key === base.id ? base : { ...base, id: key }
+      return { ...base, id: key, name: label }
+    },
+    [agents, session],
+  )
 
   const steps = React.useMemo<RelayStep[]>(
     () =>
       messages
         .filter((m) => m.role === 'agent' && m.status !== 'streaming')
-        .map((m) => ({ message: m, agent: agents.find((a) => a.id === m.agentId) })),
-    [messages, agents],
+        .map((m) => ({ message: m, agent: memberAgentOf(m.memberKey ?? m.agentId) })),
+    [messages, memberAgentOf],
   )
 
   // M22：既有视图以插槽形式交给面板注册表（其余面板自取数据）
+  // M77：战绩按成员实例入榜（分身各自计数，名字 = 展示标签）
+  const statsMembers = React.useMemo(
+    () => memberList.map((m) => ({ ...m.agent, id: m.key, name: m.label })),
+    [memberList],
+  )
   const slots = React.useMemo<PanelSlots>(() => ({
-    members: <MembersView participants={participants} messages={messages} />,
+    members: <MembersView members={memberList} messages={messages} />,
     relay: <RelayView steps={steps} participants={participants} />,
-    stats: <StatsView participants={participants} messages={messages} />,
-  }), [participants, messages, steps])
+    stats: <StatsView participants={statsMembers} messages={messages} />,
+  }), [memberList, statsMembers, participants, messages, steps])
   const group = groupOf(rightView)
   const groupDefs = GROUPS[group]
   const activePanel = PANEL_DEFS.find((panel) => panel.id === rightView)
