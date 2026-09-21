@@ -700,7 +700,7 @@ export function Composer({ onReady, locked = false, lockedHint }: ComposerProps)
   }
 
   const disabled = !currentId || locked
-  const insertHint = active ? '运行中发送将作为插话，在回合结束后生效' : null
+  const insertHint = active ? '插话 · 回合结束后生效' : null
 
   return (
     <div className="border-t bg-background/80 px-4 py-3 backdrop-blur">
@@ -964,10 +964,11 @@ export function Composer({ onReady, locked = false, lockedHint }: ComposerProps)
         </div>
       </div>
 
-      <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 px-1 text-[11px] text-muted-foreground">
+      {/* 底栏提示行：单行不换行（窄窗口由快捷键提示先让位，状态类信息优先保留） */}
+      <div className="mt-1.5 flex items-center gap-x-3 overflow-hidden px-1 text-[11px] text-muted-foreground">
         {/* M24：消息级范式选择器（三态 chip；运行中禁用——插话不支持范式选择）；M79-P：纯人聊天不渲染 */}
         {aiBarVisible && (
-        <span className="inline-flex items-center gap-1.5">
+        <span className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap">
           <span className="flex overflow-hidden rounded-full border bg-muted/40 p-0.5">
             {MODE_CHIPS.map((c) => (
               <button
@@ -1001,26 +1002,22 @@ export function Composer({ onReady, locked = false, lockedHint }: ComposerProps)
           ) : null}
         </span>
         )}
-        <span className="inline-flex items-center gap-1">
-          <CornerDownLeft className="size-3" />
-          Enter 发送 · Shift+Enter 换行 · @ 召唤 · / 命令
+        {/* 快捷键提示：窄窗口（<md）隐藏，避免提示行拥挤换行；宽度吃紧时省略号兜底 */}
+        <span className="hidden min-w-0 items-center gap-1 md:inline-flex">
+          <CornerDownLeft className="size-3 shrink-0" />
+          <span className="truncate">Enter 发送 · ⇧Enter 换行</span>
         </span>
-        {insertHint && (
-          <span className="inline-flex items-center gap-1 text-amber-600">
-            <Loader2 className="size-3 animate-spin" />
-            {insertHint}
-          </span>
-        )}
+        {insertHint && <span className="shrink-0 whitespace-nowrap text-amber-600">{insertHint}</span>}
         {active && (
-          <span className="inline-flex items-center gap-1 text-primary">
-            <Loader2 className="size-3 animate-spin" />
+          <span className="inline-flex shrink-0 items-center gap-1 whitespace-nowrap text-primary">
+            <Loader2 className="size-3 shrink-0 animate-spin" />
             协作进行中{queue.length > 0 ? ` · 队列 ${queue.length}` : ''}
             {queued ? ' · 已排队' : ''}
           </span>
         )}
         {/* 上下文电池格条（M8/M9→M25）：分段水位右对齐常驻；本 Run 费用 / 轨迹入口同排；M79-P：纯人聊天不渲染 */}
         {aiBarVisible && (
-          <span className="ml-auto inline-flex items-center gap-1.5">
+          <span className="ml-auto inline-flex shrink-0 items-center gap-1.5">
             <ContextBar />
           </span>
         )}

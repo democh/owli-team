@@ -140,6 +140,8 @@ export function ChatArea(): React.JSX.Element {
   const agents = useAgentStore((s) => s.agents)
   const active = useRunStore((s) => s.active)
   const queue = useRunStore((s) => s.queue)
+  // 本地挂接运行所属会话：非当前会话的运行状态不参与渲染（防跨会话残留串入消息流）
+  const runSessionId = useRunStore((s) => s.sessionId)
   const attach = useRunStore((s) => s.attach)
   const setMainTab = useUiStore((s) => s.setMainTab)
   const listMode = useSceneStore((s) => s.listMode)
@@ -584,8 +586,10 @@ export function ChatArea(): React.JSX.Element {
                   )
                 })}
               </div>
-              {/* M11：回合间隙显示「下一棒」身份（头像 + 名 + 后续排队数），不再是我抽象的「成员」 */}
+              {/* M11：回合间隙显示「下一棒」身份（头像 + 名 + 后续排队数），不再是我抽象的「成员」；
+                  仅本地挂接运行属于当前会话时渲染（防其他会话的队列串入） */}
               {active &&
+                runSessionId === currentId &&
                 !anyStreaming &&
                 (() => {
                   // M77：下一棒按成员实例署名（分身 = 名字·灵魂名；头像取基础角色）

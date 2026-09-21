@@ -368,6 +368,8 @@ export const useRunStore = create<RunState>((set, get) => ({
         `/api/runs/${runId}/stream`,
         {
           onEvent: (event) => {
+            // 流来源守卫：attach 被替换（切会话 / 新 attach）或 detach 后，旧流的迟到事件不再改写运行状态
+            if (controller !== myController) return
             if (event.type === 'run:end') sawEnd = true
             handleRunEvent(event)
           },
@@ -452,14 +454,23 @@ export const useRunStore = create<RunState>((set, get) => ({
     controller = undefined
     clearRetryTimer()
     flushDeltas()
-    set({ active: false, queue: [], currentWave: [], waveIndex: 0 })
+    // 清 runId / sessionId：断流后 WS 的队列广播（notify:queue-updated 按 runId 匹配）不再改写本地状态
+    set({ runId: undefined, sessionId: undefined, active: false, queue: [], currentWave: [], waveIndex: 0 })
   },
 }))
 
-/** 会话切换后重附着：查询进行中运行并挂接（§18.2） */
+/** 会话切换后重附着：查询进行中运行并挂接（§18.2）。无匹配运行 = 断开本地旧流，防跨会话状态残留 */
 export async function attachActiveRunFor(sessionId: string): Promise<boolean> {
+  const store = useRunStore.getState()
+  // 同一会话已挂接着运行流：保持现状（避免重放抖动）
+  if (store.active && store.sessionId === sessionId) return true
+  // §18.2：切换会话仅断开本地流（服务端继续执行）——先清掉上一个会话的运行进度，
+  // 防止旧 Run 的队列 / 下一棒状态残留到新会话 UI（「下一棒」提示、成员条排队序号等）
+  store.detach()
   try {
     const res = await apiGet<{ runs: ActiveRunInfo[] }>('/api/runs/active')
+    // 竞态守卫：查询期间会话又被切换（快速连点）——迟到响应不覆盖新会话状态
+    if (useSessionStore.getState().currentId !== sessionId) return false
     const run = res.runs.find((r) => r.sessionId === sessionId)
     if (!run) return false
     useRunStore.getState().attach(run.runId, sessionId)

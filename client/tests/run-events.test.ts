@@ -5,7 +5,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ApprovalRequest, RunEvent, TaskItem } from '@multi-agent/shared'
-import { handleRunEvent, useRunStore } from '../src/stores/run-store'
+import { handleRunEvent, useRunStore, attachActiveRunFor } from '../src/stores/run-store'
 import { useSessionStore } from '../src/stores/session-store'
 import { useTaskStore } from '../src/stores/task-store'
 
@@ -226,5 +226,91 @@ describe('run-store 订阅兜底（M52-D）', () => {
 
     expect(refresh).not.toHaveBeenCalled()
     expect(useRunStore.getState().active).toBe(false)
+  })
+})
+
+/**
+ * 会话切换的运行状态隔离（防「下一棒」等运行状态跨会话串入）：
+ * 切换会话必须断开本地旧流并清空队列；同一会话已挂接时短路保持。
+ */
+describe('attachActiveRunFor：会话切换的运行状态隔离', () => {
+  const json = (data: unknown): Response =>
+    new Response(JSON.stringify(data), { status: 200, headers: { 'Content-Type': 'application/json' } })
+  const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
+
+  afterEach(() => {
+    useRunStore.getState().detach()
+    vi.unstubAllGlobals()
+  })
+
+  it('目标会话无进行中运行：断开本地旧流并清空队列 / 运行归属', async () => {
+    useRunStore.setState({
+      runId: 'r_old',
+      sessionId: 's_old',
+      active: true,
+      queue: ['analyst'],
+      currentWave: ['analyst'],
+      waveIndex: 2,
+    })
+    useSessionStore.setState({ currentId: 's_new' })
+    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve(json({ runs: [] }))))
+
+    const found = await attachActiveRunFor('s_new')
+
+    expect(found).toBe(false)
+    const st = useRunStore.getState()
+    expect(st.active).toBe(false)
+    expect(st.queue).toEqual([])
+    expect(st.currentWave).toEqual([])
+    expect(st.runId).toBeUndefined()
+    expect(st.sessionId).toBeUndefined()
+  })
+
+  it('同一会话已挂接运行流：短路保持（不发请求、状态不动）', async () => {
+    useRunStore.setState({ runId: 'r1', sessionId: 's1', active: true, queue: ['pm'] })
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+
+    const found = await attachActiveRunFor('s1')
+
+    expect(found).toBe(true)
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(useRunStore.getState().queue).toEqual(['pm'])
+    expect(useRunStore.getState().sessionId).toBe('s1')
+  })
+
+  it('目标会话有进行中运行：重挂接新流（runId / 会话归属切换）', async () => {
+    const encoder = new TextEncoder()
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string | URL, init?: RequestInit): Promise<Response> => {
+        const u = String(url)
+        if (u.includes('/api/runs/active')) {
+          return Promise.resolve(json({ runs: [{ runId: 'r2', sessionId: 's2', state: 'running', queue: ['qa'] }] }))
+        }
+        if (u.includes('/approvals')) return Promise.resolve(json({ approvals: [] }))
+        // 悬挂流：先重放 run:start 快照（带新队列），随后仅响应 abort
+        const stream = new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(
+              encoder.encode(`data: ${JSON.stringify({ type: 'run:start', runId: 'r2', sessionId: 's2', queue: ['qa'] })}\n\n`),
+            )
+            init?.signal?.addEventListener('abort', () => controller.error(new DOMException('Aborted', 'AbortError')))
+          },
+        })
+        return Promise.resolve(new Response(stream, { status: 200 }))
+      }),
+    )
+    useRunStore.setState({ runId: 'r_old', sessionId: 's_old', active: true, queue: ['analyst'] })
+    useSessionStore.setState({ currentId: 's2' })
+
+    const found = await attachActiveRunFor('s2')
+    await sleep(10)
+
+    expect(found).toBe(true)
+    expect(useRunStore.getState().runId).toBe('r2')
+    expect(useRunStore.getState().sessionId).toBe('s2')
+    expect(useRunStore.getState().active).toBe(true)
+    expect(useRunStore.getState().queue).toEqual(['qa'])
   })
 })

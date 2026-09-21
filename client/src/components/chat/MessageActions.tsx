@@ -32,7 +32,7 @@ import { labelOfMemberKey } from '../../lib/members'
 import { cn } from '../../lib/utils'
 import { useAgentStore } from '../../stores/agent-store'
 import { useAuthStore } from '../../stores/auth-store'
-import { useRunStore } from '../../stores/run-store'
+import { attachActiveRunFor, useRunStore } from '../../stores/run-store'
 import { useSessionStore } from '../../stores/session-store'
 import { useUiStore } from '../../stores/ui-store'
 import { useWsStore } from '../../stores/ws-store'
@@ -210,6 +210,8 @@ export function MessageActions({
       await useSessionStore.getState().loadSessions()
       await useSessionStore.getState().selectSession(res.session.id)
       useWsStore.getState().ensureSubscribed(res.session.id)
+      // 切换会话后重附着：分支会话无进行中运行 → 同步断开本地旧流，防跨会话运行状态残留
+      void attachActiveRunFor(res.session.id)
       toast(`已创建分支会话：${res.session.title}`)
     })
 
