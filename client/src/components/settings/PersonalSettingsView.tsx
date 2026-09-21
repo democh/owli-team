@@ -10,6 +10,7 @@ import { apiGet, apiPut } from '../../lib/api'
 import { useAuthStore } from '../../stores/auth-store'
 import { AccountDialog } from '../account/AccountDialog'
 import { ByokCard } from './ByokCard'
+import { MyProfileCard, MyPrivacyCard } from './MyProfileCard'
 import { PersonalConnectionsCard } from './PersonalConnectionsCard'
 import { PersonalMcpCard } from './PersonalMcpCard'
 import { Button } from '../ui/button'
@@ -100,6 +101,12 @@ export function PersonalSettingsView(): React.JSX.Element {
             </Button>
           </CardContent>
         </Card>
+
+        {/* M79-B：我的资料（头像 / 头衔 / 简介；多用户模式） */}
+        {multiUser && <MyProfileCard />}
+
+        {/* M79-J（§14.9）：隐私开关（允许搜索 / 允许好友申请；多用户模式） */}
+        {multiUser && <MyPrivacyCard />}
 
         {/* M57 P3：我的用量（今日 token / 本月成本 / 会话 / 存储 + 生效限额） */}
         {usage && (

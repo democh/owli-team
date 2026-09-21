@@ -221,6 +221,9 @@ function imageNodeSize(file: File): Promise<{ width: number; height: number } | 
 
 function CanvasStage(): React.JSX.Element {
   const currentId = useSessionStore((s) => s.currentId)
+  // M79-AH：只读共享（viewer）→ 画布进入浏览态（拖拽 / 连接 / 删除键 / 右键 / 双击 / 拖放禁用；
+  // 编辑入口由 canvas-store 闸门 + 服务端 PUT 写守卫双重兜底）
+  const readOnly = useSessionStore((s) => s.sessions.find((x) => x.id === s.currentId)?.role) === 'viewer'
   const doc = useCanvasStore((s) => s.doc)
   const loading = useCanvasStore((s) => s.loading)
   const load = useCanvasStore((s) => s.load)
@@ -878,6 +881,7 @@ function CanvasStage(): React.JSX.Element {
           viewportCulling && 'canvas-culling',
         )}
         onDragOver={(e) => {
+          if (readOnly) return
           if (e.dataTransfer.types.includes('Files')) {
             e.preventDefault()
             e.dataTransfer.dropEffect = 'copy'
@@ -889,6 +893,7 @@ function CanvasStage(): React.JSX.Element {
           if (!(related instanceof HTMLElement) || !e.currentTarget.contains(related)) setDropActive(false)
         }}
         onDrop={(e) => {
+          if (readOnly) return
           if (!e.dataTransfer.types.includes('Files')) return
           e.preventDefault()
           setDropActive(false)
@@ -902,6 +907,7 @@ function CanvasStage(): React.JSX.Element {
           void uploadFiles(files, screenToFlowPosition({ x: e.clientX, y: e.clientY }))
         }}
         onDoubleClick={(e) => {
+          if (readOnly) return
           const target = e.target as HTMLElement
           if (!target.classList.contains('react-flow__pane')) return
           setCreateMenu({ x: e.clientX, y: e.clientY, flow: screenToFlowPosition({ x: e.clientX, y: e.clientY }) })
@@ -955,7 +961,11 @@ function CanvasStage(): React.JSX.Element {
           // ≤4px 一律视为点击（click 正常派发），>4px 才进入节点拖动，点击与拖动之间不留死角。
           nodeClickDistance={4}
           nodeDragThreshold={4}
-          deleteKeyCode={['Backspace', 'Delete']}
+          deleteKeyCode={readOnly ? null : ['Backspace', 'Delete']}
+          // M79-AH：viewer 浏览态（拖拽 / 连接 / 边重连禁用；选中与平移缩放保留）
+          nodesDraggable={!readOnly}
+          nodesConnectable={!readOnly}
+          edgesReconnectable={!readOnly}
           isValidConnection={isValidConnection}
           onReconnect={onReconnect}
           onNodesChange={onNodesChange}
@@ -978,12 +988,14 @@ function CanvasStage(): React.JSX.Element {
           }}
           onPaneContextMenu={(e) => {
             e.preventDefault()
+            if (readOnly) return
             if (!(e.target as HTMLElement).classList.contains('react-flow__pane')) return
             setCtxMenu(null)
             setCreateMenu({ x: e.clientX, y: e.clientY, flow: screenToFlowPosition({ x: e.clientX, y: e.clientY }) })
           }}
           onNodeContextMenu={(e, node) => {
             e.preventDefault()
+            if (readOnly) return
             setCreateMenu(null)
             setCtxMenu({ nodeId: node.id, x: e.clientX, y: e.clientY })
           }}
@@ -1029,7 +1041,17 @@ function CanvasStage(): React.JSX.Element {
           </ViewportPortal>
         </ReactFlow>
 
+        {/* M79-AH：只读共享（viewer）提示（浏览态——编辑操作一律不生效） */}
+        {readOnly && (
+          <div className="pointer-events-none absolute inset-x-0 top-2 z-10 flex justify-center" data-canvas-readonly>
+            <span className="rounded-full border border-amber-200/70 bg-amber-50/95 px-3 py-1 text-[11px] text-amber-800 shadow-sm">
+              只读共享（viewer）：可浏览画布，不可编辑
+            </span>
+          </div>
+        )}
+
         <CanvasToolbar
+          readOnly={readOnly}
           onAdd={() => {
             const rect = wrapRef.current?.getBoundingClientRect()
             setCreateMenu({

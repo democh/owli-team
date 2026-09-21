@@ -167,7 +167,8 @@ test('M57 P2：会话共享（邀请 → 协作徽章 → 转只读锁 → 移�
     // ---------- 4. bob 侧：列表可见 + 协作徽章 + 头部态（可写） ----------
     await bobPage.reload()
     await expect(bobPage.getByText(title).first()).toBeVisible()
-    await expect(bobPage.getByTitle('与我共享：可协作（读写）')).toBeVisible()
+    // M79 续：auth 实例可能同时存在其他共享会话（好友私聊等）→ 限定本用例会话行（首个）
+    await expect(bobPage.getByTitle('与我共享：可协作（读写）').first()).toBeVisible()
     await bobPage.getByText(title).first().click()
     await expect(bobPage.getByRole('button', { name: '已共享 · 可协作' })).toBeVisible()
 
@@ -182,7 +183,9 @@ test('M57 P2：会话共享（邀请 → 协作徽章 → 转只读锁 → 移�
     await expect(bobPage.getByPlaceholder(/只读共享（viewer）：无写权限/)).toBeVisible()
 
     // ---------- 6. admin 移出 → bob 侧会话消失（重载兜底） ----------
+    // M79-R：移出改为行内二次确认
     await page.getByTitle('移出共享').click()
+    await page.getByRole('button', { name: '确认移出' }).click()
     await expect(page.getByText(`@${BOB.username}`)).toHaveCount(0) // 等待移除生效
     await bobPage.reload()
     await expect(bobPage.getByText(title)).toHaveCount(0)
@@ -238,8 +241,12 @@ test('M57 P3：配额闸门与个人资源卡片（幂等自清理）', async ({
     await expect(bobPage.getByRole('button', { name: '工作台' })).toBeVisible({ timeout: 30_000 })
 
     // ---------- 4. bob 清理自有会话（幂等起点） ----------
-    const before = (await (await bobPage.request.get('/api/sessions')).json()) as { sessions: Array<{ id: string }> }
+    // M79 续：仅清本人属主会话——成员视角的共享会话（好友私聊等）不可删除，且配额计数仅计属主会话
+    const before = (await (await bobPage.request.get('/api/sessions')).json()) as {
+      sessions: Array<{ id: string; role?: string }>
+    }
     for (const s of before.sessions) {
+      if (s.role && s.role !== 'owner') continue
       const del = await bobPage.request.delete(`/api/sessions/${s.id}?deleteWorkspace=false`)
       expect(del.ok()).toBeTruthy()
     }

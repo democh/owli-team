@@ -10,6 +10,7 @@
  * 全局 401：api 层回调 handleUnauthorized —— 仅在 ready 态触发（登录接口自身 401 不误伤）。
  */
 import { create } from 'zustand'
+import type { UserAvatar } from '@multi-agent/shared'
 import { ApiError, apiGet, apiPost, setUnauthorizedHandler } from '../lib/api'
 
 export interface AuthUserInfo {
@@ -20,6 +21,10 @@ export interface AuthUserInfo {
   mustChangePassword?: boolean
   /** 单用户兼容模式的合成管理员（无账号体系） */
   legacy?: boolean
+  /** M79-B：画像（头衔 / 简介 / 头像；缺省 = 未设置） */
+  headline?: string
+  bio?: string
+  avatar?: UserAvatar
 }
 
 export interface AuthStatus {
@@ -46,6 +51,8 @@ interface AuthState {
   /** 兼容模式下主动发起首启初始化（账号弹窗入口 → 首启向导页） */
   openSetup: () => void
   setError: (message: string | null) => void
+  /** M79-B：本地应用画像补丁（保存成功后就地更新，免整页刷新） */
+  applyProfile: (patch: Partial<AuthUserInfo>) => void
 }
 
 const reload = (): void => {
@@ -128,6 +135,12 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   },
 
   setError: (message) => set({ error: message }),
+
+  applyProfile: (patch) => {
+    const current = get().user
+    if (!current) return
+    set({ user: { ...current, ...patch } })
+  },
 }))
 
 // 注册全局 401 处理（lib/api.ts 在任意请求 401 时回调；登录/首启等公开接口的 401 由页面自行处理）

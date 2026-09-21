@@ -1,7 +1,7 @@
 /**
  * run-store 事件归约（M8）：审批请求/结果、任务清单更新、上下文压缩计数。
  * M52-D：订阅晚到兜底（attach 收尾路径）——仅 HTTP 非 ok（404）兜底；
- * 「200 流无 run:end 自然结束」保持旧行为（真实链路 run:end 必达；单测锁定该边界）。
+ * 「200 流无 run:end 异常自然结束」由“立即收束”改为 3s × 2 退避自动重附着（重试期间保持 active），耗尽后刷新兜底 + 提示一次。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ApprovalRequest, RunEvent, TaskItem } from '@multi-agent/shared'
@@ -181,13 +181,16 @@ describe('run-store 订阅兜底（M52-D）', () => {
     expect(useRunStore.getState().lastEndReason).toBe('completed')
   })
 
-  it('200 流自然结束但无 run:end（异常降级）：保持旧行为不兜底（兜底仅限 HTTP 非 ok）', async () => {
-    // mock 测试常以「200 + 非 SSE 体」充当流端点：不能因此触发全量刷新（真实链路 run:end 必达）
+  it('200 流自然结束但无 run:end（异常降级）：进入 3s 退避重试（重试期间保持 active，不立即兜底）', async () => {
+    // M79-V：异常自然结束不再立即收束——退避重试（3s × 2）；耗尽后的刷新兜底+提示
+    // 由 m79-stream-retry.test 覆盖；此处锁定「重试窗口内」的中间态与定时器纪律。
+    const streamCalls: string[] = []
     vi.stubGlobal(
       'fetch',
       vi.fn((url: string | URL) => {
         const approved = approvalsOk(url)
         if (approved) return Promise.resolve(approved)
+        streamCalls.push(String(url))
         return Promise.resolve(new Response('{}', { status: 200 }))
       }),
     )
@@ -195,9 +198,12 @@ describe('run-store 订阅兜底（M52-D）', () => {
     useRunStore.getState().attach('r1', 's1')
     await sleep(30)
 
+    expect(streamCalls).toHaveLength(1) // 首次流已结束，尚未到 3s 重试点
+    expect(useRunStore.getState().active).toBe(true) // 重试期间不闪跳
     expect(refresh).not.toHaveBeenCalled()
     expect(load).not.toHaveBeenCalled()
-    expect(useRunStore.getState().active).toBe(false)
+    // 清理：避免 3s 后重试定时器跨用例触发
+    useRunStore.getState().detach()
   })
 
   it('主动取消（detach → abort）：不触发兜底刷新', async () => {

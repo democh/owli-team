@@ -147,3 +147,69 @@ export function parseMentionsWithTokens(raw: string, tokens: MentionToken[]): Pa
 
   return { text: raw, mentions, handedToUser }
 }
+
+// ---------- M79-E：人类成员 @ 寻址（与 agent token 表隔离；设计 §8.7 降级链） ----------
+
+/** 人类成员 @ 寻址信息（显示名 / username） */
+export interface HumanMentionInfo {
+  userId: string
+  displayName: string
+  username: string
+  /** M79-J：头衔（human_roster 注入用；缺省不渲染） */
+  headline?: string
+}
+
+/**
+ * 人类 token 表（注册期互斥，杜绝双命中）：
+ * - 显示名 token：与 `reserved`（在场 agent 名 / id）冲突，或人类间重名 → 不注册；
+ * - username token：与 `reserved` 冲突 → 不注册（该人类在本会话不可点名——极端边界）；
+ * - 行首 `@用户/@user/@你` 泛指走既有 handedToUser（不变）。
+ */
+export function buildHumanMentionTokens(humans: HumanMentionInfo[], reserved: Set<string>): MentionToken[] {
+  const displayCounts = new Map<string, number>()
+  for (const h of humans) {
+    const key = h.displayName.toLowerCase()
+    displayCounts.set(key, (displayCounts.get(key) ?? 0) + 1)
+  }
+  const tokens: MentionToken[] = []
+  const seen = new Set<string>()
+  const push = (token: string, userId: string): void => {
+    const key = token.toLowerCase()
+    if (!token || seen.has(key) || reserved.has(key)) return
+    seen.add(key)
+    tokens.push({ token, members: [userId] })
+  }
+  for (const h of humans) {
+    if ((displayCounts.get(h.displayName.toLowerCase()) ?? 0) <= 1) push(h.displayName, h.userId)
+    push(h.username, h.userId)
+  }
+  return tokens
+}
+
+/** 人类提及解析：{{humanMentions: userIds}} + 行首指名交还 {{handedTo: userIds}} */
+export function parseHumanMentions(
+  raw: string,
+  tokens: MentionToken[],
+): { humanMentions: string[]; handedTo: string[] } {
+  const humanMentions: string[] = []
+  const text = stripMinutesBlocks(raw)
+  const ordered = [...tokens].sort((a, b) => b.token.length - a.token.length)
+  if (ordered.length === 0) return { humanMentions, handedTo: [] }
+  const lookup = new Map(ordered.map((t) => [t.token.toLowerCase(), t.members]))
+  const alternation = ordered.map((t) => escapeRegExp(t.token)).join('|')
+  const re = new RegExp(`@(${alternation})${MEMBER_BOUNDARY}`, 'giu')
+  for (const match of text.matchAll(re)) {
+    const members = lookup.get(match[1].toLowerCase())
+    if (!members) continue
+    for (const key of members) if (!humanMentions.includes(key)) humanMentions.push(key)
+  }
+  // 行首 @具体人（可多行）→ 指定交还（持球写入依据）
+  const handedTo: string[] = []
+  const leadRe = new RegExp(`(?:^|\\n)[\\s>*_-]*@(${alternation})${MEMBER_BOUNDARY}`, 'giu')
+  for (const match of text.matchAll(leadRe)) {
+    const members = lookup.get(match[1].toLowerCase())
+    if (!members) continue
+    for (const key of members) if (!handedTo.includes(key)) handedTo.push(key)
+  }
+  return { humanMentions, handedTo }
+}

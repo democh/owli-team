@@ -8,11 +8,12 @@
  * - 窄屏（matchMedia 命中）：三页签收敛为单面板 + 选来源自动切「编制」页。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { render, screen, within } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { AgentDefinition, AgentGroup, RosterPreset, SoulMeta } from '@multi-agent/shared'
 import { SessionList } from '../src/components/sessions/SessionList'
 import { useAgentStore } from '../src/stores/agent-store'
+import { useAuthStore } from '../src/stores/auth-store'
 import { useSessionStore } from '../src/stores/session-store'
 import { useUiStore } from '../src/stores/ui-store'
 import { useWsStore } from '../src/stores/ws-store'
@@ -250,5 +251,75 @@ describe('建会话组队台 CreateSessionDialog（M50）', () => {
     } finally {
       restore()
     }
+  })
+})
+
+describe('M79-O：新建会话「协作成员（真人）」一步邀请', () => {
+  interface Call { url: string; method: string; body?: unknown }
+  function stubSocialFetch(calls: Call[]): void {
+    fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      const method = init?.method ?? 'GET'
+      calls.push({ url, method, body: init?.body ? JSON.parse(String(init.body)) : undefined })
+      if (url === '/api/friends') return jsonResponse({ friends: [{ userId: 'u_dave', username: 'dave', displayName: 'Dave', online: true }] })
+      if (url === '/api/friends/requests') return jsonResponse({ incoming: [], outgoing: [] })
+      if (url === '/api/sessions' && method === 'POST') {
+        return jsonResponse({ session: { id: 's_new', title: '新会话', participantIds: [], kind: 'team', createdAt: '', updatedAt: '', messageCount: 0 } })
+      }
+      if (url === '/api/sessions') return jsonResponse({ sessions: [] })
+      if (url === '/api/sessions/s_new' && method === 'PATCH') {
+        return jsonResponse({ session: { id: 's_new', title: '新会话', participantIds: [], routeMode: 'mention', createdAt: '', updatedAt: '', messageCount: 0 } })
+      }
+      if (url === '/api/sessions/s_new/shares' && method === 'POST') {
+        return jsonResponse({ owner: { userId: 'u_me', username: 'me', displayName: 'Me' }, members: [{ userId: 'u_dave', username: 'dave', displayName: 'Dave', role: 'editor', createdAt: '' }] })
+      }
+      if (url.startsWith('/api/sessions/')) return jsonResponse({ messages: [], latestRun: null })
+      return jsonResponse({})
+    })
+  }
+
+  beforeEach(() => {
+    useAuthStore.setState({
+      phase: 'ready',
+      user: { id: 'u_me', username: 'me', displayName: 'Me', role: 'member' },
+      isAdmin: false,
+      status: { needsSetup: false, authRequired: true, multiUser: true },
+    })
+  })
+
+  it('好友多选 → 创建后自动邀请（editor）；纯真人组合自动置「仅点名唤起」防误触发', async () => {
+    const calls: Call[] = []
+    stubSocialFetch(calls)
+    const user = userEvent.setup()
+    await openBuilder(user)
+
+    await user.click(await screen.findByTitle('邀请 Dave 加入'))
+    expect(screen.getByText('已选 1 位')).toBeInTheDocument()
+    expect(screen.getByText(/将自动设为「仅点名唤起」/)).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /创建并进入（1 位成员）/ }))
+    await waitFor(() => {
+      const share = calls.find((c) => c.url === '/api/sessions/s_new/shares' && c.method === 'POST')
+      expect(share?.body).toEqual({ username: 'dave', role: 'editor' })
+      const patch = calls.find((c) => c.url === '/api/sessions/s_new' && c.method === 'PATCH')
+      expect(patch?.body).toEqual({ routeMode: 'mention' })
+      const post = calls.find((c) => c.url === '/api/sessions' && c.method === 'POST')
+      expect((post?.body as { participantIds: string[] }).participantIds).toEqual([])
+    })
+  })
+
+  it('有 agent 编制（场景来源）：仅邀请好友，不做 mention 覆盖', async () => {
+    const calls: Call[] = []
+    stubSocialFetch(calls)
+    const user = userEvent.setup()
+    await openBuilder(user)
+
+    await user.click(screen.getByRole('button', { name: '组队来源：研发团队' }))
+    await user.click(await screen.findByTitle('邀请 Dave 加入'))
+    await user.click(screen.getByRole('button', { name: /创建并进入（3 位成员）/ }))
+    await waitFor(() => {
+      expect(calls.find((c) => c.url === '/api/sessions/s_new/shares' && c.method === 'POST')?.body).toEqual({ username: 'dave', role: 'editor' })
+      expect(calls.find((c) => c.url === '/api/sessions/s_new' && c.method === 'PATCH')).toBeUndefined()
+    })
   })
 })

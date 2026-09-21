@@ -8,8 +8,9 @@
  */
 import * as React from 'react'
 import { Crown, Loader2, LogOut, UserMinus, UserPlus, UserRound, Users } from 'lucide-react'
-import type { SessionShareRole } from '@multi-agent/shared'
+import type { Session, SessionShareRole, UserAvatar } from '@multi-agent/shared'
 import { toast } from 'sonner'
+import { apiPatch } from '../../lib/api'
 import { Badge } from '../ui/badge'
 import { Button } from '../ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '../ui/dialog'
@@ -17,7 +18,9 @@ import { Input } from '../ui/input'
 import { useAuthStore } from '../../stores/auth-store'
 import { useSessionStore } from '../../stores/session-store'
 import { useShareStore } from '../../stores/share-store'
+import { useFriendsStore } from '../../stores/friends-store'
 import { cn } from '../../lib/utils'
+import { HumanAvatar } from '../chat/HumanAvatar'
 
 const ROLE_LABEL: Record<SessionShareRole, string> = {
   editor: '可协作（读写）',
@@ -30,8 +33,9 @@ const ROLE_HINT: Record<SessionShareRole, string> = {
   viewer: '仅可查看消息与交付件',
 }
 
-/** 首字母头像（无头像体系）：昵称首字符 + 角色色底（属主琥珀 / 成员主色） */
-function InitialAvatar({ name, owner }: { name: string; owner?: boolean }): React.JSX.Element {
+/** 首字母头像（无画像时回退）：昵称首字符 + 角色色底（属主琥珀 / 成员主色）；M79-B：有画像时优先色块 / emoji */
+function InitialAvatar({ name, owner, avatar }: { name: string; owner?: boolean; avatar?: UserAvatar }): React.JSX.Element {
+  if (avatar) return <HumanAvatar avatar={avatar} name={name} size={32} />
   return (
     <span
       aria-hidden
@@ -59,26 +63,69 @@ export function ShareDialog({ sessionId, open, onOpenChange }: ShareDialogProps)
   const busy = useShareStore((s) => s.busy)
   const [username, setUsername] = React.useState('')
   const [role, setRole] = React.useState<SessionShareRole>('editor')
+  const friends = useFriendsStore((s) => s.friends)
+  // M79-R：好友多选批量邀请（与聊天成员弹窗一致）+ 移出二次确认
+  const [selectedFriends, setSelectedFriends] = React.useState<string[]>([])
+  const [batchBusy, setBatchBusy] = React.useState(false)
+  const [confirmingRemove, setConfirmingRemove] = React.useState<string | null>(null)
 
-  // 打开时懒加载；关闭时释放绑定（下次打开重新拉取）
+  // 打开时懒加载；关闭时释放绑定（下次打开重新拉取）；M79-N：同时拉好友（快捷邀请）
   React.useEffect(() => {
-    if (open && sessionId && multiUser) void useShareStore.getState().load(sessionId)
-    if (!open) useShareStore.getState().close()
+    if (open && sessionId && multiUser) {
+      void useShareStore.getState().load(sessionId)
+      void useFriendsStore.getState().load()
+    }
+    if (!open) {
+      useShareStore.getState().close()
+      setSelectedFriends([])
+      setConfirmingRemove(null)
+    }
   }, [open, sessionId, multiUser])
+
+  // M79-N：好友快捷邀请（好友 − 属主 − 已在场成员；点选即邀 editor）——「只输用户名」之外的第二条路径
+  const invitableFriends = React.useMemo(() => {
+    if (!view) return []
+    const inRoom = new Set<string>([...view.members.map((m) => m.userId), ...(view.owner ? [view.owner.userId] : [])])
+    return friends.filter((f) => f.userId !== me?.id && !inRoom.has(f.userId))
+  }, [friends, view, me?.id])
 
   const isOwner = !!me && !!view?.owner && view.owner.userId === me.id
   const isMember = !!me && !!view?.members.some((m) => m.userId === me.id)
   const myRole = view?.members.find((m) => m.userId === me?.id)?.role
 
-  const invite = async (): Promise<void> => {
-    const name = username.trim()
-    if (!name || !sessionId) return
+  /** 邀请核心（用户名输入与好友点选共用）；name 空 = 读当前输入 */
+  const inviteBy = async (explicit?: string): Promise<void> => {
+    const name = (explicit ?? username).trim()
+    if (!name || !sessionId || busy) return
     try {
       await useShareStore.getState().invite(sessionId, name, role)
-      setUsername('')
+      if (!explicit) setUsername('')
       toast.success(`已邀请「${name}」（${ROLE_LABEL[role]}）`)
     } catch (err) {
       toast.error((err as Error).message)
+    }
+  }
+  const invite = (): Promise<void> => inviteBy()
+
+  const toggleFriend = (userId: string): void =>
+    setSelectedFriends((prev) => (prev.includes(userId) ? prev.filter((x) => x !== userId) : [...prev, userId]))
+
+  /** M79-R：好友多选批量邀请（与聊天成员弹窗同交互；失败汇总提示） */
+  const inviteSelectedFriends = async (): Promise<void> => {
+    if (!sessionId || selectedFriends.length === 0 || busy || batchBusy) return
+    const picked = friends.filter((f) => selectedFriends.includes(f.userId))
+    setBatchBusy(true)
+    try {
+      const results = await Promise.allSettled(
+        picked.map((f) => useShareStore.getState().invite(sessionId, f.username, role)),
+      )
+      const okCount = results.filter((r) => r.status === 'fulfilled').length
+      const failed = picked.filter((_, i) => results[i]!.status === 'rejected').map((f) => f.displayName)
+      if (okCount > 0) toast.success(`已邀请 ${okCount} 位（${ROLE_LABEL[role]}）`)
+      if (failed.length > 0) toast.error(`邀请失败：${failed.join('、')}`)
+      setSelectedFriends([])
+    } finally {
+      setBatchBusy(false)
     }
   }
 
@@ -95,7 +142,21 @@ export function ShareDialog({ sessionId, open, onOpenChange }: ShareDialogProps)
     if (!sessionId) return
     try {
       await useShareStore.getState().remove(sessionId, userId)
+      setConfirmingRemove(null)
       toast.success(`已移出「${name}」`)
+    } catch (err) {
+      toast.error((err as Error).message)
+    }
+  }
+
+  // M79-F：多人协作静默引导——team 会话已有共享成员且仍为「自动应答」时，一键切「仅点名唤起」
+  const session = useSessionStore((s) => s.sessions.find((x) => x.id === sessionId))
+  const enableMentionOnly = async (): Promise<void> => {
+    if (!sessionId) return
+    try {
+      const res = await apiPatch<{ session: Session }>(`/api/sessions/${sessionId}`, { routeMode: 'mention' })
+      useSessionStore.getState().applySession(res.session)
+      toast('已切换为仅点名唤起（未 @ 成员的消息不再交给 AI）')
     } catch (err) {
       toast.error((err as Error).message)
     }
@@ -147,11 +208,16 @@ export function ShareDialog({ sessionId, open, onOpenChange }: ShareDialogProps)
             ) : view ? (
               <>
                 <div className="flex items-center gap-2.5 rounded-xl border px-3 py-2.5">
-                  <InitialAvatar name={view.owner?.displayName ?? '?'} owner />
+                  <InitialAvatar name={view.owner?.displayName ?? '?'} owner avatar={view.owner?.avatar} />
                   <div className="flex min-w-0 flex-1 items-center gap-1.5">
                     <span className="truncate text-[13px] font-medium">
                       {view.owner?.displayName ?? '（未知）'}
                     </span>
+                    {view.owner?.headline && (
+                      <span className="shrink-0 rounded-full bg-muted px-1.5 text-[10.5px] leading-4 text-muted-foreground">
+                        {view.owner.headline}
+                      </span>
+                    )}
                     <span className="shrink-0 text-[11.5px] text-muted-foreground">
                       @{view.owner?.username ?? '-'}
                     </span>
@@ -183,9 +249,14 @@ export function ShareDialog({ sessionId, open, onOpenChange }: ShareDialogProps)
                     <div className="space-y-1.5">
                       {view.members.map((m) => (
                         <div key={m.userId} className="flex items-center gap-2.5 rounded-xl border px-3 py-2">
-                          <InitialAvatar name={m.displayName} />
+                          <InitialAvatar name={m.displayName} avatar={m.avatar} />
                           <div className="flex min-w-0 flex-1 items-center gap-1.5">
                             <span className="truncate text-[13px] font-medium">{m.displayName}</span>
+                            {m.headline && (
+                              <span className="shrink-0 rounded-full bg-muted px-1.5 text-[10.5px] leading-4 text-muted-foreground">
+                                {m.headline}
+                              </span>
+                            )}
                             <span className="shrink-0 text-[11.5px] text-muted-foreground">
                               @{m.username}
                             </span>
@@ -199,31 +270,52 @@ export function ShareDialog({ sessionId, open, onOpenChange }: ShareDialogProps)
                           >
                             {m.role === 'editor' ? '可协作' : '只读'}
                           </Badge>
-                          {isOwner && (
-                            <>
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                className="h-6 shrink-0 px-2 text-[11px]"
-                                disabled={busy}
-                                onClick={() =>
-                                  void changeRole(m.userId, m.role === 'editor' ? 'viewer' : 'editor')
-                                }
-                              >
-                                {m.role === 'editor' ? '改为只读' : '改为可协作'}
-                              </Button>
-                              <Button
-                                variant="ghost"
-                                size="icon-sm"
-                                className="shrink-0"
-                                title="移出共享"
-                                disabled={busy}
-                                onClick={() => void removeMember(m.userId, m.displayName)}
-                              >
-                                <UserMinus className="size-3.5 text-destructive" />
-                              </Button>
-                            </>
-                          )}
+                          {isOwner &&
+                            (confirmingRemove === m.userId ? (
+                              <span className="flex shrink-0 items-center gap-1">
+                                <Button
+                                  variant="destructive"
+                                  size="sm"
+                                  className="h-6 px-2 text-[11px]"
+                                  disabled={busy}
+                                  onClick={() => void removeMember(m.userId, m.displayName)}
+                                >
+                                  确认移出
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-6 px-1.5 text-[11px]"
+                                  onClick={() => setConfirmingRemove(null)}
+                                >
+                                  取消
+                                </Button>
+                              </span>
+                            ) : (
+                              <>
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  className="h-6 shrink-0 px-2 text-[11px]"
+                                  disabled={busy}
+                                  onClick={() =>
+                                    void changeRole(m.userId, m.role === 'editor' ? 'viewer' : 'editor')
+                                  }
+                                >
+                                  {m.role === 'editor' ? '改为只读' : '改为可协作'}
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="icon-sm"
+                                  className="shrink-0"
+                                  title="移出共享"
+                                  disabled={busy}
+                                  onClick={() => setConfirmingRemove(m.userId)}
+                                >
+                                  <UserMinus className="size-3.5 text-destructive" />
+                                </Button>
+                              </>
+                            ))}
                         </div>
                       ))}
                     </div>
@@ -232,6 +324,73 @@ export function ShareDialog({ sessionId, open, onOpenChange }: ShareDialogProps)
 
                 {isOwner ? (
                   <div className="rounded-xl border bg-muted/20 p-3">
+                    {/* M79-F：多人协作引导——已有共享成员且 team 会话仍为「自动应答」时，建议切换静默模式 */}
+                    {view.members.length >= 1 &&
+                      session &&
+                      session.kind !== 'direct' &&
+                      session.kind !== 'group' &&
+                      (session.routeMode ?? 'auto') !== 'mention' && (
+                        <div className="mb-2 flex items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-2 py-1.5">
+                          <p className="min-w-0 flex-1 text-[11.5px] leading-4 text-amber-800">
+                            多人协作建议开启「仅点名唤起」：未 @ 成员的消息不再交给 AI 回应。
+                          </p>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-6 shrink-0 border-amber-500/40 px-2 text-[11px] text-amber-800"
+                            disabled={busy}
+                            onClick={() => void enableMentionOnly()}
+                          >
+                            开启
+                          </Button>
+                        </div>
+                      )}
+                    {/* M79-N：从好友选择（一键邀请，免输用户名） */}
+                    {invitableFriends.length > 0 && (
+                      <div className="mb-2">
+                        <div className="mb-1 flex items-center gap-1.5 text-[11.5px] text-muted-foreground">
+                          <Users className="size-3.5" />
+                          从好友选择
+                        </div>
+                        <div className="flex flex-wrap gap-1">
+                          {invitableFriends.map((f) => {
+                            const active = selectedFriends.includes(f.userId)
+                            return (
+                              <button
+                                key={f.userId}
+                                type="button"
+                                disabled={busy || batchBusy}
+                                aria-pressed={active}
+                                title={active ? `取消选择 ${f.displayName}` : `选择 ${f.displayName}（${ROLE_LABEL[role]}）`}
+                                className={cn(
+                                  'flex items-center gap-1 rounded-full border py-0.5 pl-0.5 pr-2 text-[11.5px] transition-all disabled:opacity-50',
+                                  active
+                                    ? 'border-primary/40 bg-primary/[0.08] text-primary'
+                                    : 'border-transparent bg-muted/70 text-muted-foreground hover:border-primary/25 hover:bg-primary/5 hover:text-primary',
+                                )}
+                                onClick={() => toggleFriend(f.userId)}
+                              >
+                                <HumanAvatar avatar={f.avatar} name={f.displayName} size={16} />
+                                <span className="max-w-28 truncate">{f.displayName}</span>
+                              </button>
+                            )
+                          })}
+                        </div>
+                        {selectedFriends.length > 0 && (
+                          <div className="mt-1.5 flex justify-end">
+                            <Button
+                              size="sm"
+                              className="h-7 text-[12px]"
+                              disabled={busy || batchBusy}
+                              onClick={() => void inviteSelectedFriends()}
+                            >
+                              {batchBusy && <Loader2 className="mr-1 size-3.5 animate-spin" />}
+                              邀请（{selectedFriends.length} 人）
+                            </Button>
+                          </div>
+                        )}
+                      </div>
+                    )}
                     <div className="mb-2 flex items-center gap-1.5 text-[12px] font-medium text-muted-foreground">
                       <UserPlus className="size-3.5" />
                       邀请成员（按用户名）

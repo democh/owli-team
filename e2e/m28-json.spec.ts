@@ -1,5 +1,5 @@
 /**
- * E2E · M28 MCP JSON 直配（mock 模式；独立 MCP_CONFIG_FILE = data/e2e-main/mcp.json，轮询 1.5s）：
+ * E2E · M28 MCP JSON 直配（mock 模式；独立 MCP_CONFIG_FILE = data/<PW_DATA_DIR>/mcp.json，轮询 1.5s）：
  * 1) 写入 mcp.json（stdio 指向 echo-mcp 夹具 + eagerLoad: true）→ mtime 轮询自动同步落地（验收：≤5s）；
  * 2) 管理台：JSON 状态卡（文件已就绪 / 条目）+ 服务器卡（「由 mcp.json 管理」「全部常驻」徽章）+
  *    连接完成后工具快照（6 个）与「常驻」加载列（eagerLoad 豁免延迟发现）；
@@ -17,8 +17,9 @@ import path from 'node:path'
 import { createSession, openApp } from './helpers'
 
 const REPO_ROOT = process.cwd()
-/** 与 playwright.config.ts 的 main server env 对齐（MCP_CONFIG_FILE=data/e2e-main/mcp.json） */
-const MCP_FILE = path.join(REPO_ROOT, 'data', 'e2e-main', 'mcp.json')
+/** 与 playwright.config.ts 的 main server env 对齐（MCP_CONFIG_FILE=data/<PW_DATA_DIR>/mcp.json；轮换目录同轨） */
+const DATA_SLUG = process.env.PW_DATA_DIR || 'e2e-main'
+const MCP_FILE = path.join(REPO_ROOT, 'data', DATA_SLUG, 'mcp.json')
 const SLUG = 'e2e-json-echo'
 const DISPLAY = 'E2E JSON 回声'
 /** stdio 启动参数：夹具绝对路径（与 m27-mcp.spec.ts 同一 echo-mcp.mjs，6 个工具） */

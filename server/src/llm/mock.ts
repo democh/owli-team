@@ -4504,9 +4504,10 @@ export class MockProvider implements LlmProvider {
     const lastUserText =
       [...req.messages]
         .reverse()
-        // M65-C：前缀无前导空格（装配器产出 `【用户】…`；带空格会导致一切触发块失效）
-        .find((m) => m.role === 'user' && textOfContent(m.content).startsWith('【用户】'))?.content ?? ''
-    const userText = textOfContent(lastUserText).replace(/^【用户】/, '')
+        // M57 P2 兼容：共享会话用户消息署昵称（`【e2e-admin】…`）——前缀按 `【…】` 泛匹配，
+        // 否则共享会话里 lastUserText 恒为空、一切触发块（含 M79-K 剧本标记）静默失效
+        .find((m) => m.role === 'user' && /^【[^】]*】/.test(textOfContent(m.content)))?.content ?? ''
+    const userText = textOfContent(lastUserText).replace(/^【[^】]*】/, '')
     const isNudge = userText.includes('拍了拍')
     const topic = detectTopic(userText)
     const duel = userText.includes(DUEL_TRIGGER)
@@ -4743,11 +4744,15 @@ export class MockProvider implements LlmProvider {
     // M77：转交行优先成员标签（多实例 = `名字·灵魂名` 点名具体分身）
     const handoffName = (key: string): string =>
       meta.memberLabels?.[key] ?? DISPLAY_NAMES[baseAgentId(key)] ?? key
-    const handoffLine = handoffTarget
-      ? backToHost
-        ? `@${handoffName(handoffTarget)} 议题都过完了，请主持收尾并出纪要。`
-        : `@${handoffName(handoffTarget)} 接力棒给你了。`
-      : '@用户 我这边告一段落，团队产出都在工作区里，请确认下一步。'
+    // M79-K：E2E 剧本扩展——用户消息携带 [[handoff:姓名]] → 行首 @该人类（指定交还；驱动 waiting_on / inbox 闭环）
+    const scriptedHuman = /\[\[handoff:\s*([^\]\n]+?)\s*\]\]/.exec(userText)?.[1]
+    const handoffLine = scriptedHuman
+      ? `@${scriptedHuman} 请你确认这一步。`
+      : handoffTarget
+        ? backToHost
+          ? `@${handoffName(handoffTarget)} 议题都过完了，请主持收尾并出纪要。`
+          : `@${handoffName(handoffTarget)} 接力棒给你了。`
+        : '@用户 我这边告一段落，团队产出都在工作区里，请确认下一步。'
 
     const full = `${[...body, ...(flavorTail ? [flavorTail] : [])].join('\n')}\n\n${handoffLine}`
     for (let i = 0; i < full.length; i += CHUNK_SIZE) {

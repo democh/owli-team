@@ -38,6 +38,32 @@ test('协作图谱：接力边与实时状态随运行更新', async ({ page }) 
   await page.keyboard.press('Escape')
 
   // 4) 第二轮 @ 诺娃：节点「发言中」实时高亮
+  //    观测方式：MutationObserver 累积记录"曾亮过"的节点（M79-AG 实测定性——
+  //    @诺娃 在 mock 剧本下触发全链接力，各成员高亮窗仅 ~0.5s，且交接瞬间存在
+  //    「双 speaking」重叠窗口；轮询式 DOM 断言在负载下会错过亮窗/撞上双元素，
+  //    累积观测对窗口时序完全免疫，断言语义仍为「诺娃确实亮过」）
+  await page.evaluate(() => {
+    const win = window as unknown as { __litNodes?: Set<string> }
+    win.__litNodes = new Set<string>()
+    const collect = (): void => {
+      document.querySelectorAll('.react-flow__node').forEach((n) => {
+        if (!n.querySelector('.graph-node-card.graph-speaking')) return
+        const name = (n.textContent || '').trim()
+        if (name) win.__litNodes!.add(name)
+      })
+    }
+    collect()
+    new MutationObserver(collect).observe(document.body, { subtree: true, childList: true, attributes: true })
+  })
   await sendMessage(page, '@诺娃 再看一眼测试计划。')
-  await expect(page.locator('.graph-speaking')).toBeVisible({ timeout: 30_000 })
+  await expect
+    .poll(
+      () =>
+        page.evaluate(() => {
+          const win = window as unknown as { __litNodes?: Set<string> }
+          return [...(win.__litNodes ?? [])].some((t) => t.includes('诺娃'))
+        }),
+      { timeout: 30_000, intervals: [150, 300, 600] },
+    )
+    .toBe(true)
 })

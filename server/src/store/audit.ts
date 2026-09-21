@@ -61,6 +61,15 @@ export type AuditAction =
   | 'session.share-update'
   | 'session.share-remove'
   | 'session.share-leave'
+  // M79-C：好友（请求 / 接受 / 拒绝 / 解除 / 拉黑 / 解除拉黑）
+  | 'friend.request'
+  | 'friend.accept'
+  | 'friend.reject'
+  | 'friend.remove'
+  | 'friend.block'
+  | 'friend.unblock'
+  // M79-E：触发策略切换（auto / mention）
+  | 'session.route-mode-set'
   // M57 P3：用户配额（管理侧设置）
   | 'auth.quota-set'
   // M57 P3：用户 LLM 凭据（BYOK）

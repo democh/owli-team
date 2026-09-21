@@ -70,6 +70,29 @@ export function createBrowserRouter(deps: ApiDeps): Router {
     return user?.role === 'admin'
   }
 
+  /**
+   * M79-AF：bsid 操作校验（写语义：takeover / release / close / 流 token takeover）——
+   * 会话级写权限（owner / editor）；可读但不可写（viewer）→ 403（与 /sessions 写闸门口径一致）。
+   * 已关闭会话回放走归属判定（无会话级角色可用，保持原语义）。
+   */
+  const canOperateBsid = (req: Request): 'ok' | 'missing' | 'forbidden' => {
+    const session = deps.browser.get(req.params.bsid)
+    if (session) {
+      const user = userOf(req)
+      if (!deps.access.canAccessSession(user, session.sessionId)) return 'missing'
+      return deps.access.canWriteSession(user, session.sessionId) ? 'ok' : 'forbidden'
+    }
+    return canAccessBsid(req) ? 'ok' : 'missing'
+  }
+  /** 操作守卫应答（inline 用）：'ok' → 放行；否则已写响应并返回 false */
+  const allowOperate = (req: Request, res: import('express').Response): boolean => {
+    const verdict = canOperateBsid(req)
+    if (verdict === 'ok') return true
+    if (verdict === 'forbidden') res.status(403).json({ error: '当前为只读共享（viewer）：无操作权限' })
+    else res.status(404).json({ error: '浏览器会话不存在或已关闭' })
+    return false
+  }
+
   // ---------- 自动发现（连接表单「自动检测」；M57：管理面） ----------
   router.get(
     '/browser/discover',
@@ -198,6 +221,8 @@ export function createBrowserRouter(deps: ApiDeps): Router {
       return
     }
     if (parsed.data.mode === 'takeover') {
+      // M79-AF：takeover token = 操作面（可发键盘鼠标输入）——viewer 拒绝
+      if (!allowOperate(req, res)) return
       deps.audit.record({
         actor: 'user',
         ...actorOf(req),
@@ -220,6 +245,8 @@ export function createBrowserRouter(deps: ApiDeps): Router {
         res.status(404).json({ error: '浏览器会话不存在或已关闭' })
         return
       }
+      // M79-AF：人工接管 = 操作面（viewer 只读观察）——写权限复核
+      if (!allowOperate(req, res)) return
       await session.takeover('user')
       deps.audit.record({
         actor: 'user',
@@ -241,6 +268,8 @@ export function createBrowserRouter(deps: ApiDeps): Router {
         res.status(404).json({ error: '浏览器会话不存在或已关闭' })
         return
       }
+      // M79-AF：归还控制权 = 操作面——写权限复核
+      if (!allowOperate(req, res)) return
       await session.release('user')
       deps.audit.record({
         actor: 'user',
@@ -288,6 +317,8 @@ export function createBrowserRouter(deps: ApiDeps): Router {
         res.status(404).json({ error: '浏览器会话不存在' })
         return
       }
+      // M79-AF：关闭浏览器会话 = 操作面——写权限复核
+      if (!allowOperate(req, res)) return
       const closed = await deps.browser.close(req.params.bsid, 'user')
       if (!closed) {
         res.status(404).json({ error: '浏览器会话不存在' })

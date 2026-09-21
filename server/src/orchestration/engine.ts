@@ -89,6 +89,7 @@ import { countTokensCalibrated } from '../context/tokenizer.js'
 import { matchedSensitivePattern, normalizeRel } from '../tools/sensitive.js'
 import { writeSse } from '../sse.js'
 import { buildMentionTokens, parseMentionsWithTokens, type ParseResult } from './parser.js'
+import { parseSessionHumanMentions, type HumanMentionInfo } from './humans.js'
 import { resolveMembers } from './members.js'
 import { decideHandoff, mergeWaveSchedule, planWave, waveSignature } from './scheduler.js'
 import {
@@ -107,6 +108,8 @@ export interface NotifyPort {
     runId?: string
     payload: Record<string, unknown>
   }): unknown
+  /** M79-AD：用户主题定向投递（审批等仅触发者可见的帧；缺省实现回退会话广播） */
+  publishToUser?: (userId: string, type: NotifyType, payload: Record<string, unknown>) => unknown
 }
 
 export interface EngineDeps {
@@ -174,6 +177,10 @@ export interface EngineDeps {
   billingModelFor?: (sessionId: string) => string | undefined
   /** M57：共享会话人类署名（记忆沉淀输入文本；缺省 = 「用户」） */
   userLabelFor?: (sessionId: string) => UserLabeler | undefined
+  /** M79-E：会话人类成员（@ 真人寻址 / 持球过滤；缺省 = 无人类，行为零差异） */
+  sessionHumans?: (sessionId: string) => HumanMentionInfo[]
+  /** M79-E：收尾持球回调（写 waiting_on 后：session-meta 广播 + inbox 提醒；缺省 = 跳过） */
+  onHandedTo?: (sessionId: string, targets: string[]) => void
 }
 
 /** M28：某成员最近一次回合的发现态（enabled = 启用按需发现；entries = 可检索的延迟工具条目） */
@@ -181,6 +188,9 @@ interface DiscoveryState {
   enabled: boolean
   entries: ToolSearchEntry[]
 }
+
+/** M79-Z：旁观端流式广播的合并窗口（毫秒；帧量 ~8fps/run，远低于 WS 背压阈值） */
+const STREAM_BROADCAST_MS = 120
 
 interface RunRecord {
   id: string
@@ -198,6 +208,10 @@ interface RunRecord {
   /** M48：本 Run 待平台路由（未 @ 消息 / 空编制开场；runLoop 开头消费一次） */
   routingPending: boolean
   handedToUser: boolean
+  /** M79-E：指定交还（agent 行首 @具体人 → 持球写入依据；Run 内并集去重） */
+  handedTo: string[]
+  /** M79-AA：per-message 人类交还目标（@具体人；交接条渲染具体真人名的精确来源） */
+  messageHumanMentions: Map<string, string[]>
   /** 待注入的用户插话消息 id（回合边界消费，不占用回合计数） */
   pendingUserMessages: string[]
   /** M16：本波各消息的 handoff 收集（按消息 id 分组；回合末只消费本回合的目标，避免并行波内交错取走） */
@@ -285,8 +299,25 @@ function parseToolArgs(raw: string): Record<string, unknown> {
 
 export class Engine {
   private runs = new Map<string, RunRecord>()
+
+  /**
+   * M79-Z：旁观端流式广播器（按 run 聚合）。
+   * - delta 以 ~120ms 窗口合并后经 NotifyHub 广播（触发者仍走 SSE 流，不重复渲染）；
+   * - flush 时机：窗口到期 / 回合收尾前（保证 delta 先于 turn-end 完整消息——顺序即客户端覆盖语义）；
+   * - 收尾后残帧（record 已移除）直接丢弃——由 turn-end 的完整消息权威覆盖（最坏退化为「收尾整条」）。
+   */
+  private streamBroadcasts = new Map<
+    string,
+    { pending: Map<string, { agentId: string; memberKey: string; chunks: string[] }>; timer?: ReturnType<typeof setTimeout> }
+  >()
   /** 会话 → 活跃 Run（M3 会话级互斥：同会话永远只有一个活跃 Run） */
   private sessionRuns = new Map<string, string>()
+  /**
+   * M79-AF：SSE 订阅者身份（res → userId；审批事件的定向过滤依据）。
+   * - 未记录（兼容模式 / 直调 attach）→ 视为放行（行为与旧版零差异）；
+   * - 随 attach 注册、取消订阅 / Run 收尾时清理。
+   */
+  private readonly subscriberUsers = new Map<Response, string | undefined>()
   private activeCount = 0
   private waiting: RunRecord[] = []
   /** M35：定时任务服务（本类构造时尚未存在 —— ScheduleService 需要 engine.launch 闭包，
@@ -302,6 +333,11 @@ export class Engine {
 
   hasRun(runId: string): boolean {
     return this.runs.has(runId)
+  }
+
+  /** M79-AF：本 Run 触发者（审批操作权限复核依据；不存在 / 已收尾 → undefined） */
+  triggerUserIdOf(runId: string): string | undefined {
+    return this.runs.get(runId)?.triggerUserId
   }
 
   /**
@@ -339,9 +375,13 @@ export class Engine {
     // M24：起步范式（显式消息级 > 会话规划先行 > 执行）；execute 不落库不广播（零差异）
     const mode: TurnMode = opts.mode ?? (session.planFirst ? 'plan' : 'execute')
     // 用户消息 mentions 持久化为解析结果（@chip 渲染依据）；M24：同时持久化消息级范式
+    // M79-E：人类定向（humanMentions；@真人 / 行首 @用户 提及）随行持久化
+    const launchHumans = this.deps.sessionHumans?.(session.id) ?? []
+    const launchHumanParsed = parseSessionHumanMentions(session, this.deps.prompts, launchHumans, userMessage.content)
     this.deps.sessions.patchMessage(sessionId, userMessageId, {
       mentions: mentioned,
       mode: mode === 'execute' ? undefined : mode,
+      ...(launchHumanParsed.humanMentions.length > 0 ? { humanMentions: launchHumanParsed.humanMentions } : {}),
     })
     this.deps.sessions.saveNow(sessionId)
 
@@ -358,6 +398,8 @@ export class Engine {
       fallbackUsed: false,
       routingPending: needsRouting,
       handedToUser: false,
+      handedTo: [],
+      messageHumanMentions: new Map(),
       pendingUserMessages: [],
       pendingHandoffs: new Map(),
       handoffNotes: new Map(),
@@ -437,6 +479,8 @@ export class Engine {
       fallbackUsed: false,
       routingPending: false,
       handedToUser: false,
+      handedTo: [],
+      messageHumanMentions: new Map(),
       pendingUserMessages: [],
       pendingHandoffs: new Map(),
       handoffNotes: new Map(),
@@ -486,11 +530,16 @@ export class Engine {
     return { runId: record.id, queue: initialQueue, queued }
   }
 
-  /** 订阅运行流：注册 + 快照重放（已产出内容先补再续流，§18.2） */
-  attach(runId: string, res: Response): (() => void) | null {
+  /**
+   * 订阅运行流：注册 + 快照重放（已产出内容先补再续流，§18.2）。
+   * M79-AF：userId 随订阅记录 —— 审批事件的 SSE 补发 / 广播按「触发者 ∪ 会话属主」定向过滤
+   * （缺省 undefined = 兼容模式 / 旧调用方，全部放行零差异）。
+   */
+  attach(runId: string, res: Response, userId?: string): (() => void) | null {
     const record = this.runs.get(runId)
     if (!record) return null
     record.subscribers.add(res)
+    this.subscriberUsers.set(res, userId)
 
     writeSse(res, {
       type: 'run:start',
@@ -532,8 +581,9 @@ export class Engine {
     }
     // M7/M10：补发未决审批 —— approval:requested 可能早于 SSE 建立（快模型首个工具调用）
     // 或来自刷新重附着；不补发会导致审批卡不出现、Run 永久挂起
+    // M79-AF：仅补给「触发者 ∪ 会话属主」的订阅（审批定向口径与 WS 面 / 操作面统一）
     for (const approval of this.deps.approvals.pendingOf(record.id)) {
-      writeSse(res, { type: 'approval:requested', approval })
+      if (this.canSeeApproval(record, res)) writeSse(res, { type: 'approval:requested', approval })
     }
     // M24：补发未决计划 —— plan:submitted 可能早于 SSE 建立或来自刷新重附着（计划卡依赖它）
     for (const plan of this.deps.planReviews?.pendingOf(record.sessionId) ?? []) {
@@ -541,6 +591,28 @@ export class Engine {
     }
     return () => {
       record.subscribers.delete(res)
+      this.subscriberUsers.delete(res)
+    }
+  }
+
+  /**
+   * M79-AF：审批可见性（触发者 ∪ 会话属主；未记录身份的订阅放行——兼容模式 / 旧调用方零差异）。
+   * 与 notify 面（publishApprovalFrame 定向）及操作面（routes 审批守卫）同一口径。
+   */
+  private canSeeApproval(record: RunRecord, res: Response): boolean {
+    if (!record.triggerUserId) return true
+    const userId = this.subscriberUsers.get(res)
+    if (!userId) return true
+    if (userId === record.triggerUserId) return true
+    const ownerId = this.deps.sessions.getSession(record.sessionId)?.ownerId
+    return !!ownerId && userId === ownerId
+  }
+
+  /** M79-AF：审批事件 SSE 定向广播（逐订阅者过滤；非审批事件仍走 emit 全量） */
+  private emitApproval(record: RunRecord, event: RunEvent): void {
+    const payload = `data: ${JSON.stringify(event)}\n\n`
+    for (const res of record.subscribers) {
+      if (!res.writableEnded && this.canSeeApproval(record, res)) res.write(payload)
     }
   }
 
@@ -571,7 +643,13 @@ export class Engine {
     // 插话同样解析 mentions（@chip 渲染依据），但不触发新 Run
     const parsed = this.parseSessionMentions(session, message.content)
     const mentioned = parsed.mentions.filter((id) => session.participantIds.includes(id))
-    this.deps.sessions.patchMessage(sessionId, userMessageId, { mentions: mentioned })
+    // M79-E：人类定向随行持久化（@真人）
+    const injectHumans = this.deps.sessionHumans?.(session.id) ?? []
+    const injectHumanParsed = parseSessionHumanMentions(session, this.deps.prompts, injectHumans, message.content)
+    this.deps.sessions.patchMessage(sessionId, userMessageId, {
+      mentions: mentioned,
+      ...(injectHumanParsed.humanMentions.length > 0 ? { humanMentions: injectHumanParsed.humanMentions } : {}),
+    })
     this.deps.sessions.saveNow(sessionId)
     this.deps.runs.update(record.id, { pendingUserMessages: [...record.pendingUserMessages] })
     return { injected: true, position: record.pendingUserMessages.length, runId: record.id }
@@ -601,6 +679,8 @@ export class Engine {
       fallbackUsed: snapshot.fallbackUsed,
       routingPending: false,
       handedToUser: false,
+      handedTo: [],
+      messageHumanMentions: new Map(),
       pendingUserMessages: [],
       pendingHandoffs: new Map(),
       handoffNotes: new Map(),
@@ -692,6 +772,13 @@ export class Engine {
       runId: record.id,
       sessionId: record.sessionId,
       queue: [...queue],
+    })
+    // M79-Y：群聊式全同步——重排广播到会话订阅者（触发者外的其他端/成员实时对齐队列）
+    this.deps.notify.publish({
+      type: 'notify:queue-updated',
+      sessionId: record.sessionId,
+      runId: record.id,
+      payload: { queue: [...queue] },
     })
     this.trace(record, 'queue:updated', { queue: [...queue] })
     return { queue: [...queue] }
@@ -814,6 +901,8 @@ export class Engine {
       fallbackUsed: false,
       routingPending: false,
       handedToUser: false,
+      handedTo: [],
+      messageHumanMentions: new Map(),
       pendingUserMessages: [],
       pendingHandoffs: new Map(),
       handoffNotes: new Map(),
@@ -881,6 +970,8 @@ export class Engine {
       fallbackUsed: false,
       routingPending: false,
       handedToUser: false,
+      handedTo: [],
+      messageHumanMentions: new Map(),
       pendingUserMessages: [],
       pendingHandoffs: new Map(),
       handoffNotes: new Map(),
@@ -1042,10 +1133,21 @@ export class Engine {
         endedAt: nowIso(),
       }),
     )
+    // M79-E：持球方写入（agent 行首 @具体人 → 指定交还）——仅 completed；成员校验过滤（仅在场人类）
+    if (reason === 'completed' && record.handedTo.length > 0) {
+      guard('waiting', () => {
+        const humans = new Set((this.deps.sessionHumans?.(record.sessionId) ?? []).map((h) => h.userId))
+        const targets = record.handedTo.filter((id) => humans.has(id))
+        if (targets.length === 0) return
+        this.deps.sessions.setWaitingOn(record.sessionId, targets)
+        this.deps.onHandedTo?.(record.sessionId, targets)
+      })
+    }
     if (notifyEnd) {
       guard('notify', () => {
         const payload: Record<string, unknown> = { reason }
-        if (reason === 'completed' && record.handedToUser) {
+        if (reason === 'completed' && (record.handedToUser || record.handedTo.length > 0)) {
+          if (record.handedTo.length > 0) payload.targets = [...record.handedTo]
           this.deps.notify.publish({
             type: 'notify:awaiting-user',
             sessionId: record.sessionId,
@@ -1072,6 +1174,7 @@ export class Engine {
     guard('close', () => {
       for (const res of record.subscribers) {
         if (!res.writableEnded) res.end()
+        this.subscriberUsers.delete(res) // M79-AF：收尾清理订阅者身份（防 Map 常驻）
       }
       record.subscribers.clear()
     })
@@ -1454,6 +1557,69 @@ export class Engine {
   }
 
   /** M16：波内成员收尾（turn:end 携带合并后队列；mentions = 本人实际接手，波级交还 = ['user']） */
+  /** M79-Z：累积一段流式文本（窗口合并；首次触发定时 flush） */
+  private broadcastStreamDelta(record: RunRecord, message: ChatMessage, delta: string): void {
+    if (!delta) return
+    let state = this.streamBroadcasts.get(record.id)
+    if (!state) {
+      state = { pending: new Map() }
+      this.streamBroadcasts.set(record.id, state)
+    }
+    const entry = state.pending.get(message.id) ?? {
+      agentId: baseAgentId(message.memberKey ?? message.agentId ?? ''),
+      memberKey: message.memberKey ?? message.agentId ?? '',
+      chunks: [],
+    }
+    entry.chunks.push(delta)
+    state.pending.set(message.id, entry)
+    if (!state.timer) {
+      state.timer = setTimeout(() => this.flushStreamBroadcast(record.id), STREAM_BROADCAST_MS)
+      state.timer.unref?.()
+    }
+  }
+
+  /** M79-AD：审批帧定向投递——仅触发者可见（含其多端）；会话其他真人不可见。
+   *  无触发者（兼容模式 / 直调）时回退会话广播，行为零差异。 */
+  private publishApprovalFrame(
+    record: RunRecord,
+    type: 'notify:approval-requested' | 'notify:approval-resolved',
+    payload: Record<string, unknown>,
+  ): void {
+    const notify = this.deps.notify
+    if (record.triggerUserId && notify.publishToUser) {
+      notify.publishToUser(record.triggerUserId, type, payload)
+      return
+    }
+    notify.publish({ type, sessionId: record.sessionId, runId: record.id, payload })
+  }
+
+  /** M79-Z：窗口合并帧广播（record 已不在 = 丢残余，由 turn-end 完整消息覆盖） */
+  private flushStreamBroadcast(runId: string): void {
+    const state = this.streamBroadcasts.get(runId)
+    if (!state) return
+    if (state.timer) {
+      clearTimeout(state.timer)
+      state.timer = undefined
+    }
+    const record = this.runs.get(runId)
+    const pending = [...state.pending.entries()]
+    state.pending.clear()
+    if (record) {
+      for (const [messageId, entry] of pending) {
+        const delta = entry.chunks.join('')
+        if (!delta) continue
+        this.deps.notify.publish({
+          type: 'notify:message-delta',
+          sessionId: record.sessionId,
+          runId: record.id,
+          payload: { messageId, agentId: entry.agentId, memberKey: entry.memberKey, delta },
+        })
+      }
+    }
+    // 回收：run 已结束且无待发内容 → 清除聚合器（防 Map 常驻）
+    if (!record && state.pending.size === 0 && !state.timer) this.streamBroadcasts.delete(runId)
+  }
+
   private finishTurn(
     record: RunRecord,
     handle: { agentId: string; message: ChatMessage },
@@ -1469,10 +1635,28 @@ export class Engine {
   ): void {
     const { sessions } = this.deps
     const { agentId, message } = handle
+    // M79-Z：收尾前先冲刷流式残帧（先 delta 后完整消息——客户端按序覆盖）
+    this.flushStreamBroadcast(record.id)
     // M55：波级收尾二次净化（幂等兜底；覆盖 executeTurn 常规净化点之外的收尾路径）
     this.sanitizeAndAudit(record, message)
     message.status = 'complete'
     message.mentions = mentions
+    // M79-AA：交还目标具体化——交接条渲染「from → 真人名」而非泛称「你的回合」。
+    // 目标 = 本消息 @具体人（per-message）∪ @用户 展开（全体在场真人）；无人类列表时保底触发者。
+    const humans = this.deps.sessionHumans?.(record.sessionId) ?? []
+    let humanTargets = (record.messageHumanMentions.get(message.id) ?? []).filter((id) =>
+      humans.some((h) => h.userId === id),
+    )
+    if (humanTargets.length === 0 && mentions.includes('user') && humans.length > 0) {
+      humanTargets = humans.map((h) => h.userId)
+    }
+    if (humanTargets.length === 0 && mentions.includes('user') && record.triggerUserId) {
+      humanTargets = [record.triggerUserId]
+    }
+    if (humanTargets.length > 0) {
+      message.humanMentions = humanTargets
+      sessions.patchMessage(record.sessionId, message.id, { humanMentions: humanTargets })
+    }
     sessions.touch(record.sessionId, message.id)
     this.emit(record, {
       type: 'turn:end',
@@ -1511,6 +1695,9 @@ export class Engine {
         queue: [...record.queue],
         loopSuppressed: meta.loopSuppressed,
         handoffSource: meta.source,
+        // M79-U：携带完整消息——多真人会话的**其他成员**（及同账号其他标签页）无 SSE 流，
+        // 经会话主题补投做同会话 upsert（此前仅触发者可见，其他成员需刷新；与 routes 层补播模式一致）
+        message,
       },
     })
     this.publishStatus(record, agentId, 'done')
@@ -1908,6 +2095,8 @@ export class Engine {
       sessionId: record.sessionId,
       agentId,
       runId: record.id,
+      // M79-J（§8.8）：人类花名册（human_roster + 交还指令；无人类不注入）
+      humans: this.humanRosterFor(record.sessionId),
       queue: [...record.queue],
       excludeMessageIds: opts.excludeMessageIds,
       parallelPeers: opts.parallelPeers,
@@ -2021,6 +2210,8 @@ export class Engine {
               }
               message.content += chunk.text
               this.emit(record, { type: 'message:delta', messageId: message.id, delta: chunk.text })
+              // M79-Z：旁观端流式（节流聚合广播；触发者走 SSE 去重）
+              this.broadcastStreamDelta(record, message, chunk.text)
               sessions.touch(record.sessionId, message.id)
             } else if (chunk.type === 'reasoning') {
               stepReasoning += chunk.text
@@ -2059,6 +2250,8 @@ export class Engine {
                 sessionId: record.sessionId,
                 agentId,
                 runId: record.id,
+                // M79-J（§8.8）：人类花名册（human_roster + 交还指令；无人类不注入）
+                humans: this.humanRosterFor(record.sessionId),
                 queue: [...record.queue],
                 excludeMessageIds: opts.excludeMessageIds,
                 parallelPeers: opts.parallelPeers,
@@ -2101,6 +2294,20 @@ export class Engine {
       // M55：收尾净化先于 @ 解析（仿写日志块内可能出现伪 @ 交还标记）
       this.sanitizeAndAudit(record, message)
       const parsed = this.parseSessionMentions(session, message.content)
+      // M79-E：行首 @具体人（指定交还）→ 持球候选（Run 内并集；收尾过滤在场人类后写入 waiting_on）
+      {
+        const humans = this.deps.sessionHumans?.(session.id) ?? []
+        if (humans.length > 0) {
+          const humanParsed = parseSessionHumanMentions(session, this.deps.prompts, humans, message.content)
+          for (const id of humanParsed.handedTo) {
+            if (!record.handedTo.includes(id)) record.handedTo.push(id)
+          }
+          // M79-AA：per-message 交还目标（交接条「from → 真人名」精确来源；@用户 在收尾展开）
+          if (humanParsed.handedTo.length > 0) {
+            record.messageHumanMentions.set(message.id, [...humanParsed.handedTo])
+          }
+        }
+      }
       const entries = record.pendingHandoffs.get(message.id) ?? []
       record.pendingHandoffs.delete(message.id)
       const toolHandoffs: string[] = []
@@ -2441,6 +2648,17 @@ export class Engine {
     return block || undefined
   }
 
+  /** M79-J（§8.8）：会话人类花名册（human_roster + 交还指令；无人类返回 undefined 不注入） */
+  private humanRosterFor(sessionId: string): Array<{ displayName: string; username: string; headline?: string }> | undefined {
+    const humans = this.deps.sessionHumans?.(sessionId) ?? []
+    if (humans.length === 0) return undefined
+    return humans.map((h) => ({
+      displayName: h.displayName,
+      username: h.username,
+      ...(h.headline ? { headline: h.headline } : {}),
+    }))
+  }
+
   /** 延迟工具执行门：发现启用 + tier=deferred + 未激活 → 拒绝（引导先 tool_search）；null = 放行 */
   private discoveryGate(record: RunRecord, message: ChatMessage, call: LlmToolCall): ToolResult | null {
     const state = record.discoveryByAgent.get(message.memberKey ?? message.agentId!)
@@ -2737,22 +2955,14 @@ export class Engine {
     })
     record.state = 'awaiting_approval'
     this.deps.runs.update(record.id, { state: 'awaiting_approval' })
-    this.emit(record, { type: 'approval:requested', approval })
-    this.deps.notify.publish({
-      type: 'notify:approval-requested',
-      sessionId: record.sessionId,
-      runId: record.id,
-      payload: { approval },
-    })
+    // M79-AF：审批 SSE 定向（触发者 ∪ 属主；视图与操作口径一致）
+    this.emitApproval(record, { type: 'approval:requested', approval })
+    // M79-AD：审批仅推送给触发者（避免会话其他真人被他人发起的审批打断/误批）
+    this.publishApprovalFrame(record, 'notify:approval-requested', { approval })
     try {
       const outcome = await this.deps.approvals.wait(approval.id, signal)
-      this.emit(record, { type: 'approval:resolved', approval: outcome.approval })
-      this.deps.notify.publish({
-        type: 'notify:approval-resolved',
-        sessionId: record.sessionId,
-        runId: record.id,
-        payload: { approval: outcome.approval },
-      })
+      this.emitApproval(record, { type: 'approval:resolved', approval: outcome.approval })
+      this.publishApprovalFrame(record, 'notify:approval-resolved', { approval: outcome.approval })
       return outcome
     } finally {
       if (record.state === 'awaiting_approval') {
@@ -3380,6 +3590,8 @@ export class Engine {
         sessionId: record.sessionId,
         agentId,
         runId: record.id,
+        // M79-J（§8.8）：人类花名册（human_roster + 交还指令；无人类不注入）
+        humans: this.humanRosterFor(record.sessionId),
         queue: [],
         excludeMessageIds: [message.id],
         signal: turn.signal,
@@ -3426,6 +3638,8 @@ export class Engine {
           }
           message.content += chunk.text
           this.emit(record, { type: 'message:delta', messageId: message.id, delta: chunk.text })
+          // M79-Z：旁观端流式（节流聚合广播；触发者走 SSE 去重）
+          this.broadcastStreamDelta(record, message, chunk.text)
           sessions.touch(record.sessionId, message.id)
         } else if (chunk.type === 'usage') {
           promptTokens += chunk.usage.promptTokens
@@ -3545,6 +3759,8 @@ export class Engine {
         sessionId: record.sessionId,
         agentId,
         runId: record.id,
+        // M79-J（§8.8）：人类花名册（human_roster + 交还指令；无人类不注入）
+        humans: this.humanRosterFor(record.sessionId),
         queue: [],
         excludeMessageIds: [message.id],
         signal: turn.signal,
@@ -3583,6 +3799,8 @@ export class Engine {
           }
           message.content += chunk.text
           this.emit(record, { type: 'message:delta', messageId: message.id, delta: chunk.text })
+          // M79-Z：旁观端流式（节流聚合广播；触发者走 SSE 去重）
+          this.broadcastStreamDelta(record, message, chunk.text)
           sessions.touch(record.sessionId, message.id)
         } else if (chunk.type === 'reasoning') {
           message.reasoning = (message.reasoning ?? '') + chunk.text

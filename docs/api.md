@@ -169,7 +169,7 @@
 | GET | `/api/runs/active` | 活跃 Run 列表（刷新后重附着定位） | `{ runs }` |
 | GET | `/api/runs/:runId/approvals` | 某 Run 的审批列表（挂起 + 历史） | `{ approvals: ApprovalRequest[] }` |
 | POST | `/api/runs/:runId/approvals/:approvalId` | 审批决定 | `{ approval }` |
-| GET | `/api/notifications?since=&sessionId=` | WS 降级轮询（同一 NotificationCenter） | `{ items, ... }`（同 WS NotifyEvent） |
+| GET | `/api/notifications?since=&sessionId=&cursors=` | WS 降级轮询（同一 NotificationCenter；`cursors` = URL 编码 JSON `{sessionId: seq}`，M79-AF 只回各会话增量，缺省 / 非法值回退全量） | `{ items, ... }`（同 WS NotifyEvent） |
 
 **审批请求体**：
 
@@ -207,7 +207,7 @@
 - 握手路径：`/ws`（`BIND_ALL=true` 时需带 token）；
 - 服务端 → 客户端：`NotifyEvent`（`notify:*` 系列，见 design.md §18.4 事件表）；
 - 心跳：`WS_HEARTBEAT_MS`；断线重连后按 `since` 补发（环形缓冲 `WS_REPLAY_BUFFER`）；
-- WS 不可用时前端自动降级为 `GET /api/notifications?since=` 轮询（间隔由 `/api/health` 的 `notifyPollMs` 下发）；
+- WS 不可用时前端自动降级为 `GET /api/notifications?since=&cursors=` 轮询（间隔由 `/api/health` 的 `notifyPollMs` 下发；M79-AF：客户端携带 per-session 游标只拉增量，会话过多时回退全量）；
 - 其他 WS 通道（noServer 模式，与 /ws 并存）：`/ws/stream`（浏览器帧流，M22）、`/ws/ssh`（SSH 交互终端，M23，见 §11.4）。
 
 ## 11. 连接中心（M22 / M23）
@@ -543,7 +543,7 @@ Agent 侧对应四工具 `canvas_read` / `canvas_write` / `media_generate` / `me
 | POST | `/api/sessions/:id/shares` | 仅属主 | 邀请（body `{ username, role?: 'editor'\|'viewer' }`）；目标不存在 404 / 已在成员 409 / 邀请自己或属主 400 |
 | PATCH | `/api/sessions/:id/shares/:userId` | 仅属主 | 改角色（`{ role }`） |
 | DELETE | `/api/sessions/:id/shares/:userId` | 仅属主 | 移出共享 |
-| POST | `/api/sessions/:id/leave` | 成员本人 | 自助退出（viewer 亦可；属主 400「不能退出」） |
+| POST | `/api/sessions/:id/leave` | 成员本人 | 自助退出（viewer 亦可；属主 400「不能退出」；direct 400「私聊不支持退出」——M79-AA） |
 
 **行为变化（P2）**：
 
@@ -553,6 +553,13 @@ Agent 侧对应四工具 `canvas_read` / `canvas_write` / `media_generate` / `me
 - 共享会话（≥2 人类）上下文装配中人类消息改署昵称（`【Alice】…`），独占会话 / 兼容模式沿用 `【用户】`；`GET /api/sessions/:id` 附 `humanNames`（userId → 昵称；客户端消息气泡署名，兼容模式为空）；
 - 变更广播 `notify:share-changed`（payload `{ sessionId, userId, action, role? }`）+ 审计 `session.share-*`；
 - **连接最小权限复核（SSH / 数据库执行侧）**：`ssh_exec` / `db_*` 工具以「本 Run 触发者」复核——成员仅可用 `member_use=1` 的 system 连接（admin / 兼容模式 / 未知触发者不限）；`ssh.exec` / `db.*` 审计携带 `userId`（触发者）；工具只读结果缓存的键含会话与触发者（不跨用户复用）。
+
+**群管理生命周期（M79-AA，ADR 0201）**：
+
+- 群聊成员「退出群聊」= 复用 `POST /sessions/:id/leave`（退出后失去访问、群历史对其他成员保留）；群聊解散 = 属主 `DELETE /sessions/:id`（硬删除，所有成员失去访问）；
+- 退出 / 移出留痕：会话内 append system 事件条（group「X 退出了群聊 / A 将 B 移出了群聊」；team「…协作」；direct 不适用）+ `notify:turn-end` 广播（同会话 upsert / 跨会话列表预览）；钩子装配见 `routes/index.ts`（`appendSystem`）；
+- 群名称（`PATCH /sessions/:id { title }`）仅 group owner 可改（editor 403「仅群主可修改群名称」）；`routeMode` 等其他字段维持 M79-E 权限矩阵（editor 可写）；
+- 解散广播 `notify:session-deleted` payload 增 `kind`（`{ kind: 'group' }` → 客户端「群聊已被解散」；toast 以 `session-deleted-<id>` 去重）。
 
 ## 19. 配额与用量（M57 P3）
 
@@ -624,6 +631,32 @@ per-user 私人素材库（跨会话复用上传 / 收藏的图片 / 视频 / �
 
 **语义**：owner 一律服务端取（登录身份；单用户兼容模式固定 `'local'`）——不信请求体（同 ADR 0148 纪律）；素材种类 `kind = image | video | audio`（扩展名 / MIME 白名单与附件通道 `util/mime.ts` 同口径）；存储落 `workspace/_library/u_<uid>/`（计入存储配额体积与备份面）；账号删除级联清空（行 + 属主目录）；存量会话素材**不自动入库**（按需「存为素材」列 P2）。
 
+
+## 24. 社交协作（M79）
+
+| 方法 | 路径 | 权限 | 说明 |
+| --- | --- | --- | --- |
+| GET | `/api/inbox?since=&limit=` | 本人 | 收件箱增量（`{ items, cursor, unreadCount }`；actorName 随行投影） |
+| POST | `/api/inbox/read` | 本人 | 单项 / 整段已读（`{ ids? }` 或 `{ upTo }`） |
+| POST | `/api/sessions/:id/read` | 读级（viewer 亦可） | 会话已读上报（`{ seq }`；单调推进 + 本人其他端 `notify:read-state` 广播） |
+| GET | `/api/ws/stats` | admin | 实时通道观测（连接 / 活跃用户 / 队列水位 / evictions / resyncs） |
+| GET | `/api/me`（等价 `/api/auth/me`）· PATCH `/api/auth/profile` | 本人 | 画像维护（`displayName / headline / bio / avatar`；null = 清除） |
+| GET | `/api/users/search?q=` | 成员 | 用户搜索（隐私开关：searchable=false 仅精确 username；排除自己 / 停用 / 拉黑对；30 次/分） |
+| GET/POST | `/api/friends` · `/api/friends/requests`（GET/POST） | 成员 | 好友清单 / 请求收发（username 或 userId 寻址；日限流 20） |
+| POST | `/api/friends/requests/:id/accept` · `/reject` | 接收方（reject 亦支持发出方撤回） | 请求处理 |
+| DELETE | `/api/friends/:userId` | 任一方 | 解除好友 |
+| POST | `/api/friends/:userId/block` · `/unblock` | 本人 | 拉黑（隐含解除；四面切断）/ 解除拉黑（仅拉黑方） |
+| POST | `/api/chats/direct` | 成员（好友校验） | 私聊创建 / 复用（`dm_key` 唯一；`{ session, created }`） |
+| POST | `/api/chats/group` | 成员 | 群聊创建（`{ title?, memberIds }`；1–50 人且须为创建人好友） |
+| POST/DELETE | `/api/sessions/:id/hide` | 会话可见者 | 隐藏 / 取消（DM「删除」语义；新消息自动复现） |
+| PATCH | `/api/sessions/:id` | owner / editor | 新增 `routeMode: 'auto' \| 'mention'`（触发策略；session-meta 广播 + 审计） |
+| GET | `/api/sessions`（变更） | 现状 | `unreadCount` / `kind` / `routeMode` / `waitingOn` 随行；direct 标题 = 对端显示名；隐藏会话按「无未读」过滤 |
+| POST | `/api/sessions/:id/messages`（拉黑面） | 拉黑对 | **人物私聊**内发新消息 → `403`（拉黑方「你已拉黑对方：解除后可继续聊天」/ 被拉黑方「对方设置了隐私限制，无法发送消息」；团队会话不受限；ADR 0198） |
+| POST | `/api/auth/avatar` | 本人 | **图片头像上传**（raw 二进制 ≤2MB；魔数仅 PNG/JPEG/WebP——拒绝 SVG；返回 `{ user }`，avatar 投影为公开 URL） |
+| GET | `/api/avatars/:file` | 登录用户 | 头像文件读取（文件名白名单防穿越；`immutable` 长缓存；缺失 404 → 客户端回退首字） |
+| `notify:presence` | — | 好友 ∪ 同会话成员 | 收件人 = 好友 ∪ 主体所属会话的属主与全部人类成员（`createPresenceRecipients`；去重 / 排除本人 / 无关联不可见；ADR 0197） |
+
+WS 新帧（`/ws`）：`notify:inbox` / `notify:read-state` / `notify:presence` / `notify:friends-changed` / `notify:session-meta` / `resync` / `error(code=conn_evicted|acl-changed)`；客户端 `read` / `inbox-ack`。详见 ADR 0188–0198。
 
 ## 附录 A：SSE 运行事件速查
 

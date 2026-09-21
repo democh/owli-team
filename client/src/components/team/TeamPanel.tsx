@@ -937,6 +937,8 @@ export function RelayQueue(): React.JSX.Element | null {
   const agents = useAgentStore((s) => s.agents)
   // M77：队列条目为成员键（分身）；展示名走成员标签（同角多实例 = 名字·灵魂名）
   const session = useSessionStore((s) => s.sessions.find((x) => x.id === s.currentId))
+  // M79-AF：只读共享（viewer）→ 队列仅展示、不渲染调序按钮（服务端另有写闸门兜底）
+  const readOnly = session?.role === 'viewer'
   const nameOf = React.useCallback((id: string): string => labelOfMemberKey(agents, session, id), [agents, session])
   // M24：计划派发提示（队列成员名下最近的未完成步骤 → chip title）
   const plans = usePlanStore((s) => s.plans)
@@ -1021,24 +1023,28 @@ export function RelayQueue(): React.JSX.Element | null {
                 <AgentAvatar agent={a} size={16} animated={false} />
                 <span className="max-w-[72px] truncate font-medium">{name}</span>
                 {planStep && <ClipboardList className="size-3 shrink-0 text-violet-500/80" aria-label="有计划派发步骤" />}
-                <button
-                  type="button"
-                  title={`${name} 提前一位`}
-                  disabled={i === 0}
-                  onClick={() => move(i, -1)}
-                  className="rounded-full p-0.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-30 disabled:hover:bg-transparent"
-                >
-                  <ArrowUp className="size-3" />
-                </button>
-                <button
-                  type="button"
-                  title={`${name} 延后一位`}
-                  disabled={i === items.length - 1}
-                  onClick={() => move(i, 1)}
-                  className="rounded-full p-0.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-30 disabled:hover:bg-transparent"
-                >
-                  <ArrowDown className="size-3" />
-                </button>
+                {!readOnly && (
+                  <>
+                    <button
+                      type="button"
+                      title={`${name} 提前一位`}
+                      disabled={i === 0}
+                      onClick={() => move(i, -1)}
+                      className="rounded-full p-0.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-30 disabled:hover:bg-transparent"
+                    >
+                      <ArrowUp className="size-3" />
+                    </button>
+                    <button
+                      type="button"
+                      title={`${name} 延后一位`}
+                      disabled={i === items.length - 1}
+                      onClick={() => move(i, 1)}
+                      className="rounded-full p-0.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-30 disabled:hover:bg-transparent"
+                    >
+                      <ArrowDown className="size-3" />
+                    </button>
+                  </>
+                )}
               </span>
             )
           })}

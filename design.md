@@ -3515,6 +3515,7 @@ M37–M45 专项（[docs/scene-chat-design.md §11](docs/scene-chat-design.md)�
 - **删除账号级联**：`DELETE /api/users/:id` 顺序 = 关浏览器实例（M62）→ `WorkspaceService.purgeUser`（逐会话解除 worktree 注册 → `u_<uid>` 整树 + 旧平面目录/画布清理，全程「根内」安全校验）→ 删库（外键级联）；清理失败不阻断删除，响应回传 `warnings`；
 - 测试：`server/tests/m57-workspace.test.ts` 5 例（解析四分支 / 画布回退 / 嵌套存读删与外部根拒删 / purgeUser 不影响他人 / 搬迁幂等 + dry-run）。
 
+- M79-T 登录界面视觉优化（AuthPages）：品牌氛围背景（主/副光晕 + 细网格径向遮罩）+ 徽标品牌区 + 顶部渐变饰条卡片 + 居中头部（大徽章 + 标题 + 副标题）+ 输入框内嵌图标（用户/锁/令牌）与 h-10 圆角规格 + 密码可见切换（tabIndex=-1 不打断键盘流）+ 渐变主按钮（primary→violet + 柔和投影）+ 说明并入卡片底条；四页（登录/首启/令牌/强制改密）共用外壳同步受益；文案锚点 / label / id / role 全保留（m57-auth 单测与 E2E 零破坏）；
 ## 86. 成员条统一常驻——输入条成员条全场景一致展示 · 撤销席位让位判定（成员条统一批）
 
 用户实测双会话截图对比（谈判 arena 会话 vs 投资研究 dock 会话）红框标注 Composer 上沿成员条区域并追问「为什么有的会话里面有，有的会话里面没有」，随后明确诉求「请统一下 / 所有的对话都需要统一」。本批撤销 M52-G（§78）的「席位覆盖时让位」判定：输入条成员条回归全场景常驻（Composer 常驻操作面），席位维持结构可视化，两者同屏并存。**纯前端批次**（零服务端 / 零资产 / 零协议改动），决策见 [ADR 0135](docs/adr/0135-member-strip-always-visible.md)。
@@ -4375,3 +4376,80 @@ M69 交付后塔罗抽牌是 AI 单方行为（用户只能看 `::: cards` 卡�
 - 验证：server 全量 **107 文件 / 1345 例 ✅**（含新增 m78 6 例：cut/picks golden / 旋转等价 / 校验 / 工具壳）；client 全量 **109 文件 / 1258 例 ✅**（新增 m78-deck 6 / m78-ritual 10，m69-md-ext 17 回归）；E2E `m78-tarot-ritual` **2/2 ✅** + 邻回归 m69-cards / m52-stage **25/25 ✅**；typecheck 全仓 0 错；check:agents 165/165 + 协议 41/41；check:skills 70/70；eval（mock 确定性）**36/36 ✅** 无回归。
 
 - 镜像面：`docs/tarot-ritual-design.md`（专项设计）、ADR 0187 + `docs/adr/README.md` 索引、`agents/CHANGELOG.md` v98。
+
+## 114. 社交协作——好友 · 私聊/群聊 · 真人入会话与 @ 调度 · 实时通道稳定化（M79）
+
+多用户基座（M57）之后，本批打通「人 ↔ 人 ↔ Agent」的社交协作面：好友关系图 · 私聊与群聊 · 真人驻 Agent 会话与 @ 真人调度 · 通知/未读/在线状态的实时通道稳定化。设计与实现基线见 [docs/social-collab-design.md](docs/social-collab-design.md)（含前端交互与触发判断专题）；决策见 ADR **0188–0201**（编号让位：M78 / ADR 0187 / §113 已被塔罗批次占用，本批顺延落 M79 / 0188 起 / §114）。**批次 A–E 全量落地（F 前端收口 / G 隐私与可见性收口追加）**。
+
+### 114.1 实时通道稳定化基座（M79-A）
+
+- **用户主题 `u:<userId>`**：握手鉴权通过后服务端自动绑定本人身份（免客户端遗漏）；仅本人可订（admin 不可代订）；
+- **三层投递**：WS 用户主题实时帧 → `user_inbox` 持久表（每用户 seq 单调；保留期 30 天仅清已读）→ REST `since` 补齐；客户端幂等合并 + seq 缺口检测补拉；**inbox 仅承载跨会话个人事件**（DM 逐条消息不入箱）；
+- **未读服务端权威**：`session_reads` 单一事实源（`seq > last_read_seq 且非本人`）；WS `read` 帧 / REST 降级（viewer 读级放行）；多端 `notify:read-state` 广播；列表单查询聚合 `unreadCount`；
+- **背压与连接治理**：待写队列上限 `WS_SEND_QUEUE_MAX=256` → `resync` 断开转 REST（不丢事件）；每用户连接上限 8 踢最旧；退避向下抖动 + 60s 探活 + 前台即时重连；ACL 撤销即时化（`acl-changed`）；`GET /api/ws/stats` 观测；
+- **修复 M57 遗留缺口**：会话邀请从「刷新才发现」升级为 inbox 实时到达。
+
+### 114.2 用户画像（M79-B）
+
+- `headline / bio / avatar`（色块 / emoji；`kind:'image'` 预留）；`PATCH /api/auth/profile`（null 清除 + 校验）；投影面覆盖 /auth/me · users · ShareDialog · 会话详情 `humanProfiles`（**humanNames 保留不删**）；`HumanAvatar` 统一样式；他人人类消息左对齐 + 头像 + 头衔（自己的消息维持现状）。
+
+### 114.3 好友体系与在线状态（M79-C）
+
+- `friend_links` 单行双向状态机（pending / accepted / blocked；reject 删行可重发；block 隐含解除）；**拉黑四面切断**（请求 / 搜索双向 / 好友列表 / 私聊创建；被拉黑方不暴露事实）；
+- 隐私开关（`searchable` / `allowFriendRequests`）+ 日限流 20 + 搜索 30 次/分；全部动作 inbox 实时到达 + `notify:friends-changed` + 审计（friend.*）；
+- 在线状态：连接引用计数推导（多端 +1；离线延迟 30s；500ms 聚合）；**可见范围 = 好友面**（同会话扩展后置）；
+- 客户端：左栏「会话 | 联系人」页签（请求区 / 搜索关系态按钮 / 好友列表（在线点 + 头衔 + 私聊 / 移除二次确认）/ 新建群聊）。
+
+### 114.4 人物会话：私聊与群聊（M79-D）
+
+- `sessions.kind: team / direct / group` + `dm_key` 唯一键（并发竞态兜底）；私聊仅好友（403 明确）+ 标题动态渲染（对端名）+ 隐藏即「删除」（**新消息自动复现**）；群聊 1–50 人 + 群邀请放宽（成员可邀自己好友；团队会话维持 owner-only）；chat 免路由（无 @agent 零引擎；混编群 @agent 正常唤起）；工作区零特判。
+
+### 114.5 触发判断与真人 @ 调度（M79-E）
+
+- **触发判断矩阵**（[ADR 0195](docs/adr/0195-trigger-matrix-and-route-mode.md)；**不做 LLM 意图分类**）：@agent 触发 · waiting 命中越过策略 · **人类定向（@真人 / 行首 @用户）仅存储** · 无定向按 `route_mode`（auto=PRS 现状零回归 / mention=静默；chat 恒 mention）；team 头部「AI 自动应答」开关 + 客户端静默发送轻提示；
+- **真人 @ 寻址**：人类 token 表与 agent 隔离（显示名 → username 降级链；注册期互斥杜绝双命中）；`humanMentions` 消息字段 + chips 渲染 + inbox 提及通知（60s 聚合）；
+- **持球方（零 Run 锁）**：agent 行首 @具体人 = 指定交还 → Run 收束后 `waiting_on` 写入 + `notify:session-meta` + 每目标 inbox `waiting`；头部琥珀徽章「等待 X 回复」+ 被点名者提示条；任何消息集合差清除 + 成员移除清洗；**等待永不挂起 Run**（互斥 / 配额 / 插话语义零变化）。
+
+### 114.6 验证与边界
+
+- 门禁：server **112 文件 / 1373 例**、client **113 文件 / 1278 例** 全绿；四包 typecheck 0 错；新增测试 6 文件（m79-realtime / profile / friends / chats / trigger（server）+ realtime / profile / contacts（client））；
+- 迁移：v21（inbox/reads）→ v22（画像）→ v23（好友）→ v24（kind/dm_key/hides）→ v25（route_mode/waiting_on/human_mentions）；
+- M79-F 前端收口（设计 §14 补齐）：群 / 私聊头部「成员」入口（ChatMembersDialog：名单 + 群主移出二次确认 + 「邀请好友」选择器，候选 = 好友 − 已在场）；ShareDialog 多人协作静默引导（owner + 已有成员 + auto → 一键切「仅点名唤起」）；会话列表筛选 chip（全部 / 团队 / 聊天）；命令面板「打开联系人 / 新建群聊」；
+- E2E（补批）：`e2e/m79-social.spec.ts`（好友 UI 全链 → 私聊 → 群聊 → 邀请实时化 → @真人提及 → 触发策略零引擎）+ `e2e/m79-realtime.spec.ts`（多端未读实时增量 + read-state 对账）；auth 项目 5/5（含 m57-auth 回归零副作用；m57-auth 断言已按「共享会话并存」角色感知硬化——协作徽章 first() / 清理循环仅限 owner 属主会话）；`PW_AUTH_PORT` / `PW_AUTH_DATA_DIR` 隔离参数（默认 8790 / data/e2e-auth 零变化；并发会话防旧实例复用假失败）；
+- M79-G 隐私与可见性收口：presence 可见域 = 好友 ∪ 同会话人类成员（`createPresenceRecipients` 工厂；客户端 `presenceMap` + `OnlineDot` 共用——成员弹窗 / @ 候选 / 联系人）；**admin 无会话内容旁路**经代码复核确认并回归固化（m79-privacy：详情 / 写 404、列表仅自有、搜索无命中、WS 可见集不含）——**更正**此前「admin 对私聊可见」表述，不引入 `DM_ADMIN_VISIBLE`（ADR 0197）；
+- M79-H 拉黑消息面补完与微体验：拉黑对人物私聊发新消息 → 403 拒发（落库前；文案分视角不泄漏拉黑事实；团队协作面不受限、历史可回看——ADR 0198）；联系人离线点 tooltip「最后在线：x 分钟前」；E2E 补强（成员弹窗 / 同会话在线点 / 筛选 chip；行定位标题精确匹配）；
+- M79-I 通知中心（持久收件箱 UI 落点）：顶栏「通知」+ 未读徽章；`InboxPanel`（类型标签 / 单项已读 `ids` / 全部已读 `upTo` / 会话类跳转打开 + 好友类跳联系人）；`inbox-store.ack`；联系人面板 ack 收敛（仅好友申请类自动已读）；banner 层叠修复（`relative z-40`）；
+- M79-J 设计对账审计（行级补齐）：隐私开关卡 `MyPrivacyCard`（§14.9；GET/PUT `/auth/preferences`）+ UsersConsole 画像行；chat 头部（direct 在线点+头衔 / group「N 人」）+ 人类成员条 + chat placeholder（§14.4）；`<human_roster>` 注入 + 交还指令（§8.8；assembler/engine 透传，无人类零差异）；成员编制管理权限矩阵（§16：team/direct owner-only、group editor；`canManageLineup`）；ARIA 两处（§14.11）；
+- M79-K E2E 终账（§17 ⑦）：mock 剧本标记 `[[handoff:姓名]]` → 行首 @真人；E2E 补 4c 持球全链（唤起 → 持球徽章 → 被点名提示条 → 回复清除）；连带修复：mock 触发块共享会话静默失效（`【…】` 泛匹配）、`notify:session-meta` 客户端零消费（ws-store 补归约）、`applySession` 空键残留（waiting/routeMode 显式归一）；
+- M79-L 多实例演进（共享通知总线 + 跨实例 presence）：`NOTIFY_BUS=db` 可选启用（默认 memory 零变化）；NotifyHub 挂载 `DbNotifyBus`（本地下发不变 + 总线行跨实例传输；origin 排除防回环；启动游标不重放历史——缺口由 resync + REST 权威层补齐）；`presence_instances` 计数表（离线广播前合并全局合计 + 30s 心跳 + stale 回收）；迁移 v26；`INSTANCE_ID` / `ws/stats.bus`；ADR 0199；
+- M79-M 聊天模式 @agent 边界（实测反馈收口）：纯人聊天 @agent 不触发（人类定向仅存储——现状语义，测试固化）；混编群 @agent 唤起 Run（正反例断言）；Composer 成员条人物会话不再回退「全量 agent 兜底」（team/场景空编制兜底保留）；
+- M79-N 实测反馈三修：他人人类消息气泡 `w-fit`（短文本不再拉满全宽）；ShareDialog「从好友选择」快捷邀请（团队加真人免输用户名）；澄清私聊不可扩群（多人群请走新建群聊多选）。
+- M79-O 新建会话直接拉真人：组队台编制栏增「协作成员（真人）」好友多选（创建后自动 editor 邀请；纯真人组合自动 routeMode=mention 防误触发；按钮计入真人）；E2E 5b 步端到端固化；
+- M79-P 纯人聊天隐藏 AI 状态条：人物会话（无 agent 编制）不渲染范式 chips 与上下文/费用/轨迹条（`aiBarVisible`；混编群与 team/场景保留；快捷键提示保留）；
+- M79-Q 真人图片头像：`UserAvatar.kind:'image'` 实装——客户端裁 256² + raw 上传（魔数校验，拒绝 SVG）；DB 文件名 / `toUserInfo` 唯一投影 URL；读取白名单 + immutable；换图/改色块/删号三路清理；HumanAvatar 失败回退首字；ADR 0200；
+- M79-R 团队共享弹窗升级：好友多选批量邀请（勾选 + 「邀请（N 人）」；用户名输入保留兜底）+ 移出二次确认（与聊天成员弹窗一致）；文案锚点全保留（m57 单测/E2E 零破坏，E2E 补确认步）；
+- M79-S 纯人聊天隐藏右栏（与 AI 状态条同口径）：direct/group 无 agent 编制时右栏 Panel 与显隐按钮不渲染（窄屏团队抽屉/底条同收）；不改用户偏好（切走恢复）；混编群与 team 不受影响；
+- M79-U 多真人会话 agent 消息实时补投（缺陷修复）：notify:turn-end 帧附完整消息（engine finishTurn 唯一收尾路径一处修全链）；其他真人成员与同账号多标签经 WS 同会话 upsert 实时可见（此前需刷新）；跨会话 agent 维持不打扰（未读由 run-completed 聚合）；三层测试固化；
+- M79-W 群聊式全同步（缺陷修复三处）：触发型人类消息（@agent/持球/auto）补广播（launch/inject 分支）；列表变化/首载自动全量订阅（不再依赖点击）；turn-end 跨会话统一处理（任何消息计未读 + 列表预览即时更新 + 权威对账；run-completed 去本地双计）；E2E 4e 固化双向实时与跨会话未读；
+- M79-X 全同步审计收口：消息编辑/删除与会话删除补广播（turn-end(message)/notify:message-deleted/notify:session-deleted）+ 编辑/删除权限加固（仅作者，属主可删任意）；同会话列表预览即时；E2E 4f 固化；typing/已读回执/逐字旁观列为有意不做；
+- M79-Y 穷举式全量审计第二批：计划批准/指挥台重排补广播（notify:plan-updated / notify:queue-updated）；ACL 撤销与踢出跨实例（bus kind 扩展 + listSince 映射修复，安全面）；资料变更好友广播（onProfileChanged）；context-compressed 客户端补 case；资源绑定/记忆实时同步缓办；
+- M79-Z 旁观端流式（打字机对齐）：engine delta 120ms 节流聚合 → notify:message-delta（收尾前 flush 保证「先 delta 后完整消息」的按序覆盖）；客户端非触发者同会话首帧建 streaming 占位 + appendDelta（runId 守卫去重）；帧量 ~8fps 安全；三层测试固化；
+- M79-AA 交接目标具体化 + 回放条收敛：交接条显示具体真人（@用户 → 全员在场真人，humanMentions 落库 + HumanAvatar 头像流/一键接棒；旧数据回退「你的回合」）；波次回放条去文字（图标开关）且默认隐藏、点击展开（2026-09-20 视觉改版：收起态 = 输入区上方靠右单图标胶囊，展开态 = 同一胶囊向左展开「上一波 / 刻度 / 下一波 / 计数」，替代整行空条；同 shadow-soft 阴影，入场复用浮动层动画——安静模式 / reduced-motion 已关闭）；
+- M79-AB 断线重连权威补偿：用户主题帧（收件箱/邀请）断线窗口无游标可补——重连成功自动补收件箱快照 + 会话列表对账；降级轮询同补；修复"新建会话邀请要刷新"；
+- M79-AC 半开连接自愈闭环：探活无应答 ≥2× 阈值判定半开 → 强制关闭走常规重连（+关闭握手兜底 +旧连接事件守卫）；修复"连接假死只能刷新恢复"；
+- M79-AD 工作台打开通道/工具按钮/审批定向：打开请求事件改 store 通道（挂载后消费，根治"有的打开了有的没有"）；studio-btn 不换行+容器整行换行；审批帧定向触发者（publishToUser，其他真人不可见）；
+- M79-AE 操作权限统一治理+通知补偿：改名/routeMode/serial/planFirst 全 kind 收敛 owner-only；worktree merge/discard → owner；会话删除/成员被移出 → 收件箱 system 通知；ChatArea 触发策略开关仅属主；内容协作写保持 editor+；
+- M79-AA 群管理补全（生命周期闭环）：成员「退出群聊」与群主「解散群聊」入口落地成员弹窗（行内二次确认；chat 形态此前无退出/解散入口）；退出/移出补系统事件条留痕（群聊「群聊」/ 团队「协作」+ turn-end 广播）；群名 PATCH 收紧为 owner（设计 §12.3；editor 403）；direct `/leave` 400 防护（设计 §12.2 只有隐藏）；解散广播 payload 增 `kind`（「群聊已被解散」文案 + toast 去重）；列表行补群聊重命名入口（owner）；纯人聊天 AI 语义面收口——「资源」入口同口径隐藏（私聊 / 无 agent 编制群聊；team 与混编群保留，E2E 三态固化）；ADR 0201；
+- 明示边界：会话内容可见性 = **owner ∪ 共享成员唯一事实源**（admin 无旁路；孤儿行兜底与 `__` 全局主题属 admin 例外）；单进程部署假定（多实例演进：权威层在 DB，替换快路径即可）；
+- 镜像面：`docs/api.md §24` · `docs/operations.md §9`（含多实例部署手册）· `.env.example`（5 + M79-L 4 配置）· ADR 0188–0201 + README 索引 · `playwright.config.ts`（auth testMatch + PW_AUTH_* 隔离）· 本页。
+
+## 115. 运行时上下文注入——时间 / 系统（运行时上下文批）
+
+agent 此前对「现在」零感知：system 提示不含日期 / 时区 / 运行环境，模型只能凭训练记忆猜时间——「今天 / 本周」相对日期、时效性判断（价格 / 政策 / 新闻 / 版本）与排期核对缺统一依据。本批在装配必经路径为**全部角色 / 场景**注入运行时上下文（AGENT.md / 协议资产零改动），以两级拆分保护 prompt 前缀缓存。决策与被否决方案见 ADR 0202。
+
+- 两级注入（`server/src/context/assembler.ts`）：**日期级**（当前日期 / 星期 / 时区 / 运行环境 + 纪律句）进 system L3 尾段 `<runtime_context>`——天级稳定（同一天内多回合字节级一致，「system + 历史窗口」前缀缓存不破坏）；**时刻级**（HH:mm）进回合指令（`buildTurnInstruction` 首行后的「当前时刻」行）——该消息每回合天然新建，分钟级变化零额外缓存损失；
+- 口径：日期 `YYYY-MM-DD（周X）`；时区 `IANA 名（UTC±N）`（`Intl.DateTimeFormat`，偏移兼容半小时制）；运行环境 `macOS / Windows / Linux（arch）`（`process.platform` + `os.arch()`）；附纪律句（相对日期一律以此为准；时效信息不凭训练记忆臆断）；`now` 全可注入（缺省当前时刻——单测固定断言，避免时区 / 时钟依赖）；
+- 展示：runtime 计入 L3（`snapshot` label 更新为「技能 / 工作区 / 运行时」）；
+- 验证：server `tests/runtime-context.test.ts` 8 例（日期 / 星期 / 时区断言、**同日不同时刻字节级一致**（缓存友好性守护）、跨天变化、system 尾段位置（在花名册之后且不含时刻）、三范式时刻行、`prepareTurn` 跨角色 / 跨场景集成 + L3 label）；server 全量回归 **116 文件 / 1407 例 ✅** + typecheck 0 错。
+
+- 镜像面：ADR 0202 + `docs/adr/README.md` 索引、根 README「上下文工程」行、本页。

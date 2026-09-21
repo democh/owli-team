@@ -71,6 +71,8 @@ export interface PrepareTurnInput {
   handoffs?: TurnInstructionExtra['handoffs']
   /** M28：按需工具发现概览（<tool_discovery>；启用发现时注入 L3，未启用不注入） */
   toolDiscoveryBlock?: string
+  /** M79-J（§8.8）：会话人类成员（human_roster + 回合交还指令；无人类 = 不注入） */
+  humans?: Array<{ displayName: string; username: string; headline?: string }>
 }
 
 export interface PreparedTurn {
@@ -286,6 +288,8 @@ export class ContextService {
     const memoryBlock = memory.render(input.sessionId)
     // M25 L1.5：语义召回块（预算截断已在 MemoryService 内完成）
     const recalledBlock = recall?.rendered ?? ''
+    // 运行时上下文（时间 / 系统）：日期级进 system（L3 尾段，天级稳定护缓存）；时刻级进回合指令（每回合新建）
+    const now = new Date()
 
     const systemPrompt = buildSystemPrompt({
       protocol: prompts.protocolText,
@@ -308,6 +312,9 @@ export class ContextService {
       ),
       // M28：按需工具发现概览（未启用发现 / 无未加载条目 → undefined 不注入）
       toolDiscoveryBlock: input.toolDiscoveryBlock,
+      // M79-J（§8.8）：人类花名册软约束（无人类 → undefined 不注入，旧文本零差异）
+      humans: input.humans,
+      now,
     })
 
     // 交付规格（报告专业化）：从用户消息解析档位声明（会话级粘性；未声明 → undefined 不注入）
@@ -330,6 +337,9 @@ export class ContextService {
         handoffs: input.handoffs,
         selfKey: input.agentId,
         deliverableSpec,
+        // M79-J（§8.8）：人类交还指令（无人类 → 不注入）
+        humans: input.humans?.map((h) => ({ displayName: h.displayName })),
+        now,
       },
     )
     const instructionTokens = countTokensCalibrated(turnInstruction)
@@ -418,7 +428,7 @@ export class ContextService {
           ? `水位 seq=${summaryRecord.untilSeq}${summaryRecord.degraded ? '（上次压缩失败，已降级）' : ''}`
           : '（未压缩）',
       },
-      { key: 'L3', label: '技能与工作区', tokens: systemPrompt.layers.l3 },
+      { key: 'L3', label: '技能 / 工作区 / 运行时', tokens: systemPrompt.layers.l3 },
       { key: 'L4', label: '对话窗口', tokens: l4Tokens, detail: `${window.groups} 个回合组` },
       { key: 'L5', label: '工具调用记录', tokens: window.toolTokens },
     ]

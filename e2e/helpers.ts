@@ -293,9 +293,34 @@ export function stopButton(page: Page): Locator {
   return page.getByRole('button', { name: '停止' })
 }
 
-/** 等待团队交还控制权（「你的回合」胶囊 = Run 正常收束；并行波次下可能多条） */
+/** 等待团队交还控制权（「你的回合」胶囊 = Run 正常收束；并行波次下可能多条 ） */
 export async function expectYourTurn(page: Page, timeout = 90_000): Promise<void> {
   await expect(page.getByText('你的回合').first()).toBeVisible({ timeout })
+}
+
+/**
+ * 等待本轮 run「启动 → 收束」双段完成（M79-K 先例；M79-AG 固化为 helper）。
+ * 注意：**不可用「你的回合」作收束信号**——历史胶囊会立即命中（旧 DOM 秒过，
+ * 会导致在上一轮仍在途时发起下一次发送：M43 实测第 3 次 fill 被前一轮 submit 的
+ * setValue('') 清空 → 发送按钮永久 disabled → click 卡死）。
+ * 第一段严格等待「停止」出现（run 未启动 = 发送失败会在此显式暴露，而非误判收束）。
+ */
+export async function expectRunSettled(page: Page, timeout = 90_000): Promise<void> {
+  await expect(stopButton(page)).toBeVisible({ timeout: 15_000 }) // ① run 启动（运行中停止按钮可见）
+  await expect(stopButton(page)).toHaveCount(0, { timeout }) // ② 收束（停止消失）
+}
+
+/**
+ * 抗布局抖动点击（M79-AG）：短超时常规 click → DOM click 兜底。
+ * 长套件下元素可能因持续 re-render 而稳定性检查饿死（m31-canvas-ux 菜单项实测）；
+ * DOM click 对 disabled 元素不派发（语义安全），点击效果由后续断言校验。
+ */
+export async function robustClick(locator: Locator, timeout = 5_000): Promise<void> {
+  try {
+    await locator.click({ timeout })
+  } catch {
+    await locator.evaluate((el) => (el as HTMLElement).click())
+  }
 }
 
 /** 审批 pending 卡（由「模型请求审批」标题上溯最近的 rounded-xl 卡片根） */

@@ -141,7 +141,9 @@ export function BrowserPanel(): React.JSX.Element {
   const [externalUrl, setExternalUrl] = React.useState('')
   const imgRef = React.useRef<HTMLImageElement>(null)
   const wrapRef = React.useRef<HTMLDivElement>(null)
-  const input = useBrowserFrameInput(wrapRef, imgRef)
+  // M79-AF：只读共享（viewer）→ 接管 / 归还 / 关闭 / 画面输入全部只读（服务端另有写闸门兜底）
+  const isViewer = useSessionStore((s) => s.sessions.find((x) => x.id === s.currentId)?.role) === 'viewer'
+  const input = useBrowserFrameInput(wrapRef, imgRef, !isViewer)
 
   // 进入会话：加载活动会话 + 持有帧流引用；切会话 / 卸载：释放（与直播窗共享，归零才断流）
   React.useEffect(() => {
@@ -381,7 +383,7 @@ export function BrowserPanel(): React.JSX.Element {
         {mode !== 'takeover' && (
           <div className="pointer-events-none absolute inset-x-0 bottom-0 flex items-center justify-center gap-1 bg-gradient-to-t from-slate-900/80 to-transparent px-2 pb-1 pt-4 text-[10.5px] text-slate-200">
             <MousePointerClick className="size-3" />
-            点击画面即可接管
+            {isViewer ? '只读共享（viewer）：仅可观察画面' : '点击画面即可接管'}
           </div>
         )}
       </div>
@@ -389,12 +391,24 @@ export function BrowserPanel(): React.JSX.Element {
       {/* 操作行 */}
       <div className="flex flex-wrap items-center gap-1 border-b px-2 py-1.5">
         {mode === 'takeover' ? (
-          <Button size="xs" variant="secondary" disabled={busy} onClick={() => void useBrowserStore.getState().release()}>
+          <Button
+            size="xs"
+            variant="secondary"
+            disabled={busy || isViewer}
+            title={isViewer ? '只读共享（viewer）：无操作权限' : undefined}
+            onClick={() => void useBrowserStore.getState().release()}
+          >
             <RotateCcw className="mr-1 size-3" />
             归还给 Agent
           </Button>
         ) : (
-          <Button size="xs" variant="outline" disabled={busy || session.state === 'closed'} onClick={() => void useBrowserStore.getState().takeover().catch(() => undefined)}>
+          <Button
+            size="xs"
+            variant="outline"
+            disabled={busy || session.state === 'closed' || isViewer}
+            title={isViewer ? '只读共享（viewer）：无操作权限' : undefined}
+            onClick={() => void useBrowserStore.getState().takeover().catch(() => undefined)}
+          >
             <Hand className="mr-1 size-3" />
             人工接管
           </Button>
@@ -422,7 +436,8 @@ export function BrowserPanel(): React.JSX.Element {
           size="xs"
           variant="ghost"
           className="ml-auto text-rose-600 hover:text-rose-700"
-          disabled={busy}
+          disabled={busy || isViewer}
+          title={isViewer ? '只读共享（viewer）：无操作权限' : undefined}
           onClick={() => {
             if (!window.confirm('关闭该浏览器会话？Agent 后续调用 browser_* 时会重新启动。')) return
             void useBrowserStore.getState().closeSession()

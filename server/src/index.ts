@@ -60,6 +60,17 @@ import { createToolRegistry } from './tools/builtin.js'
 import { parseMcpServerSeeds } from './tools/mcp.js'
 import { WorkspaceService } from './workspace.js'
 import { NotifyHub } from './ws.js'
+import { InboxStore } from './store/inbox.js'
+import type { InboxAddInput } from './store/inbox.js'
+import { SessionReadsStore } from './store/session-reads.js'
+import { FriendStore } from './store/friends.js'
+import { SessionHideStore } from './store/session-hides.js'
+import { PresenceTracker } from './realtime/presence.js'
+import { createPresenceRecipients } from './realtime/presence-recipients.js'
+import { DbNotifyBus } from './realtime/notify-bus-db.js'
+import { NotifyBusStore } from './store/notify-bus.js'
+import { PresenceInstanceStore } from './store/presence-instances.js'
+import { sessionHumans } from './orchestration/humans.js'
 // M26：资产控制台（唯一写盘通道：zod 校验 → 原子写 → 回收站软删除）
 import { AssetManager } from './assets/manager.js'
 import { MCP_TOPIC, type NotifyType } from '@multi-agent/shared'
@@ -162,7 +173,40 @@ const assets = new AssetManager({
 // M27：MCP_SERVERS 仅作启动种子（历史格式 `name=command args…` / `name=https://…`，逗号分隔）
 const mcpSeeds = parseMcpServerSeeds(cfg.mcpServers)
 // M57：NotifyHub 惰性读取认证依赖（WS 订阅 ACL；构造时 auth/access 尚未初始化）
-const notify = new NotifyHub(cfg, () => ({ auth, access }))
+// M79-A：收件箱 / 已读存储（用户主题投递的权威层；WS `read` 帧与 REST 路由共用）
+const inboxStore = new InboxStore(db)
+const sessionReads = new SessionReadsStore(db)
+// M79-C：好友关系存储 + 在线状态（用户主题扇出）
+const friendStore = new FriendStore(db)
+// M79-D：会话隐藏（DM「删除」语义）
+const sessionHides = new SessionHideStore(db)
+let presence: PresenceTracker | undefined
+// M79-L：跨实例 presence 计数表（NOTIFY_BUS=db 时启用；memory 模式 undefined = 现状）
+let presenceInstances: PresenceInstanceStore | undefined
+const notify = new NotifyHub(
+  cfg,
+  () => ({ auth, access }),
+  () => ({ inbox: inboxStore, reads: sessionReads }),
+  {
+    // M79-L：连接计数同步写跨实例表（db 模式；countOf 为写表时的本地引用计数）
+    onConnect: (userId) => {
+      presence?.connect(userId)
+      if (presenceInstances) presenceInstances.setCount(cfg.instanceId, userId, presence?.countOf(userId) ?? 1)
+    },
+    onDisconnect: (userId) => {
+      presence?.disconnect(userId)
+      if (presenceInstances) presenceInstances.setCount(cfg.instanceId, userId, presence?.countOf(userId) ?? 0)
+    },
+  },
+)
+/** M79：收件箱投递（写库 + 用户主题实时帧；actorName 随行投影） */
+const deliverInbox = (input: InboxAddInput): void => {
+  const item = inboxStore.add(input)
+  const actorName = input.actorId ? auth.getUser(input.actorId)?.displayName : undefined
+  notify.publishToUser(input.userId, 'notify:inbox', { item: { ...item, ...(actorName ? { actorName } : {}) } })
+}
+// M79-C：在线状态推导（聚合窗口 cfg.presenceAggregateMs；可见域 = 好友 ∪ 同会话人类成员）
+// 装配位置在 sessionMembers 之后（收件人计算依赖成员存储；NotifyHub 钩子为惰性引用）
 
 // ---------- M22：连接中心装配（数据库 / SSH / 浏览器接入） ----------
 ensureDirSync(cfg.dataDir)
@@ -208,6 +252,32 @@ const auth = new AuthService({ cfg, users, authSessions, apiKeys, audit: auditSt
 const sessionMembers = new SessionMemberStore(db)
 const userLabelResolver = createUserLabelResolver({ members: sessionMembers, users })
 const access = new AccessService({ isMultiUser: () => auth.multiUser, sessions, projects, members: sessionMembers })
+// M79-G：在线状态扇出（可见域 = 好友 ∪ 同会话人类成员；聚合窗口吸收抖动）
+const presenceRecipients = createPresenceRecipients({ friends: friendStore, sessions, members: sessionMembers })
+presence = new PresenceTracker({
+  aggregateMs: cfg.presenceAggregateMs,
+  onFlush: (events) => {
+    for (const ev of events) {
+      // M79-L：跨实例合并——其他实例仍有活跃连接（非 stale）时跳过离线广播，防「A 断开但 B 在线」误判
+      if (!ev.online && presenceInstances && presenceInstances.globalCount(ev.userId, PRESENCE_STALE_MS) > 0) continue
+      for (const recipient of presenceRecipients(ev.userId)) {
+        notify.publishToUser(recipient, 'notify:presence', {
+          users: [{ userId: ev.userId, online: ev.online, ...(ev.lastSeenAt ? { lastSeenAt: ev.lastSeenAt } : {}) }],
+        })
+      }
+    }
+  },
+})
+// M79-L：多实例演进（NOTIFY_BUS=db）——共享通知总线（帧跨实例投递）+ 跨实例 presence 表
+const PRESENCE_STALE_MS = 60_000
+let notifyBusStore: NotifyBusStore | undefined
+if (cfg.notifyBus === 'db') {
+  notifyBusStore = new NotifyBusStore(db)
+  presenceInstances = new PresenceInstanceStore(db)
+  notify.attachTransport(new DbNotifyBus({ store: notifyBusStore, instanceId: cfg.instanceId, pollMs: cfg.notifyBusPollMs }))
+  log.info({ instanceId: cfg.instanceId, pollMs: cfg.notifyBusPollMs }, '通知总线已启用（多实例模式）')
+}
+
 // M57 P3：配额（user_quotas；缺省不限；存储体积按工作区目录 + M68 用户素材库目录计量）
 const quotaStore = new QuotaStore(db)
 const quotaService = new QuotaService({
@@ -225,7 +295,8 @@ const libraryService = new LibraryService({
   cfg,
   materials: materialStore,
   assertUserStorage: (uid, extra) => quotaService.assertUserStorageAllowed(uid, extra),
-  // 会话可访问判定：兼容模式（无账号）放行；多用户按共享角色矩阵（owner/editor/viewer 皆可引用素材入画布）
+  // 会话可访问判定：兼容模式（无账号）放行；多用户按共享角色矩阵（可读即可访问——
+  //   service 层兜底存在性；M79-AF：入仓为会话工作区写操作，viewer 写闸门由路由层把关 403）
   canAccessSession: (uid, sid) => access.canAccessSession(uid === 'local' ? undefined : ({ id: uid } as AuthUser), sid),
   sessionDirOf: (sid) => workspace.resolveDir(sid),
 })
@@ -413,6 +484,26 @@ const engine = new Engine({
   billingModelFor: (sid) => byokProvider.modelFor(sid),
   // M57：共享会话人类署名（记忆沉淀输入文本）
   userLabelFor: (sid) => userLabelResolver(sid),
+  // M79-E：@ 真人寻址（会话人类解析）与收尾持球（waiting_on + session-meta + inbox 提醒）
+  sessionHumans: (sid) => {
+    const session = sessions.getSession(sid)
+    return session ? sessionHumans(session, auth, sessionMembers) : []
+  },
+  onHandedTo: (sid, targets) => {
+    const session = sessions.getSession(sid)
+    notify.publish({ type: 'notify:session-meta', sessionId: sid, payload: { session } })
+    for (const target of targets) {
+      // 同会话同目标 60s 聚合（防多 agent 同波交还刷屏）
+      if (inboxStore.hasRecent(target, 'waiting', sid, undefined, 60_000)) continue
+      deliverInbox({
+        userId: target,
+        type: 'waiting',
+        title: session?.title ?? '会话',
+        sessionId: sid,
+        body: '在会话中被点名：等待你的回复',
+      })
+    }
+  },
 })
 // M35：定时任务服务（引用 engine.launch / activeRunOf 闭包避免循环依赖；建后回填 engine 工具层）
 const scheduleService = new ScheduleService({
@@ -443,6 +534,8 @@ app.use('/api/sessions/:id/media/upload', express.raw({ type: () => true, limit:
 app.use('/api/library/uploads', express.raw({ type: () => true, limit: '200mb' }))
 // M33：对话附件直传（raw 二进制 ≤200MB；同 M31 模式，须在全局 4mb 之前）
 app.use('/api/sessions/:id/attachments', express.raw({ type: () => true, limit: '200mb' }))
+// M79-Q：真人头像上传（raw 二进制 ≤4mb；业务上限 2MB，须在全局 4mb 之前）
+app.use('/api/auth/avatar', express.raw({ type: () => true, limit: '4mb' }))
 app.use(express.json({ limit: '4mb' }))
 // M10：浏览器首次授权入口（Docker/局域网）：/?token=<AUTH_TOKEN> → 种 cookie + 跳回 /（未配置 token 时为 no-op）
 app.use(createTokenEntryMiddleware(cfg))
@@ -487,6 +580,15 @@ app.use(
     auth,
     access,
     users,
+    // M79-A：收件箱 / 已读（/inbox、/sessions/:id/read、会话列表 unreadCount）
+    inbox: inboxStore,
+    reads: sessionReads,
+    // M79-C：好友（/friends、/users/search）+ 收件箱投递 + 在线状态
+    friends: friendStore,
+    deliverInbox,
+    presence,
+    // M79-D：会话隐藏 + 人物会话（/chats/*）
+    hides: sessionHides,
     engine,
     notify,
     // M22：连接中心
@@ -539,6 +641,33 @@ notify.attach(server)
 streamHub.attach(server)
 // M23：SSH 交互终端通道（/ws/ssh）
 sshTerminalHub.attach(server)
+
+// M79-A：收件箱保留期清理（启动一轮 + 每日一轮；仅删已读过期项，未读恒保留）
+const inboxCleanup = (): void => {
+  try {
+    const removed = inboxStore.cleanup(cfg.inboxRetentionDays)
+    if (removed > 0) log.info({ removed }, '收件箱已清理过期的已读项')
+  } catch (err) {
+    log.warn({ err }, '收件箱清理失败（下轮重试）')
+  }
+}
+inboxCleanup()
+const inboxCleanupTimer = setInterval(inboxCleanup, 86_400_000)
+inboxCleanupTimer.unref?.()
+
+// M79-L：多实例维护轮（db 模式）——总线保留期清理 + presence 心跳（防长连行 stale）+ stale 行回收
+const busMaintenanceTimer = cfg.notifyBus === 'db' ? setInterval(() => {
+  try {
+    notifyBusStore?.cleanup(cfg.notifyBusRetentionMinutes)
+    if (presenceInstances) {
+      presenceInstances.touchInstance(cfg.instanceId)
+      presenceInstances.pruneStale(PRESENCE_STALE_MS * 3)
+    }
+  } catch (err) {
+    log.warn({ err }, '总线维护轮失败（下轮重试）')
+  }
+}, 30_000) : undefined
+busMaintenanceTimer?.unref?.()
 
 const host = cfg.bindAll ? '0.0.0.0' : '127.0.0.1'
 server.listen(cfg.port, host, () => {

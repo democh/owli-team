@@ -6,7 +6,7 @@
  */
 import * as React from 'react'
 import { toast } from 'sonner'
-import { Loader2, MessageSquarePlus, Pencil, Plus, Search, Trash2, X } from 'lucide-react'
+import { EyeOff, Loader2, MessageCircle, MessageSquarePlus, Pencil, Plus, Search, Trash2, Users, X } from 'lucide-react'
 import { apiGet } from '../../lib/api'
 import { labelOfMemberKey } from '../../lib/members'
 import { useAgentStore } from '../../stores/agent-store'
@@ -19,6 +19,8 @@ import { Button } from '../ui/button'
 import { Input } from '../ui/input'
 import { Badge } from '../ui/badge'
 import { useAuthStore } from '../../stores/auth-store'
+import { useFriendsStore } from '../../stores/friends-store'
+import { ContactsPanel } from '../contacts/ContactsPanel'
 // M57 P2：共享角色（列表徽章 / 操作 gating）依赖 SessionSummary.role（服务端下发）
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '../ui/dialog'
 import { CreateSessionDialog, type CreateSource } from './CreateSessionDialog'
@@ -57,6 +59,22 @@ export function SessionList({ onSelect }: SessionListProps): React.JSX.Element {
   const unread = useWsStore((s) => s.unread)
   // M57 P3：本人 id（列表预览署名判定「你」/ 昵称）
   const myUserId = useAuthStore((s) => s.user?.id)
+  // M79-C：左栏页签（会话 | 联系人；仅多用户模式渲染）与待处理请求角标
+  const multiUser = useAuthStore((s) => s.status.multiUser)
+  const leftTab = useUiStore((s) => s.leftTab)
+  const pendingCount = useFriendsStore((s) => s.pendingCount)
+  // M79-F：会话筛选 chip（团队 / 聊天；默认选中第一个「团队」）
+  const sessionFilter = useUiStore((s) => s.sessionFilter)
+  const isChatKind = (kind?: string): boolean => kind === 'direct' || kind === 'group'
+  const visibleSessions = React.useMemo(
+    () =>
+      sessionFilter === 'all'
+        ? sessions
+        : sessionFilter === 'chat'
+          ? sessions.filter((s) => isChatKind(s.kind))
+          : sessions.filter((s) => !isChatKind(s.kind)),
+    [sessions, sessionFilter],
+  )
   // M31 修订：其他会话的画布写入标记（agent 写入小点；切到该会话即清零）
   const otherCanvasWrites = useUiStore((s) => s.otherCanvasWrites)
   React.useEffect(() => {
@@ -151,6 +169,37 @@ export function SessionList({ onSelect }: SessionListProps): React.JSX.Element {
 
   return (
     <div className="flex h-full min-h-0 flex-col">
+      {/* M79-C：左栏页签（会话 | 联系人；仅多用户模式渲染） */}
+      {multiUser && (
+        <div className="flex h-9 shrink-0 items-center gap-1 border-b px-2">
+          {(['sessions', 'contacts'] as const).map((tab) => (
+            <button
+              key={tab}
+              type="button"
+              className={cn(
+                'flex items-center gap-1 rounded-full px-2.5 py-1 text-[12px] transition-colors',
+                leftTab === tab ? 'bg-primary/10 font-medium text-primary' : 'text-muted-foreground hover:text-foreground',
+              )}
+              onClick={() => useUiStore.getState().setLeftTab(tab)}
+            >
+              {tab === 'sessions' ? '会话' : '联系人'}
+              {tab === 'contacts' && pendingCount > 0 && (
+                <Badge
+                  variant="destructive"
+                  className="h-4 min-w-4 justify-center px-1 text-[10px]"
+                  aria-label={`${pendingCount} 条好友请求`}
+                >
+                  {pendingCount > 99 ? '99+' : pendingCount}
+                </Badge>
+              )}
+            </button>
+          ))}
+        </div>
+      )}
+      {multiUser && leftTab === 'contacts' ? (
+        <ContactsPanel onSelectSession={onSelect} />
+      ) : (
+        <>
       <div className="flex h-11 shrink-0 items-center justify-between border-b px-3">
         <span className="text-[13px] font-semibold">
           会话
@@ -162,6 +211,32 @@ export function SessionList({ onSelect }: SessionListProps): React.JSX.Element {
           </Button>
         </div>
       </div>
+
+      {/* M79-F 修订：筛选 chip（团队 / 聊天；仅多用户模式）——不设「全部」项：默认选中第一个，点选过滤 / 再点取消回全部 */}
+      {multiUser && (
+        <div className="flex shrink-0 items-center gap-1 border-b px-2 py-1">
+          {(
+            [
+              ['team', '团队'],
+              ['chat', '聊天'],
+            ] as const
+          ).map(([key, label]) => (
+            <button
+              key={key}
+              type="button"
+              className={cn(
+                'rounded-full px-2 py-0.5 text-[11px] transition-colors',
+                sessionFilter === key
+                  ? 'bg-primary/10 font-medium text-primary'
+                  : 'text-muted-foreground hover:text-foreground',
+              )}
+              onClick={() => useUiStore.getState().setSessionFilter(sessionFilter === key ? 'all' : key)}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
 
       <div className="shrink-0 border-b px-2 py-1.5">
         <div className="relative">
@@ -236,9 +311,15 @@ export function SessionList({ onSelect }: SessionListProps): React.JSX.Element {
             </div>
           </div>
         )}
+        {/* M79-F：筛选后无结果（列表非空） */}
+        {!loading && sessions.length > 0 && visibleSessions.length === 0 && (
+          <div className="px-2 py-8 text-center text-[12.5px] text-muted-foreground">
+            没有匹配「{sessionFilter === 'chat' ? '聊天' : '团队'}」的会话
+          </div>
+        )}
 
         <div className="space-y-1">
-          {sessions.map((s) => {
+          {visibleSessions.map((s) => {
             const isActive = s.id === currentId
             const count = unread[s.id] ?? 0
             const last = s.lastMessage
@@ -267,6 +348,11 @@ export function SessionList({ onSelect }: SessionListProps): React.JSX.Element {
               >
                 {isActive && <span className="absolute inset-y-2 left-0 w-[3px] rounded-r-full bg-primary" aria-hidden />}
                 <div className="flex items-center gap-1.5">
+                  {s.kind === 'direct' ? (
+                    <MessageCircle className="size-3.5 shrink-0 text-muted-foreground" aria-label="私聊" />
+                  ) : s.kind === 'group' ? (
+                    <Users className="size-3.5 shrink-0 text-muted-foreground" aria-label="群聊" />
+                  ) : null}
                   <span className={cn('min-w-0 flex-1 truncate text-[13px] font-medium', isActive && 'text-primary')}>
                     {s.title}
                   </span>
@@ -287,36 +373,73 @@ export function SessionList({ onSelect }: SessionListProps): React.JSX.Element {
                     />
                   )}
                   {count > 0 && (
-                    <Badge variant="destructive" className="badge-pop h-4 min-w-4 justify-center px-1 text-[10px]">
+                    <Badge
+                      variant="destructive"
+                      className="badge-pop h-4 min-w-4 justify-center px-1 text-[10px]"
+                      aria-label={`${count} 条未读`}
+                    >
                       {count > 99 ? '99+' : count}
                     </Badge>
                   )}
                   <span className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
-                    {canWrite && (
-                      <button
-                        type="button"
-                        className="rounded p-1 text-muted-foreground hover:bg-background hover:text-foreground"
-                        title="重命名"
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          openRename(s.id, s.title)
-                        }}
-                      >
-                        <Pencil className="size-3" />
-                      </button>
-                    )}
-                    {isOwner && (
-                      <button
-                        type="button"
-                        className="rounded p-1 text-muted-foreground hover:bg-background hover:text-destructive"
-                        title="删除（含工作区）"
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          setDialog({ mode: 'delete', id: s.id, title: s.title })
-                        }}
-                      >
-                        <Trash2 className="size-3" />
-                      </button>
+                    {s.kind === 'direct' || s.kind === 'group' ? (
+                      // M79-D：chat 形态仅提供「隐藏」（DM「删除」语义；新消息自动复现）；
+                      // M79-AA 群管理补全：群聊重命名入口（仅群主——服务端同规收紧，editor 403）
+                      <>
+                        {s.kind === 'group' && isOwner && (
+                          <button
+                            type="button"
+                            className="rounded p-1 text-muted-foreground hover:bg-background hover:text-foreground"
+                            title="重命名群聊"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              openRename(s.id, s.title)
+                            }}
+                          >
+                            <Pencil className="size-3" />
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          className="rounded p-1 text-muted-foreground hover:bg-background hover:text-foreground"
+                          title="隐藏会话（新消息自动复现）"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            void useSessionStore.getState().hideSession(s.id)
+                          }}
+                        >
+                          <EyeOff className="size-3" />
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        {canWrite && (
+                          <button
+                            type="button"
+                            className="rounded p-1 text-muted-foreground hover:bg-background hover:text-foreground"
+                            title="重命名"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              openRename(s.id, s.title)
+                            }}
+                          >
+                            <Pencil className="size-3" />
+                          </button>
+                        )}
+                        {isOwner && (
+                          <button
+                            type="button"
+                            className="rounded p-1 text-muted-foreground hover:bg-background hover:text-destructive"
+                            title="删除（含工作区）"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              setDialog({ mode: 'delete', id: s.id, title: s.title })
+                            }}
+                          >
+                            <Trash2 className="size-3" />
+                          </button>
+                        )}
+                      </>
                     )}
                   </span>
                 </div>
@@ -335,6 +458,8 @@ export function SessionList({ onSelect }: SessionListProps): React.JSX.Element {
           </>
         )}
       </div>
+        </>
+      )}
 
       {/* 新建（M50 组队台：来源 → 角色池 → 编制，一次成局） */}
       <CreateSessionDialog

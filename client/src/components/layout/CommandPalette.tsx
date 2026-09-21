@@ -74,6 +74,8 @@ export function CommandPalette(): React.JSX.Element {
   const quietMode = useUiStore((s) => s.quietMode)
   // M57：管理面命令（Agent / Skill / MCP / 连接 / 用户）仅 admin 展示
   const isAdmin = useAuthStore((s) => s.isAdmin)
+  // M79-F：联系人 / 群聊命令仅多用户模式展示
+  const multiUser = useAuthStore((s) => s.status.multiUser)
   const sessions = useSessionStore((s) => s.sessions)
   const currentId = useSessionStore((s) => s.currentId)
   const active = useRunStore((s) => s.active)
@@ -189,6 +191,39 @@ export function CommandPalette(): React.JSX.Element {
             新建会话
           </Command.Item>
         </Command.Group>
+
+        {/* M79-F：社交协作命令（联系人 / 新建群聊；仅多用户模式） */}
+        {multiUser && (
+          <Command.Group heading="联系人" className={GROUP_CLS}>
+            <Command.Item
+              value="contacts 打开联系人 好友"
+              className={ITEM_CLS}
+              onSelect={() =>
+                run(() => {
+                  useUiStore.getState().setLeftPanelOpen(true)
+                  useUiStore.getState().setLeftTab('contacts')
+                })
+              }
+            >
+              <Users className="size-3.5 shrink-0 text-muted-foreground" />
+              打开联系人
+            </Command.Item>
+            <Command.Item
+              value="new group 新建群聊 群聊"
+              className={ITEM_CLS}
+              onSelect={() =>
+                run(() => {
+                  useUiStore.getState().setLeftPanelOpen(true)
+                  useUiStore.getState().setLeftTab('contacts')
+                  useUiStore.getState().requestGroupCreate()
+                })
+              }
+            >
+              <UserPlus className="size-3.5 shrink-0 text-muted-foreground" />
+              新建群聊
+            </Command.Item>
+          </Command.Group>
+        )}
 
         {(presets.length > 0 || groups.length > 0) && (
           <Command.Group heading="快速组队" className={GROUP_CLS}>

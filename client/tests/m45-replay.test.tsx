@@ -127,14 +127,38 @@ describe('M45 · deriveRows 集成（结构键 → 节点）', () => {
 // ---------- 组件 ----------
 
 describe('M45 · WaveScrubber（波次回放条）', () => {
-  function renderScrubber(over: Partial<React.ComponentProps<typeof WaveScrubber>> = {}): {
+  function renderScrubber(
+    over: Partial<React.ComponentProps<typeof WaveScrubber>> = {},
+    opts: { expand?: boolean } = {},
+  ): {
     container: HTMLElement
     onJump: ReturnType<typeof vi.fn>
   } {
     const onJump = vi.fn()
     const { container } = render(<WaveScrubber nodes={NODES} onJump={onJump} {...over} />)
+    // M79-AA：默认收起——除显式 expand:false 外先展开再断言
+    if (opts.expand !== false) {
+      fireEvent.click(container.querySelector('[data-wave-toggle]')!)
+    }
     return { container, onJump }
   }
+
+  it('M79-AA：默认收起（仅图标开关，无文字）；点击展开 / 收起', () => {
+    const onJump = vi.fn()
+    const { container } = render(<WaveScrubber nodes={NODES} onJump={onJump} />)
+    const toggle = container.querySelector('[data-wave-toggle]') as HTMLButtonElement
+    expect(toggle).toBeTruthy()
+    expect(toggle.textContent).toBe('') // 不需要「回放」文字
+    expect(container.querySelectorAll('[data-wave-tick]')).toHaveLength(0) // 默认隐藏
+    expect(toggle.getAttribute('aria-expanded')).toBe('false')
+
+    fireEvent.click(toggle)
+    expect(container.querySelectorAll('[data-wave-tick]')).toHaveLength(3)
+    expect(toggle.getAttribute('aria-expanded')).toBe('true')
+
+    fireEvent.click(toggle)
+    expect(container.querySelectorAll('[data-wave-tick]')).toHaveLength(0)
+  })
 
   it('刻度 = 波次节点；点选跳转首条成员消息；当前波高亮与计数', () => {
     const { container, onJump } = renderScrubber({ activeIndex: 2 })

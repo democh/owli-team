@@ -99,6 +99,39 @@ describe('Mock 镜像面覆盖：全量角色四件套齐备', () => {
     }
   })
 
+  it('M79-K：剧本标记 [[handoff:姓名]] → 行首 @该姓名 指定交还（覆盖默认承接 / 交还用户）', async () => {
+    const provider = new MockProvider({ delayMs: 0 })
+    const req: ChatRequest = {
+      system: '',
+      messages: [{ role: 'user', content: `【用户】优化${TOPIC}体验 [[handoff:张三]]` }],
+      meta: { agentId: 'pm', participantIds: ['pm'], spokenAgentIds: ['pm'] },
+    }
+    let out = ''
+    for await (const chunk of provider.chatStream(req, new AbortController().signal)) {
+      if (chunk.type === 'text') out += chunk.text
+    }
+    expect(out).toMatch(/(^|\n)@张三 请你确认这一步。$/)
+
+    // 共享会话昵称前缀（M57 P2 署名 `【e2e-admin】…`）同样命中（否则共享会话里标记/触发块静默失效）
+    const sharedReq: ChatRequest = {
+      system: '',
+      messages: [
+        { role: 'user', content: '【用户】优化登录体验' },
+        { role: 'user', content: '【e2e-admin】请推进 [[handoff:李四]]' },
+      ],
+      meta: { agentId: 'pm', participantIds: ['pm'], spokenAgentIds: ['pm'] },
+    }
+    let sharedOut = ''
+    for await (const chunk of provider.chatStream(sharedReq, new AbortController().signal)) {
+      if (chunk.type === 'text') sharedOut += chunk.text
+    }
+    expect(sharedOut).toMatch(/(^|\n)@李四 请你确认这一步。$/)
+
+    // 无标记 → 维持现值（单成员编制交还用户；零差异）
+    const plain = await speak(provider, 'pm', ['pm'])
+    expect(plain).toContain('@用户')
+  })
+
   it('e2e/helpers.ts AGENT_NAME：与全部角色 id→name 逐一相等（E2E 转交断言的字面量镜像）', () => {
     const lib = realLibrary()
     const src = fs.readFileSync(E2E_HELPERS, 'utf8')

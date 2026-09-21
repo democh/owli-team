@@ -10,11 +10,18 @@
  * 每次写操作响应回传最新共享视图（服务端为真相）；面板打开时按 sessionId 懒加载。
  */
 import { create } from 'zustand'
-import type { SessionShare, SessionShareRole } from '@multi-agent/shared'
+import type { UserAvatar, SessionShare, SessionShareRole } from '@multi-agent/shared'
 import { apiDelete, apiGet, apiPatch, apiPost } from '../lib/api'
 
 export interface SharesView {
-  owner?: { userId: string; username: string; displayName: string }
+  owner?: {
+    userId: string
+    username: string
+    displayName: string
+    /** M79-B：画像投影（与成员行一致） */
+    headline?: string
+    avatar?: UserAvatar
+  }
   members: SessionShare[]
 }
 

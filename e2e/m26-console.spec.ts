@@ -26,9 +26,11 @@ const GROUP_ID = 'development' // 研发团队（真实资产目录）
 const SKILL_DESC = 'E2E 控制台链路校验用技能（用例结束自动清理）'
 
 const REPO_ROOT = process.cwd()
-/** 回收站候选根：e2e 隔离目录优先；兼容复用本机开发服务器（DATA_DIR=data）的情形 */
+/** 数据目录 slug 跟随 PW_DATA_DIR（与 playwright.config 的 webServer env 同源；轮换目录时回收站同轨） */
+const DATA_SLUG = process.env.PW_DATA_DIR || 'e2e-main'
+/** 回收站候选根：当前 e2e 隔离目录优先；兼容复用本机开发服务器（DATA_DIR=data）的情形 */
 const TRASH_ROOTS = [
-  path.join(REPO_ROOT, 'data', 'e2e-main', 'trash', 'assets'),
+  path.join(REPO_ROOT, 'data', DATA_SLUG, 'trash', 'assets'),
   path.join(REPO_ROOT, 'data', 'trash', 'assets'),
 ]
 

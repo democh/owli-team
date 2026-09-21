@@ -23,7 +23,16 @@ const DECISION_TEXT: Record<string, string> = {
   custom: '已附反馈',
 }
 
-function PendingCard({ approval, hotkey }: { approval: ApprovalRequest; hotkey?: boolean }): React.JSX.Element {
+function PendingCard({
+  approval,
+  hotkey,
+  readOnly,
+}: {
+  approval: ApprovalRequest
+  hotkey?: boolean
+  /** M79-AF：只读共享（viewer）——不渲染决策按钮与快捷键（服务端另有 403 兜底） */
+  readOnly?: boolean
+}): React.JSX.Element {
   const agents = useAgentStore((s) => s.agents)
   const respondApproval = useRunStore((s) => s.respondApproval)
   const [busy, setBusy] = React.useState<string>()
@@ -33,7 +42,7 @@ function PendingCard({ approval, hotkey }: { approval: ApprovalRequest; hotkey?:
   const agent = approval.agentId ? agents.find((a) => a.id === approval.agentId) : undefined
 
   const decide = async (decision: 'approve' | 'reject' | 'custom'): Promise<void> => {
-    if (busy) return
+    if (busy || readOnly) return
     if (decision === 'custom' && !feedback.trim()) {
       toast.error('请填写修改意见后再提交')
       return
@@ -54,7 +63,7 @@ function PendingCard({ approval, hotkey }: { approval: ApprovalRequest; hotkey?:
   decideRef.current = decide
 
   React.useEffect(() => {
-    if (!hotkey) return
+    if (!hotkey || readOnly) return
     const onKey = (e: KeyboardEvent): void => {
       if (!(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey) return
       if (e.key === 'Enter') {
@@ -114,45 +123,53 @@ function PendingCard({ approval, hotkey }: { approval: ApprovalRequest; hotkey?:
         )}
 
         <div className="mt-2 flex items-center gap-1.5">
-          <Button size="sm" className="h-7 text-[12px]" disabled={!!busy} onClick={() => void decide('approve')}>
-            {busy === 'approve' ? <Loader2 className="size-3 animate-spin" /> : <Check className="size-3.5" />}
-            批准
-            {hotkey && (
-              <kbd className="ml-0.5 rounded border border-primary-foreground/25 bg-primary-foreground/15 px-1 font-mono text-[9.5px] leading-3.5">
-                ⌘⏎
-              </kbd>
-            )}
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            className="h-7 text-[12px]"
-            disabled={!!busy}
-            onClick={() => void decide('reject')}
-          >
-            {busy === 'reject' ? <Loader2 className="size-3 animate-spin" /> : <X className="size-3.5" />}
-            拒绝
-            {hotkey && (
-              <kbd className="ml-0.5 rounded border bg-muted px-1 font-mono text-[9.5px] leading-3.5 text-muted-foreground">
-                ⌘⌫
-              </kbd>
-            )}
-          </Button>
-          {customOpen ? (
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-7 text-[12px]"
-              disabled={!!busy}
-              onClick={() => void decide('custom')}
-            >
-              {busy === 'custom' && <Loader2 className="size-3 animate-spin" />}
-              提交反馈
-            </Button>
+          {readOnly ? (
+            <span className="text-[11px] text-amber-800/90">
+              只读共享（viewer）：无审批权限，是否放行由发起本轮的成员决定
+            </span>
           ) : (
-            <Button variant="ghost" size="sm" className="h-7 text-[12px]" onClick={() => setCustomOpen(true)}>
-              自定义反馈…
-            </Button>
+            <>
+              <Button size="sm" className="h-7 text-[12px]" disabled={!!busy} onClick={() => void decide('approve')}>
+                {busy === 'approve' ? <Loader2 className="size-3 animate-spin" /> : <Check className="size-3.5" />}
+                批准
+                {hotkey && (
+                  <kbd className="ml-0.5 rounded border border-primary-foreground/25 bg-primary-foreground/15 px-1 font-mono text-[9.5px] leading-3.5">
+                    ⌘⏎
+                  </kbd>
+                )}
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 text-[12px]"
+                disabled={!!busy}
+                onClick={() => void decide('reject')}
+              >
+                {busy === 'reject' ? <Loader2 className="size-3 animate-spin" /> : <X className="size-3.5" />}
+                拒绝
+                {hotkey && (
+                  <kbd className="ml-0.5 rounded border bg-muted px-1 font-mono text-[9.5px] leading-3.5 text-muted-foreground">
+                    ⌘⌫
+                  </kbd>
+                )}
+              </Button>
+              {customOpen ? (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-7 text-[12px]"
+                  disabled={!!busy}
+                  onClick={() => void decide('custom')}
+                >
+                  {busy === 'custom' && <Loader2 className="size-3 animate-spin" />}
+                  提交反馈
+                </Button>
+              ) : (
+                <Button variant="ghost" size="sm" className="h-7 text-[12px]" onClick={() => setCustomOpen(true)}>
+                  自定义反馈…
+                </Button>
+              )}
+            </>
           )}
           <span className="ml-auto text-[10.5px] text-amber-700/70">
             超时将自动拒绝
@@ -178,6 +195,9 @@ function ResolvedRow({ approval }: { approval: ApprovalRequest }): React.JSX.Ele
 export function ApprovalPanel(): React.JSX.Element | null {
   const currentId = useSessionStore((s) => s.currentId)
   const approvals = useRunStore((s) => s.approvals)
+  // M79-AF：只读共享（viewer）→ 审批卡仅展示、不渲染决策按钮（服务端另有定向 + 403 兜底）
+  const role = useSessionStore((s) => s.sessions.find((x) => x.id === s.currentId)?.role)
+  const readOnly = role === 'viewer'
   const mine = approvals.filter((a) => a.sessionId === currentId)
   if (!currentId || mine.length === 0) return null
 
@@ -187,7 +207,7 @@ export function ApprovalPanel(): React.JSX.Element | null {
   return (
     <div className={cn('shrink-0 pt-2', pending.length === 0 && 'pt-0')}>
       {pending.map((a, i) => (
-        <PendingCard key={a.id} approval={a} hotkey={i === 0} />
+        <PendingCard key={a.id} approval={a} hotkey={i === 0} readOnly={readOnly} />
       ))}
       {pending.length === 0 && resolved.map((a) => <ResolvedRow key={a.id} approval={a} />)}
     </div>

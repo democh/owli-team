@@ -10,6 +10,13 @@ import type { AccessService } from '../auth/access.js'
 import { assertRunAccess, createSessionAccessGuard } from '../auth/guards.js'
 import type { UserStore } from '../store/users.js'
 import { createAuthRouter } from './auth.js'
+import { createInboxRouter } from './inbox.js'
+import { createFriendsRouter } from './friends.js'
+import { createChatsRouter } from './chats.js'
+import type { InboxAddInput, InboxStore } from '../store/inbox.js'
+import type { SessionReadsStore } from '../store/session-reads.js'
+import type { FriendStore } from '../store/friends.js'
+import type { SessionHideStore } from '../store/session-hides.js'
 import { createLlmCredsRouter } from './llm-credentials.js'
 import { createSharesRouter } from './shares.js'
 import { createUsageRouter } from './usage.js'
@@ -184,6 +191,18 @@ export interface ApiDeps {
   loginLimiter: RequestHandler
   /** M57：管理面守卫（admin / 单用户兼容模式放行） */
   requireAdmin: RequestHandler
+  /** M79-A：用户收件箱存储（缺省 = /inbox 返回空 + 会话列表不附加未读，测试零影响） */
+  inbox?: InboxStore
+  /** M79-A：会话已读游标存储（缺省 = 会话列表不附加未读） */
+  reads?: SessionReadsStore
+  /** M79：收件箱投递（写库 + 用户主题实时帧；缺省 = 仅落库由调用方保证） */
+  deliverInbox?: (input: InboxAddInput) => void
+  /** M79-C：好友关系存储（缺省 = /friends 路由不挂载，测试零影响） */
+  friends?: FriendStore
+  /** M79-D：会话隐藏存储（DM「删除」语义；缺省 = 隐藏过滤跳过） */
+  hides?: SessionHideStore
+  /** M79-C：在线状态读取（好友清单 / 搜索结果随行投影；缺省 = 全部离线） */
+  presence?: { isOnline: (userId: string) => boolean; lastSeenAt: (userId: string) => string | undefined }
 }
 
 export function createApiRouter(deps: ApiDeps): Router {
@@ -200,12 +219,31 @@ export function createApiRouter(deps: ApiDeps): Router {
     })
   })
 
+  /** M79-A：实时通道观测（admin）：连接数 / 活跃用户 / 队列水位 / 踢出与 resync 计数 */
+  router.get('/ws/stats', deps.requireAdmin, (_req, res) => {
+    res.json(deps.notify.stats())
+  })
+
   // ---------- M57：多用户（认证 / 账号 / 归属守卫 / 管理面 gating） ----------
 
   const userOf = (req: Request): AuthUser | undefined => (req as Request & { user?: AuthUser }).user
 
   // 认证与账号（/auth/status|setup|login 在中间件白名单内公开；其余需登录态）
-  router.use(createAuthRouter({ cfg: deps.cfg, auth: deps.auth, users: deps.users, loginLimiter: deps.loginLimiter }))
+  router.use(
+    createAuthRouter({
+      cfg: deps.cfg,
+      auth: deps.auth,
+      users: deps.users,
+      loginLimiter: deps.loginLimiter,
+      // M79-Y：资料变更 → 好友联系人列表实时刷新（用户主题帧；好友 store 缺省时静默）
+      onProfileChanged: (userId) => {
+        if (!deps.friends) return
+        for (const friend of deps.friends.listFriends(userId)) {
+          deps.notify.publishToUser(friend.userId, 'notify:friends-changed', { userId })
+        }
+      },
+    }),
+  )
   // M57 P3：个人用量（GET /usage/me）
   router.use(createUsageRouter(deps))
   // M68：用户素材库（per-user；独立菜单管理页面的服务端面）
@@ -243,6 +281,63 @@ export function createApiRouter(deps: ApiDeps): Router {
   )
 
   /**
+   * M79-C：好友（请求 / 接受 / 拉黑 / 成员搜索）+ 通知联动。
+   * 注册于会话守卫之前（/friends 与 /users/search 无会话域）；注册于 users 管理路由之后（路径不冲突）。
+   */
+  if (deps.friends) {
+    router.use(
+      createFriendsRouter({
+        cfg: deps.cfg,
+        access: deps.access,
+        auth: deps.auth,
+        users: deps.users,
+        friends: deps.friends,
+        audit: deps.audit,
+        deliver: deps.deliverInbox,
+        publishFriendsChanged: (userId, counterpartId, action) =>
+          deps.notify.publishToUser(userId, 'notify:friends-changed', { userId: counterpartId, action }),
+        presence: deps.presence,
+      }),
+    )
+  }
+
+  /**
+   * M79-D：人物会话（私聊 / 群聊创建；免路由判定在 sessions 消息入口）。
+   */
+  if (deps.friends) {
+    router.use(
+      createChatsRouter({
+        access: deps.access,
+        auth: deps.auth,
+        sessions: deps.sessions,
+        members: deps.members,
+        friends: deps.friends,
+        hides: deps.hides,
+        deliver: deps.deliverInbox,
+        publishShareChanged: (sessionId, userId, action, role) =>
+          deps.notify.publish({ type: 'notify:share-changed', sessionId, payload: { sessionId, userId, action, role } }),
+      }),
+    )
+  }
+
+  /**
+   * M79-A：收件箱与已读（注册在会话守卫之前——`POST /sessions/:id/read` 为读级放行：
+   * viewer 也应能清未读；其内部自行做 assertSession 归属校验）。
+   */
+  if (deps.inbox && deps.reads) {
+    router.use(
+      createInboxRouter({
+        inbox: deps.inbox,
+        reads: deps.reads,
+        access: deps.access,
+        auth: deps.auth,
+        publishRead: (userId, sessionId, lastReadSeq) =>
+          deps.notify.publishToUser(userId, 'notify:read-state', { sessionId, lastReadSeq, ts: Date.now() }),
+      }),
+    )
+  }
+
+  /**
    * 会话子资源全量守卫（M57 P1 + P2）：`/sessions/:id` 及其全部子路径（消息 / 成员 / 交付件 / 画布 / 日程 / 绑定……）。
    * 读取 = owner ∪ 共享成员；写入（POST/PATCH/PUT/DELETE）= owner / editor，viewer → 403
    *（例外 `POST /sessions/:id/leave` 允许 viewer 自助退出）；不存在 / 跨用户一律 404。
@@ -258,6 +353,26 @@ export function createApiRouter(deps: ApiDeps): Router {
       audit: deps.audit,
       publish: (sessionId, userId, action, role) =>
         deps.notify.publish({ type: 'notify:share-changed', sessionId, payload: { sessionId, userId, action, role } }),
+      // M79：被邀请人收件箱（实时到达，修复「刷新才发现」）
+      deliver: deps.deliverInbox,
+      // M79-D：群聊邀请限「邀请者好友」
+      friends: deps.friends,
+      // M79-E：成员移除 → 持球方清洗 + session-meta 广播
+      onMemberRemoved: (sessionId, userId) => {
+        if (deps.sessions.clearWaitingForUsers(sessionId, [userId])) {
+          deps.notify.publish({
+            type: 'notify:session-meta',
+            sessionId,
+            payload: { session: deps.sessions.getSession(sessionId) },
+          })
+        }
+      },
+      // M79-AA 群管理补全：退出 / 移出留痕——system 事件条 + turn-end 广播（同会话 upsert / 跨会话列表预览）
+      appendSystem: (sessionId, content) => {
+        if (!deps.sessions.getSession(sessionId)) return
+        const message = deps.sessions.appendMessage({ sessionId, role: 'system', content, mentions: [], status: 'complete' })
+        deps.notify.publish({ type: 'notify:turn-end', sessionId, payload: { message } })
+      },
     }),
   )
 

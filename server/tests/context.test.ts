@@ -138,6 +138,34 @@ describe('M2：五层装配器', () => {
     expect(out.layers.l3).toBeGreaterThan(0)
   })
 
+  it('M79-J（§8.8）：人类花名册——在场人类注入 <human_roster>（含头衔与交还口径）；无人类零差异', () => {
+    const base = {
+      protocol: '<role_contract>\n测试协议</role_contract>',
+      agent,
+      agentBody: '我是产品经理。',
+      roster: [agent],
+      preloadedSkills: [],
+      skillsIndex: '',
+      workspaceListing: '',
+      memoryBlock: '',
+      summaryBlock: '',
+    }
+    const without = buildSystemPrompt(base)
+    expect(without.text).not.toContain('<human_roster>')
+
+    const withHumans = buildSystemPrompt({
+      ...base,
+      humans: [
+        { displayName: '张三', username: 'zhang', headline: '产品经理' },
+        { displayName: '李四', username: 'li' },
+      ],
+    })
+    expect(withHumans.text).toContain('<human_roster>')
+    expect(withHumans.text).toContain('张三（产品经理） · @zhang')
+    expect(withHumans.text).toContain('李四 · @li')
+    expect(withHumans.text).toContain('在回复行首用 @显示名')
+  })
+
   it('foldWorkspaceListing：>20 行折叠为目录统计，少量文件原样返回', () => {
     const listing = Array.from({ length: 30 }, (_, i) => `- docs/f${i}.md（1KB）`).join('\n')
     const folded = foldWorkspaceListing(listing)

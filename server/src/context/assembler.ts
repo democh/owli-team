@@ -5,13 +5,18 @@
  * L1 记忆（<session_memory>） 永不裁剪，超限按 kind 优先级丢（MemoryStore.render）
  * L1.5 召回（<recalled_memory>）语义召回（M25）；预算截断由召回层完成
  * L2 摘要（<session_summary>）永不裁剪，滚动合并
- * L3 半静态（花名册 / 技能 / 工作区）可裁剪：>20 文件折叠为目录级统计
+ * L3 半静态（花名册 / 技能 / 工作区 / 运行时）可裁剪：>20 文件折叠为目录级统计
  * L4 动态（最近若干回合原文） 按 token 预算从后往前填「回合组」
  * L5 工具（历史工具调用）     优先裁剪：最近 N 条保留摘要，更早折叠
  *
  * 回合组原子性：切分/填充以组为单位，组内消息不拆分（当前架构历史中无独立
  * tool 消息，工具结果跟随其所属 agent 消息渲染，因此不存在「tool 消息孤儿」）。
+ *
+ * 运行时上下文（时间 / 系统）：两级注入以保护前缀缓存——日期 / 时区 / 运行环境
+ * 进 L3 尾段 <runtime_context>（天级稳定，跨天前 system 字节级一致）；精确时刻
+ * 进回合指令（每回合天然新建的最后一条 user 消息，零额外缓存损失）。
  */
+import os from 'node:os'
 import type { AgentDefinition, ChatMessage, MessageAttachment, Plan, SoulMeta, ToolCallRecord, TurnMode } from '@multi-agent/shared'
 import type { LlmContentPart, LlmMessageInput } from '../llm/provider.js'
 import { isVisionImage } from '../util/mime.js'
@@ -72,10 +77,14 @@ export interface SystemPromptInput {
   recalledBlock?: string
   /** L2：历史摘要块（<session_summary>…</session_summary>，未压缩时为空串） */
   summaryBlock: string
+  /** M79-J（§8.8）：会话人类成员（<human_roster> 软约束注入；无人类 = 不注入，旧文本零差异） */
+  humans?: Array<{ displayName: string; username: string; headline?: string }>
   /** M24：执行中计划块（<active_plans>…</active_plans>，无执行计划时为空串） */
   activePlansBlock?: string
   /** M28：按需工具发现块（<tool_discovery>…</tool_discovery>；未启用 / 无未加载条目时为空串） */
   toolDiscoveryBlock?: string
+  /** 运行时上下文（L3 尾段 <runtime_context>：日期 / 时区 / 运行环境）；缺省取当前时刻 */
+  now?: Date
 }
 
 export interface SystemLayerTokens {
@@ -108,6 +117,55 @@ export function foldWorkspaceListing(listing: string, maxLines = 20): string {
     .slice(0, 12)
     .map(([dir, n]) => `- ${dir}/：${n} 个文件`)
   return `${summary.join('\n')}\n（文件较多已折叠为目录统计；用 list_dir 查看明细）`
+}
+
+// ---------- 运行时上下文（时间 / 系统） ----------
+
+const WEEKDAYS = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'] as const
+
+function pad2(n: number): string {
+  return String(n).padStart(2, '0')
+}
+
+/** 运行系统展示名（darwin → macOS 等；带架构） */
+function platformLabel(): string {
+  const arch = os.arch()
+  const name =
+    process.platform === 'darwin'
+      ? 'macOS'
+      : process.platform === 'win32'
+        ? 'Windows'
+        : process.platform === 'linux'
+          ? 'Linux'
+          : process.platform
+  return `${name}（${arch}）`
+}
+
+/** 本地时区展示（IANA 名 + UTC 偏移；如 Asia/Shanghai（UTC+8）） */
+function timezoneLabel(now: Date): string {
+  const zone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
+  const offsetMin = -now.getTimezoneOffset()
+  const sign = offsetMin >= 0 ? '+' : '-'
+  const abs = Math.abs(offsetMin)
+  const offset = abs % 60 === 0 ? `UTC${sign}${abs / 60}` : `UTC${sign}${Math.floor(abs / 60)}:${pad2(abs % 60)}`
+  return `${zone}（${offset}）`
+}
+
+/**
+ * 运行时上下文块（L3 尾段）：当前日期 / 时区 / 运行环境。
+ * 天级稳定：同一天内任意时刻装配结果字节级一致（不破坏 system 前缀缓存）；
+ * 精确时刻由回合指令注入（buildTurnInstruction），跨天时仅尾段变化。
+ */
+export function buildRuntimeContext(now: Date = new Date()): string {
+  const weekday = WEEKDAYS[now.getDay()]
+  const date = `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(now.getDate())}`
+  return [
+    '<runtime_context>',
+    `- 当前日期：${date}（${weekday}）；时区：${timezoneLabel(now)}`,
+    `- 运行环境：${platformLabel()}`,
+    '- 涉及「今天 / 明天 / 本周 / 今年」等相对日期时一律以此为准；精确时刻见回合指令；时效性信息（价格 / 政策 / 新闻 / 版本）不要凭训练记忆臆断，以可核实的最新来源为准。',
+    '</runtime_context>',
+  ].join('\n')
 }
 
 /** 灵魂段（L0 组成部分：只影响表达风格；职责与协议优先级更高） */
@@ -172,6 +230,15 @@ export function buildSystemPrompt(input: SystemPromptInput): SystemPromptOutput 
         : ''
     }`,
   ]
+  // M79-J（§8.8）：人类花名册软约束（仅当在场人类非空；<300 token）
+  if (input.humans && input.humans.length > 0) {
+    const humanLine = input.humans
+      .map((h) => `${h.displayName}${h.headline ? `（${h.headline}）` : ''} · @${h.username}`)
+      .join(' · ')
+    l3Sections.push(
+      `<human_roster>\n本会话人类成员（可点名交付）：${humanLine}\n人类之间的交流是讨论与协调，无需你响应；仅当被点名或指令明确指向你时行动。\n需要把任务交给具体的人：在回复行首用 @显示名，运行将交还并通知对方。\n</human_roster>`,
+    )
+  }
   if (preloadedSkills.length > 0) {
     l3Sections.push(preloadedSkills.map((s) => `# 已装载技能：${s.name}\n\n${s.body.trim()}`).join('\n\n'))
   }
@@ -187,6 +254,8 @@ export function buildSystemPrompt(input: SystemPromptInput): SystemPromptOutput 
   // M28：按需工具发现（L3 半静态；未加载能力类别概览 + tool_search 引导）
   const toolDiscoveryBlock = (input.toolDiscoveryBlock ?? '').trim()
   if (toolDiscoveryBlock) l3Sections.push(toolDiscoveryBlock)
+  // 运行时上下文（L3 尾段；天级稳定——同一天内字节级一致，时刻不进 system 以保护前缀缓存）
+  l3Sections.push(buildRuntimeContext(input.now))
   const l3 = l3Sections.join('\n\n---\n\n')
 
   const sections = [l0, l1, l1_5, l2, l3].filter((s) => s.trim() !== '')
@@ -477,8 +546,12 @@ export interface TurnInstructionExtra {
   handoffs?: Array<{ from: string; expectedOutput?: string }>
   /** M77：本回合说话成员键（分身实例；缺省 = 经典实例 agent.id） */
   selfKey?: string
+  /** M79-J（§8.8）：在场人类（收尾段「行首 @显示名 交还」指令；无人类 = 不注入） */
+  humans?: Array<{ displayName: string }>
   /** 交付规格声明（用户消息解析；execute 波注入档位提示行） */
   deliverableSpec?: DeliverableTier
+  /** 运行时时刻（HH:mm 行）；缺省取当前时刻 */
+  now?: Date
 }
 
 /** 回合指令：附加在窗口末尾的最后一条 user 消息（M24：按范式选择模板；execute 保持现文本） */
@@ -534,6 +607,9 @@ export function buildTurnInstruction(
   }
   // 输出语言纪律（全局协议 <output_contract> 的回合级复述）：防止工具调用前的说明句漂移为英文
   lines.splice(1, 0, '- 全程使用简体中文输出（含工具调用前的说明句）；技术术语 / 工具名 / 文件路径可保留英文。')
+  // 运行时时刻（分钟级——回合指令每回合天然新建，不进 system 以保护前缀缓存；日期 / 时区见 <runtime_context>）
+  const now = extra.now ?? new Date()
+  lines.splice(1, 0, `- 当前时刻：${pad2(now.getHours())}:${pad2(now.getMinutes())}（当天日期与时区见系统提示）。`)
   // M24：计划派发 —— 你负责的步骤（完成后用 update_plan_step 汇报）
   if (extra.planSteps?.length) {
     const assigned = extra.planSteps
@@ -545,6 +621,11 @@ export function buildTurnInstruction(
   for (const handoff of extra.handoffs ?? []) {
     if (!handoff.expectedOutput) continue
     lines.push(`- 上一棒期望（来自 ${handoff.from}）：${handoff.expectedOutput}`)
+  }
+  // M79-J（§8.8）：人类交还指令（仅在场人类非空；行首 @显示名 = 指定交还）
+  if ((extra.humans?.length ?? 0) > 0) {
+    const names = extra.humans!.map((h) => `@${h.displayName}`).join(' / ')
+    lines.push(`- 可把任务交还给具体的人（行首 ${names}），或 @用户 泛指交还。`)
   }
   return lines.join('\n')
 }

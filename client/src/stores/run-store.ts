@@ -68,6 +68,19 @@ interface RunState {
   reorderQueue: (agentIds: string[]) => Promise<void>
 }
 
+// ---------- M79-V：run 流断流自动重连 ----------
+/** 断流自动重附着：退避间隔 / 最大重试次数（耗尽后走刷新兜底并提示一次） */
+const STREAM_RETRY_DELAY_MS = 3000
+const STREAM_MAX_RETRIES = 2
+let retryTimer: ReturnType<typeof setTimeout> | undefined
+
+function clearRetryTimer(): void {
+  if (retryTimer) {
+    clearTimeout(retryTimer)
+    retryTimer = undefined
+  }
+}
+
 // ---------- delta 批缓冲（§10.3）：40ms 窗口合并写入 ----------
 const DELTA_FLUSH_MS = 40
 let pendingDeltas = new Map<string, string>()
@@ -331,40 +344,74 @@ export const useRunStore = create<RunState>((set, get) => ({
 
   attach: (runId, sessionId) => {
     controller?.abort()
+    clearRetryTimer()
     // 局部引用：闭包内判断本流是否被主动取消（模块级 controller 会被后续 attach 覆盖）
     const myController = new AbortController()
     controller = myController
     set({ runId, sessionId, active: true, approvals: [] })
-    // M8：重附着时恢复审批卡状态（挂起 + 历史）
-    void apiGet<{ approvals: ApprovalRequest[] }>(`/api/runs/${runId}/approvals`)
-      .then((res) => {
-        if (useRunStore.getState().runId === runId) set({ approvals: res.approvals })
-      })
-      .catch(() => undefined)
     let sawEnd = false
-    void streamRun(
-      `/api/runs/${runId}/stream`,
-      {
-        onEvent: (event) => {
-          if (event.type === 'run:end') sawEnd = true
-          handleRunEvent(event)
-        },
-        onEnd: (info) => {
-          if (useRunStore.getState().runId !== runId) return
-          // M52-D：订阅晚到（短 Run 在 attach 前已结束并出栈 → HTTP 非 ok）时事件链缺 run:end；
-          // 全量刷新兜底最终一致（sse.ts 契约「404 交由调用方刷新会话兜底」）。
-          // 边界：仅 HTTP 非 ok 兜底——“200 流异常自然结束”保持旧行为（真实链路 run:end 必达）；
-          // 主动取消（切换会话 / detach / 新 attach 先行中止旧流）不兜底
-          if (info?.httpStatus && !sawEnd && !myController.signal.aborted) {
+    let retries = 0
+
+    // M8：重附着时恢复审批卡状态（挂起 + 历史）
+    // M79-V：断流重试属“重附着”语义——run:start 快照重发会清空 approvals，每次尝试都要恢复
+    const loadApprovals = (): void => {
+      void apiGet<{ approvals: ApprovalRequest[] }>(`/api/runs/${runId}/approvals`)
+        .then((res) => {
+          if (useRunStore.getState().runId === runId) set({ approvals: res.approvals })
+        })
+        .catch(() => undefined)
+    }
+
+    const attempt = (): void => {
+      loadApprovals()
+      void streamRun(
+        `/api/runs/${runId}/stream`,
+        {
+          onEvent: (event) => {
+            if (event.type === 'run:end') sawEnd = true
+            handleRunEvent(event)
+          },
+          onEnd: (info) => {
+            // 仍是当前运行 + 仍持有本流（runId 相同但被新 attach 替换的场景由 controller 守卫）
+            if (useRunStore.getState().runId !== runId || controller !== myController) return
+            // 主动取消（切换会话 / detach / 新 attach 先行中止旧流）不兜底不重试
+            if (myController.signal.aborted) {
+              set({ active: false })
+              return
+            }
+            // 正常收束（run:end 已收）
+            if (sawEnd) {
+              set({ active: false })
+              return
+            }
+            // M52-D：订阅晚到（短 Run 在 attach 前已结束并出栈 → HTTP 非 ok）→ 刷新兜底（重试无意义）
+            if (info?.httpStatus) {
+              endRunLocally(sessionId)
+              return
+            }
+            // M79-V：200 流异常自然结束（网络中断等）→ 退避自动重附着（期间保持 active，UI 不闪跳）
+            if (retries < STREAM_MAX_RETRIES) {
+              retries++
+              clearRetryTimer()
+              retryTimer = setTimeout(() => {
+                retryTimer = undefined
+                if (useRunStore.getState().runId !== runId || myController.signal.aborted) return
+                attempt()
+              }, STREAM_RETRY_DELAY_MS)
+              return
+            }
+            // 重试耗尽：刷新兜底（最终一致）+ 明确提示一次
+            toast.error('运行流连接不稳定，已停止重连；最新进展可在会话中查看')
             endRunLocally(sessionId)
-            return
-          }
-          set({ active: false })
+          },
+          onError: () => {
+            // M79-V：不逐次提示——瞬时断流由 onEnd 分支自动重试；最终失败在耗尽分支提示
+          },
         },
-        onError: (err) => toast.error(`运行流中断：${err.message}`),
-      },
-      myController.signal,
-    )
+        myController.signal,
+      )
+    }
+    attempt()
   },
 
   stop: async () => {
@@ -403,6 +450,7 @@ export const useRunStore = create<RunState>((set, get) => ({
   detach: () => {
     controller?.abort()
     controller = undefined
+    clearRetryTimer()
     flushDeltas()
     set({ active: false, queue: [], currentWave: [], waveIndex: 0 })
   },

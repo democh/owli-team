@@ -16,6 +16,7 @@ import { ContextService } from '../src/context/service.js'
 import { MockProvider } from '../src/llm/mock.js'
 import type { ChatRequest, LlmChunk } from '../src/llm/provider.js'
 import { Engine } from '../src/orchestration/engine.js'
+import { sessionHumans as sessionHumansOf } from '../src/orchestration/humans.js'
 import { ArtifactStore } from '../src/store/artifacts.js'
 import { ArtifactVersionStore } from '../src/store/artifact-versions.js'
 import { ApiKeyStore, AuthSessionStore } from '../src/store/auth-sessions.js'
@@ -91,10 +92,16 @@ export function makeEnv(overrides: Partial<AppConfig> = {}) {
   const provider = new MockProvider({ delayMs: 0 })
   const tools = createToolRegistry(cfg)
   const published: PublishedNotification[] = []
+  // M79-AD：用户主题定向投递收集（审批定向等）
+  const publishedToUser: Array<{ userId: string; type: string; payload: Record<string, unknown> }> = []
   const notify = {
     publish: (input: PublishedNotification) => {
       published.push(input)
       return input
+    },
+    publishToUser: (userId: string, type: string, payload: Record<string, unknown>) => {
+      publishedToUser.push({ userId, type, payload })
+      return { userId, type, payload }
     },
   }
   // M57：多用户服务（真实实例；测试库无账号 → 单用户兼容模式）
@@ -141,6 +148,11 @@ export function makeEnv(overrides: Partial<AppConfig> = {}) {
     events,
     // M47：会话模式门控（与生产装配一致；sandbox 会话 git 工具不进模型清单，repo / worktree 保持可见）
     isGitMode: (sessionId) => workspace.isGitMode(sessionId),
+    // M79-AA：会话人类成员（与生产装配同口径；无 owner / 无成员的测试会话返回空 → 行为零差异）
+    sessionHumans: (sid) => {
+      const session = sessions.getSession(sid)
+      return session ? sessionHumansOf(session, auth, sessionMembers) : []
+    },
   })
   return {
     cfg,
@@ -170,6 +182,7 @@ export function makeEnv(overrides: Partial<AppConfig> = {}) {
     planReviews,
     notify,
     published,
+    publishedToUser,
     db,
     // M57：多用户（路由测试直接 env as ApiDeps 强转；提供真实实例）
     users,
@@ -214,6 +227,8 @@ export function appendUserMessage(
   env: ReturnType<typeof makeEnv>,
   sessionId: string,
   content: string,
+  /** M79-AD：触发者（审批定向等场景需要）；缺省 = 无触发者（兼容） */
+  userId?: string,
 ): { id: string } {
   return env.sessions.appendMessage({
     sessionId,
@@ -221,6 +236,7 @@ export function appendUserMessage(
     content,
     mentions: [],
     status: 'complete',
+    ...(userId ? { userId } : {}),
   })
 }
 

@@ -16,7 +16,7 @@ describe('数据库迁移', () => {
     const db = openDatabase(':memory:', { memory: true })
     const versions = db.all<{ version: number }>('SELECT version FROM schema_migrations ORDER BY version')
     expect(versions.map((v) => Number(v.version))).toEqual([
-      1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
+      1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26,
     ])
 
     const again = applyMigrations(db)

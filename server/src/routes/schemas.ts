@@ -45,10 +45,12 @@ export const renameSessionSchema = z
     planFirst: z.boolean({ message: 'planFirst 需为布尔值' }).optional(),
     /** M46-2：会话级「串行执行」开关（默认开启；关闭后场景可并行成波） */
     serial: z.boolean({ message: 'serial 需为布尔值' }).optional(),
+    /** M79-E：触发策略（auto = 无 @ 消息交给平台路由（现状）/ mention = 仅点名唤起） */
+    routeMode: z.enum(['auto', 'mention'], { message: 'routeMode 需为 auto / mention' }).optional(),
   })
   .refine(
-    (v) => v.title !== undefined || v.planFirst !== undefined || v.serial !== undefined,
-    'title、planFirst 或 serial 至少提供一个',
+    (v) => v.title !== undefined || v.planFirst !== undefined || v.serial !== undefined || v.routeMode !== undefined,
+    'title、planFirst、serial 或 routeMode 至少提供一个',
   )
 
 export const resumeSessionSchema = z.object({

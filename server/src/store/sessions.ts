@@ -37,6 +37,16 @@ interface SessionRow {
   serial?: number
   /** M57：会话属主（users.id；NULL = 单用户兼容模式历史数据） */
   owner_id?: string | null
+  /** M79-D：会话社会形态（team 默认；direct / group） */
+  kind?: string
+  /** M79-D：私聊唯一键（direct；排序后两 userId 以 '|' 连接） */
+  dm_key?: string | null
+  /** M79-E：触发策略（auto / mention；存量默认 auto） */
+  route_mode?: string
+  /** M79-E：持球方（JSON string[]；NULL = 无） */
+  waiting_on?: string | null
+  /** M79-E：人类定向（userIds JSON；NULL = 无） */
+  human_mentions?: string | null
   workspace_dir: string | null
   created_at: string
   updated_at: string
@@ -67,6 +77,8 @@ interface MessageRow {
   schedule_id: string | null
   /** M57：人类消息作者（users.id；agent / system 消息为空） */
   user_id?: string | null
+  /** M79-E：人类定向（userIds JSON；NULL = 无） */
+  human_mentions?: string | null
   created_at: string
 }
 
@@ -111,6 +123,14 @@ function rowToSession(row: SessionRow): Session {
     title: row.title,
     participantIds: parseJson<string[]>(row.participant_ids, []),
     ownerId: row.owner_id ?? undefined,
+    // M79-D：社会形态（team 为存量缺省，不落字段保持零差异）
+    ...(row.kind && row.kind !== 'team' ? { kind: row.kind as Session['kind'] } : {}),
+    // M79-E：触发策略与持球方（auto / 空 = 缺省，不落字段保持零差异）
+    ...(row.route_mode && row.route_mode !== 'auto' ? { routeMode: row.route_mode as Session['routeMode'] } : {}),
+    ...(() => {
+      const waiting = parseJson<string[]>(row.waiting_on ?? null, [])
+      return waiting.length > 0 ? { waitingOn: waiting } : {}
+    })(),
     memberSouls: Object.keys(memberSouls).length > 0 ? memberSouls : undefined,
     planFirst: row.plan_first ? true : undefined,
     serial: row.serial ? true : undefined,
@@ -141,6 +161,10 @@ function rowToMessage(row: MessageRow): ChatMessage {
     attachments: parseJson<MessageAttachment[] | undefined>(row.attachments, undefined),
     scheduleId: row.schedule_id ?? undefined,
     userId: row.user_id ?? undefined,
+    ...(() => {
+      const humans = parseJson<string[]>(row.human_mentions ?? null, [])
+      return humans.length > 0 ? { humanMentions: humans } : {}
+    })(),
     createdAt: row.created_at,
   }
 }
@@ -315,6 +339,10 @@ export class SessionStore {
       serial?: boolean
       /** M57：会话属主（多用户）；缺省 = 单用户兼容模式（NULL） */
       ownerId?: string
+      /** M79-D：社会形态（缺省 team）；direct/group 为人物会话 */
+      kind?: 'team' | 'direct' | 'group'
+      /** M79-D：私聊唯一键（仅 kind='direct'；并发竞态由唯一索引兜底） */
+      dmKey?: string
     } = {},
   ): Session {
     const ts = nowIso()
@@ -323,6 +351,7 @@ export class SessionStore {
       title: title?.trim() || '新会话',
       participantIds: [...new Set(participantIds)],
       ownerId: opts.ownerId,
+      ...(opts.kind && opts.kind !== 'team' ? { kind: opts.kind } : {}),
       memberSouls: opts.souls && Object.keys(opts.souls).length > 0 ? { ...opts.souls } : undefined,
       planFirst: opts.planFirst ? true : undefined,
       // M46-2：默认串行（逐位出场，便于跟进查看）；显式 serial: false 才关闭
@@ -333,8 +362,8 @@ export class SessionStore {
       updatedAt: ts,
     }
     this.db.run(
-      `INSERT INTO sessions (id, project_id, title, participant_ids, member_souls, workspace_dir, plan_first, serial, owner_id, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO sessions (id, project_id, title, participant_ids, member_souls, workspace_dir, plan_first, serial, owner_id, kind, dm_key, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       session.id,
       session.projectId ?? null,
       session.title,
@@ -344,11 +373,20 @@ export class SessionStore {
       session.planFirst ? 1 : 0,
       session.serial ? 1 : 0,
       session.ownerId ?? null,
+      opts.kind ?? 'team',
+      opts.dmKey ?? null,
       ts,
       ts,
     )
     this.cache.set(session.id, { session, messages: [], seq: 0, dirty: new Set(), metaDirty: false })
     return session
+  }
+
+  /** M79-D：按私聊唯一键查找（direct 复用依据；含缓存未命中回源） */
+  findByDmKey(dmKey: string): Session | undefined {
+    const row = this.db.get<SessionRow>('SELECT * FROM sessions WHERE dm_key = ? AND deleted_at IS NULL', dmKey)
+    if (!row) return undefined
+    return this.entry(row.id)?.session ?? rowToSession(row)
   }
 
   rename(id: string, title: string): Session | undefined {
@@ -418,6 +456,57 @@ export class SessionStore {
     entry.metaDirty = true
     this.scheduleSave(id)
     return entry.session
+  }
+
+  /** M79-E：触发策略（auto = 现状 / mention = 仅点名唤起） */
+  setRouteMode(id: string, routeMode: 'auto' | 'mention'): Session | undefined {
+    const entry = this.entry(id)
+    if (!entry) return undefined
+    entry.session.routeMode = routeMode === 'auto' ? undefined : routeMode
+    entry.session.updatedAt = nowIso()
+    entry.metaDirty = true
+    this.scheduleSave(id)
+    return entry.session
+  }
+
+  /** M79-E：写入持球方（Run 收尾 handedTo 非空时；与既有值并集去重） */
+  setWaitingOn(id: string, userIds: string[]): Session | undefined {
+    const entry = this.entry(id)
+    if (!entry) return undefined
+    const merged = [...new Set([...(entry.session.waitingOn ?? []), ...userIds])]
+    entry.session.waitingOn = merged.length > 0 ? merged : undefined
+    entry.session.updatedAt = nowIso()
+    entry.metaDirty = true
+    this.scheduleSave(id)
+    return entry.session
+  }
+
+  /** M79-E：集合差清除（发送者回复）；返回是否发生变化（广播依据） */
+  clearWaitingOn(id: string, userId: string): boolean {
+    const entry = this.entry(id)
+    if (!entry) return false
+    const current = entry.session.waitingOn ?? []
+    if (!current.includes(userId)) return false
+    const next = current.filter((x) => x !== userId)
+    entry.session.waitingOn = next.length > 0 ? next : undefined
+    entry.session.updatedAt = nowIso()
+    entry.metaDirty = true
+    this.scheduleSave(id)
+    return true
+  }
+
+  /** M79-E：成员变更清洗（移出的人类成员从持球方移除）；返回是否变化 */
+  clearWaitingForUsers(id: string, userIds: string[]): boolean {
+    const entry = this.entry(id)
+    if (!entry) return false
+    const current = entry.session.waitingOn ?? []
+    const next = current.filter((x) => !userIds.includes(x))
+    if (next.length === current.length) return false
+    entry.session.waitingOn = next.length > 0 ? next : undefined
+    entry.session.updatedAt = nowIso()
+    entry.metaDirty = true
+    this.scheduleSave(id)
+    return true
   }
 
   remove(id: string): boolean {
@@ -572,7 +661,7 @@ export class SessionStore {
     // 审核 M-1：先落库成功再清脏标记（tx 失败时脏数据保留，避免静默丢写；下次触发重试）
     this.db.tx(() => {
       this.db.run(
-        `UPDATE sessions SET title = ?, participant_ids = ?, member_souls = ?, project_id = ?, workspace_dir = ?, plan_first = ?, serial = ?, owner_id = ?, updated_at = ?
+        `UPDATE sessions SET title = ?, participant_ids = ?, member_souls = ?, project_id = ?, workspace_dir = ?, plan_first = ?, serial = ?, owner_id = ?, route_mode = ?, waiting_on = ?, updated_at = ?
          WHERE id = ?`,
         session.title,
         JSON.stringify(session.participantIds),
@@ -582,6 +671,8 @@ export class SessionStore {
         session.planFirst ? 1 : 0,
         session.serial ? 1 : 0,
         session.ownerId ?? null,
+        session.routeMode ?? 'auto',
+        session.waitingOn && session.waitingOn.length > 0 ? JSON.stringify(session.waitingOn) : null,
         session.updatedAt,
         session.id,
       )
@@ -594,11 +685,12 @@ export class SessionStore {
 
   private insertMessage(message: ChatMessage): void {
     this.db.run(
-      `INSERT INTO messages (id, session_id, run_id, turn_index, seq, role, agent_id, member_key, user_id, content, mentions, status, artifacts, tool_calls, reasoning, mode, attachments, schedule_id, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO messages (id, session_id, run_id, turn_index, seq, role, agent_id, member_key, user_id, content, mentions, human_mentions, status, artifacts, tool_calls, reasoning, mode, attachments, schedule_id, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET
          turn_index = excluded.turn_index,
-         content = excluded.content, mentions = excluded.mentions, status = excluded.status,
+         content = excluded.content, mentions = excluded.mentions, human_mentions = excluded.human_mentions,
+         status = excluded.status,
          artifacts = excluded.artifacts, tool_calls = excluded.tool_calls, reasoning = excluded.reasoning, mode = excluded.mode,
          attachments = excluded.attachments, schedule_id = excluded.schedule_id, user_id = excluded.user_id`,
       message.id,
@@ -612,6 +704,7 @@ export class SessionStore {
       message.userId ?? null,
       message.content,
       JSON.stringify(message.mentions ?? []),
+      message.humanMentions && message.humanMentions.length > 0 ? JSON.stringify(message.humanMentions) : null,
       message.status,
       JSON.stringify(message.artifacts ?? null),
       message.toolCalls ? JSON.stringify(message.toolCalls) : null,

@@ -173,6 +173,8 @@ function CardHeader({ plan, author }: { plan: Plan; author?: AgentDefinition }):
 function PlanApprovalCard({ plan, members }: { plan: Plan; members: AgentDefinition[] }): React.JSX.Element {
   const updatePlan = usePlanStore((s) => s.updatePlan)
   const resolve = usePlanStore((s) => s.resolve)
+  // M79-AH：只读共享（viewer）→ 批准 / 驳回 / 保存修改禁用（草稿编辑仅本地，服务端写守卫兜底）
+  const readOnly = useSessionStore((s) => s.sessions.find((x) => x.id === s.currentId)?.role) === 'viewer'
   const [busy, setBusy] = React.useState<string>()
   const [rejectOpen, setRejectOpen] = React.useState(false)
   const [feedback, setFeedback] = React.useState('')
@@ -414,9 +416,18 @@ function PlanApprovalCard({ plan, members }: { plan: Plan; members: AgentDefinit
       </div>
 
       <div className="flex shrink-0 flex-wrap items-center gap-1.5 border-t border-amber-200/70 px-3 py-1.5">
+        {readOnly && (
+          <span className="text-[10.5px] text-amber-700/90">只读共享（viewer）：无计划操作权限</span>
+        )}
         {rejectOpen ? (
           <>
-            <Button variant="destructive" size="sm" className="h-7 text-[12px]" disabled={!!busy} onClick={() => void reject()}>
+            <Button
+              variant="destructive"
+              size="sm"
+              className="h-7 text-[12px]"
+              disabled={!!busy || readOnly}
+              onClick={() => void reject()}
+            >
               {busy === 'reject' ? <Loader2 className="size-3 animate-spin" /> : <X className="size-3.5" />}
               确认驳回
             </Button>
@@ -435,11 +446,17 @@ function PlanApprovalCard({ plan, members }: { plan: Plan; members: AgentDefinit
           </>
         ) : (
           <>
-            <Button size="sm" className="h-7 text-[12px]" disabled={!!busy} onClick={() => void approve()}>
+            <Button size="sm" className="h-7 text-[12px]" disabled={!!busy || readOnly} onClick={() => void approve()}>
               {busy === 'approve' ? <Loader2 className="size-3 animate-spin" /> : <Check className="size-3.5" />}
               批准并执行
             </Button>
-            <Button variant="outline" size="sm" className="h-7 text-[12px]" disabled={!!busy} onClick={() => setRejectOpen(true)}>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7 text-[12px]"
+              disabled={!!busy || readOnly}
+              onClick={() => setRejectOpen(true)}
+            >
               <X className="size-3.5" />
               驳回
             </Button>
@@ -447,7 +464,13 @@ function PlanApprovalCard({ plan, members }: { plan: Plan; members: AgentDefinit
         )}
         {dirty && (
           <>
-            <Button variant="outline" size="sm" className="h-7 text-[12px]" disabled={!!busy} onClick={() => void onSave()}>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7 text-[12px]"
+              disabled={!!busy || readOnly}
+              onClick={() => void onSave()}
+            >
               {busy === 'save' ? <Loader2 className="size-3 animate-spin" /> : null}
               保存修改
             </Button>

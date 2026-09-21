@@ -307,6 +307,16 @@ npm run e2e                        # Playwright 自动用 mock 模式（含审�
 
 注意：Mock 仅用于 E2E / 演示；生产环境保持 `LLM_MOCK=false` 并配置真实 `LLM_API_KEY`。
 
+**E2E 数据目录治理（M79-AG）**：main 链路默认共用 `data/e2e-main`；长期多轮全量累积（实测 1700+ 会话）会拖慢页面渲染，导致个别长链用例超时——建议按轮次轮换目录并定期清理：
+
+```bash
+PW_DATA_DIR=e2e-r1 PW_OUTPUT_DIR=/tmp/pw-r1 npm run e2e -- --project=main   # 轮换目录跑全量
+npm run e2e:reset                        # 清理默认 e2e-main（data/ + workspace/）
+npm run e2e:reset -- e2e-r0 e2e-r1       # 清理指定 slug（严格校验 e2e-xxx，防越界）
+```
+
+另：全量运行期间**勿并发**启动第二个 Playwright 实例（reuseExistingServer 会复用同一 webServer，互相污染）。
+
 ## 7. 常用运维操作
 
 | 操作 | 命令 / 方式 |
@@ -319,6 +329,7 @@ npm run e2e                        # Playwright 自动用 mock 模式（含审�
 | 全量门禁 | `npm run typecheck && npm run test && npm run lint` |
 | 评测回归 | `npm run eval`（与 `evals/baseline.json` 对比；回归非零退出） |
 | E2E + 报告 | `npm run e2e` / `npm run e2e:report` |
+| E2E 数据目录治理 | `npm run e2e:reset`（缺省清 e2e-main；`-- <slug>...` 指定；轮换见 §6） |
 | 查看某 Run 轨迹 | `GET /api/runs/:runId/trace` 或前端「战绩 → 查看本次运行轨迹」 |
 | 查看指标 | `GET /api/metrics/summary` 或右栏「指标」分段 |
 | 导出反馈集 | `GET /api/feedback/export` |
@@ -339,3 +350,20 @@ npm run e2e                        # Playwright 自动用 mock 模式（含审�
 | 数据迁移异常 | 查 `schema_migrations` 表推进状态与启动日志（迁移失败会阻止启动，避免半迁移状态） |
 | 召回不生效（L1.5 无注入） | 确认「设置 → 向量记忆」已选连接或配了 `EMBEDDING_*`；新记忆有约 2s 队列补账延迟；`MEMORY_RECALL_ENABLED=false` 时关闭；`GET /api/memories/stats` 看 backend / pending / failed |
 | 嵌入连接测试失败 / 凭据不可解密 | 检查端点可达与模型名；`data/.connection-key` 丢失或更换后既有凭据不可解密，需在连接中心重新录入 Key |
+
+## 9. 社交协作（M79）运维要点
+
+| 项 | 说明 |
+| --- | --- |
+| 实时通道观测 | `GET /api/ws/stats`（admin）：连接数 / 活跃用户 / 待写队列水位 / 踢出（`evictions`）与背压 resync（`resyncs`）计数 |
+| 背压策略 | 单连接待写队列超 `WS_SEND_QUEUE_MAX` → 服务端发 `resync` 后主动断开；客户端退避重连并以 REST（inbox / 会话列表）补齐——**不丢事件** |
+| 连接上限 | 每用户并发 WS 连接 `WS_MAX_CONNS_PER_USER`（超限踢最旧，客户端提示「本页已由新连接替代」） |
+| 收件箱保留 | `INBOX_RETENTION_DAYS=30`：启动 + 每日一轮清理；**仅删已读项**（未读恒保留） |
+| 好友限流 | 请求日限流 `FRIEND_REQUEST_DAILY_LIMIT`（429 文案含上限）；搜索 30 次/分/用户 |
+| 在线状态 | 由 WS 连接引用计数推导（`PRESENCE_AGGREGATE_MS` 聚合；离线延迟 30s）；可见域 = **好友 ∪ 同会话人类成员**（M79-G；单进程内存态，重启重建） |
+| 会话内容可见性 | **owner ∪ 共享成员为唯一事实源**：admin 无会话内容旁路（详情 / 列表 / 搜索 / WS 订阅与可见集一律 404 或过滤；仅孤儿行兜底与 `__` 全局主题属 admin）——无需也不提供 `DM_ADMIN_VISIBLE` 类开关（m79-privacy.test.ts 固化） |
+| 成员编制权限 | `POST/DELETE/PATCH /api/sessions/:id/members*`：team（含历史缺省 kind）与 direct **仅 owner**；group 放宽 editor（混编群可自行拉 agent）；viewer / 非成员由会话守卫 403 / 404 |
+| 头像存储 | 图片头像落 `data/avatars/<userId>-<ts>.<ext>`（随 data 目录进入备份面；上限 2MB；仅 PNG/JPEG/WebP 魔数放行）；换图 / 改色块 / 删号自动清理旧文件；读取走 `/api/avatars/:file`（登录域内 + 白名单 + immutable） |
+| 排障 | 好友请求「没实时到」→ 查该用户是否在线（`/api/ws/stats`）与该连接是否被踢；收件箱缺失 → `GET /api/inbox?since=0` 核对 seq 游标 |
+
+**多实例部署（M79-L）**：设 `NOTIFY_BUS=db` 并给每个实例分配唯一 `INSTANCE_ID`（缺省 `hostname:pid`；编排建议显式指定稳定值）。要点：① 跨实例通知延迟上限 = `NOTIFY_BUS_POLL_MS`（默认 400ms）；② 总线行保留 `NOTIFY_BUS_RETENTION_MINUTES`（默认 10 分钟，维护轮 30s 清理）；③ presence 为最终一致（实例 30s 心跳 + stale 60s 忽略）：实例死亡后其对应用户的在线态在 ≤2 分钟窗口内收敛；④ 实例重启不重放历史通知（客户端重连 resync + REST 权威层补齐——与单实例重连语义一致）；⑤ 观测：`GET /api/ws/stats` 的 `bus` 段（mode/instance/published/received）；⑥ 默认 `NOTIFY_BUS=memory` 时本机制零开销、行为与单实例现状逐字节一致。

@@ -80,6 +80,8 @@ function ScheduleCard({ task }: { task: ScheduledTask }): React.JSX.Element {
   const remove = useScheduleStore((s) => s.remove)
   const trigger = useScheduleStore((s) => s.runNow)
   const [busy, setBusy] = React.useState<string>()
+  // M79-AF：只读共享（viewer）→ 触发 / 启停 / 删除全部只读（服务端另有写闸门兜底）
+  const readOnly = session?.role === 'viewer'
 
   // M77：目标按成员实例署名（分身 = 名字·灵魂名；已离场也经回退链可读）；头像取基础角色
   const targetKey = task.targetAgentId
@@ -88,7 +90,7 @@ function ScheduleCard({ task }: { task: ScheduledTask }): React.JSX.Element {
   const last = task.lastStatus ? LAST_META[task.lastStatus] : undefined
 
   const onTrigger = async (): Promise<void> => {
-    if (busy) return
+    if (busy || readOnly) return
     setBusy('run')
     try {
       const res = await trigger(task.id)
@@ -102,7 +104,7 @@ function ScheduleCard({ task }: { task: ScheduledTask }): React.JSX.Element {
   }
 
   const onToggle = async (): Promise<void> => {
-    if (busy) return
+    if (busy || readOnly) return
     setBusy('toggle')
     try {
       await setEnabled(task.id, !task.enabled)
@@ -115,7 +117,7 @@ function ScheduleCard({ task }: { task: ScheduledTask }): React.JSX.Element {
   }
 
   const onRemove = async (): Promise<void> => {
-    if (busy) return
+    if (busy || readOnly) return
     if (!window.confirm(`删除定时任务「${task.title}」？`)) return
     setBusy('remove')
     try {
@@ -188,8 +190,8 @@ function ScheduleCard({ task }: { task: ScheduledTask }): React.JSX.Element {
           variant="outline"
           size="sm"
           className="h-6 gap-1 px-2 text-[11px]"
-          disabled={!!busy}
-          title="立即触发一次（不改变调度节奏；会话忙时报错）"
+          disabled={!!busy || readOnly}
+          title={readOnly ? '只读共享（viewer）：无操作权限' : '立即触发一次（不改变调度节奏；会话忙时报错）'}
           onClick={() => void onTrigger()}
         >
           {busy === 'run' ? <Loader2 className="size-3 animate-spin" /> : <Play className="size-3" />}
@@ -199,7 +201,8 @@ function ScheduleCard({ task }: { task: ScheduledTask }): React.JSX.Element {
           variant="outline"
           size="sm"
           className="h-6 gap-1 px-2 text-[11px]"
-          disabled={!!busy}
+          disabled={!!busy || readOnly}
+          title={readOnly ? '只读共享（viewer）：无操作权限' : undefined}
           onClick={() => void onToggle()}
         >
           {busy === 'toggle' ? (
@@ -215,8 +218,8 @@ function ScheduleCard({ task }: { task: ScheduledTask }): React.JSX.Element {
           variant="ghost"
           size="icon-sm"
           className="ml-auto text-muted-foreground hover:text-destructive"
-          disabled={!!busy}
-          title="删除任务"
+          disabled={!!busy || readOnly}
+          title={readOnly ? '只读共享（viewer）：无操作权限' : '删除任务'}
           onClick={() => void onRemove()}
         >
           {busy === 'remove' ? <Loader2 className="size-3.5 animate-spin" /> : <Trash2 className="size-3.5" />}
@@ -438,6 +441,8 @@ export function SchedulePanel(): React.JSX.Element {
 
   const list = boundSessionId === currentId ? tasks : []
   const enabledCount = list.filter((t) => t.enabled).length
+  // M79-AF：只读共享（viewer）→ 不可新建（服务端另有写闸门兜底）
+  const readOnly = session?.role === 'viewer'
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -450,7 +455,8 @@ export function SchedulePanel(): React.JSX.Element {
           variant={creating ? 'secondary' : 'ghost'}
           size="sm"
           className="ml-auto h-6 gap-1 px-2 text-[11px]"
-          title="新建定时任务"
+          disabled={readOnly}
+          title={readOnly ? '只读共享（viewer）：无操作权限' : '新建定时任务'}
           onClick={() => setCreating((v) => !v)}
         >
           <Plus className="size-3" />

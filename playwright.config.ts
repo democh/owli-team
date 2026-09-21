@@ -29,6 +29,15 @@ const MAIN_PORT = Number(process.env.PW_PORT || 8788)
 const MAIN_SLUG = process.env.PW_DATA_DIR || 'e2e-main'
 const MAIN_DATA = `data/${MAIN_SLUG}`
 
+/**
+ * M79 续：auth 链路（M57/M79 多用户 spec）同样支持隔离——
+ * 并发验证时：`PW_AUTH_PORT=8791 PW_AUTH_DATA_DIR=e2e-m79 brew … npx playwright test --project=auth`
+ * 默认（不设 env）行为与既有完全一致（8790 / data/e2e-auth）。
+ */
+const AUTH_PORT = Number(process.env.PW_AUTH_PORT || 8790)
+const AUTH_SLUG = process.env.PW_AUTH_DATA_DIR || 'e2e-auth'
+const AUTH_DATA = `data/${AUTH_SLUG}`
+
 export default defineConfig({
   testDir: './e2e',
   /**
@@ -37,7 +46,13 @@ export default defineConfig({
    * 并行验证时：`PW_OUTPUT_DIR=/tmp/pw-<name> npx playwright test ...` 互不影响。
    */
   outputDir: process.env.PW_OUTPUT_DIR || 'test-results',
-  timeout: 90_000,
+  /**
+   * M52-D 续（2026-09-21）：全局预算 90s → 120s——长链用例（建会话 + 多步画布/图谱交互）
+   * 在 20 分钟全量套件的资源饱和段会耗尽 90s 预算（实测 m63-mock-walks / m31-canvas-ux
+   * 于不同轮次以「Test timeout」形态失败，单跑均通过）；统一留 33% 余量，与先例
+   * （M52-D 调 mock 节奏放宽竞态窗口）同思路。文件级更紧/更松预算仍可各自覆盖。
+   */
+  timeout: 120_000,
   expect: { timeout: 20_000 },
   fullyParallel: false,
   workers: 1,
@@ -96,8 +111,9 @@ export default defineConfig({
     },
     {
       // M57：多用户隔离链路（独立持久数据目录：首启向导 → 登录 → 跨用户隔离；spec 幂等可重跑）
+      // M79：端口 / 数据目录可隔离（PW_AUTH_PORT / PW_AUTH_DATA_DIR；默认与既有一致）
       command: `bash -c 'until [ -f client/dist/index.html ]; do sleep 0.3; done; exec node --import tsx server/src/index.ts'`,
-      url: 'http://127.0.0.1:8790/api/health',
+      url: `http://127.0.0.1:${AUTH_PORT}/api/health`,
       reuseExistingServer: !process.env.CI,
       timeout: 120_000,
       env: {
@@ -105,18 +121,18 @@ export default defineConfig({
         LLM_MOCK_DELAY_MS: '30',
         APPROVAL_MODE: 'off',
         MAX_TURNS_PER_RUN: '12',
-        PORT: '8790',
-        DATA_DIR: 'data/e2e-auth',
-        WORKSPACE_DIR: 'workspace/e2e-auth',
-        DB_FILE: 'data/e2e-auth/app.db',
-        SETTINGS_FILE: 'data/e2e-auth/settings.json',
-        WORKTREE_DIR: 'data/e2e-auth/worktrees',
-        LOG_DIR: 'data/e2e-auth/logs',
+        PORT: String(AUTH_PORT),
+        DATA_DIR: AUTH_DATA,
+        WORKSPACE_DIR: `workspace/${AUTH_SLUG}`,
+        DB_FILE: `${AUTH_DATA}/app.db`,
+        SETTINGS_FILE: `${AUTH_DATA}/settings.json`,
+        WORKTREE_DIR: `${AUTH_DATA}/worktrees`,
+        LOG_DIR: `${AUTH_DATA}/logs`,
         LOG_LEVEL: 'warn',
-        MCP_CONFIG_FILE: 'data/e2e-auth/mcp.json',
+        MCP_CONFIG_FILE: `${AUTH_DATA}/mcp.json`,
         // 登录防爆破放宽：e2e 重复跑时避免误触锁定（用例本身验证锁定在 server 单测层）
         LOGIN_LOCKOUT_THRESHOLD: '50',
-        // 登录 IP 限流放宽：同一 8790 实例可能被多个并发验证会话共用（误触 429 → 登录页停住）
+        // 登录 IP 限流放宽：同一 auth 实例可能被多个并发验证会话共用（误触 429 → 登录页停住）
         LOGIN_RATE_LIMIT: '300',
       },
     },
@@ -134,9 +150,10 @@ export default defineConfig({
     },
     {
       // M57：多用户（独立实例，含首启向导 / 隔离断言）
+      // M79：社交协作（好友 / 私聊 / 群聊 / 邀请实时化 / 多端未读同步）
       name: 'auth',
-      testMatch: /m57-auth\.spec\.ts/,
-      use: { baseURL: 'http://127.0.0.1:8790' },
+      testMatch: /(m57-auth|m79-social|m79-realtime)\.spec\.ts/,
+      use: { baseURL: `http://127.0.0.1:${AUTH_PORT}` },
     },
   ],
 })

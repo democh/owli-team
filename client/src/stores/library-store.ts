@@ -18,6 +18,8 @@ interface LibraryState {
   loading: boolean
   /** 上传中计数（按钮 loading / 禁用） */
   uploading: number
+  /** 最近一次列表过滤（上传 / 删除后的对账刷新沿用——保持与界面筛选一致，不回落未过滤全量） */
+  lastFilter?: { query?: string; kind?: LibraryItemKind }
   /** 列表拉取（query / kind 服务端过滤；防抖由调用方控制） */
   load(opts?: { query?: string; kind?: LibraryItemKind }): Promise<void>
   /** 批量上传（逐个串行）；返回成功数 */
@@ -42,9 +44,10 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
   usage: undefined,
   loading: false,
   uploading: 0,
+  lastFilter: undefined,
 
   load: async (opts) => {
-    set({ loading: true })
+    set({ loading: true, lastFilter: opts })
     try {
       const params = new URLSearchParams()
       if (opts?.query?.trim()) params.set('query', opts.query.trim())
@@ -85,7 +88,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
       }
       if (ok > 0) {
         toast(ok === 1 ? '素材已上传' : `已上传 ${ok} 个素材`)
-        await get().load()
+        await get().load(get().lastFilter) // 沿用当前筛选对账（默认「图片」筛下不回落全量）
       }
       return ok
     } finally {
@@ -97,7 +100,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
     try {
       await request(`/api/library/items/${id}`, { method: 'DELETE' })
       set({ items: get().items.filter((x) => x.id !== id) })
-      void get().load() // 容量与列表对账
+      void get().load(get().lastFilter) // 容量与列表对账（沿用当前筛选）
       toast('素材已删除')
       return true
     } catch (err) {

@@ -204,6 +204,12 @@ interface UiState {
   rightPanelOpen: boolean
   /** 左栏显隐（宽屏；会话头部收起钮 / 左缘把手 / ⌘⇧B；与右栏对称） */
   leftPanelOpen: boolean
+  /** M79-C：左栏页签（会话 | 联系人；联系人入口仅多用户模式渲染） */
+  leftTab: 'sessions' | 'contacts'
+  /** M79-F：会话列表筛选 chip（团队 / 聊天；默认选中第一个「团队」，点选过滤 / 再点取消回全部；仅多用户模式渲染） */
+  sessionFilter: 'all' | 'team' | 'chat'
+  /** M79-F：请求打开「新建群聊」对话框（联系人面板消费；nonce 保证重复触发） */
+  groupCreateRequest?: { nonce: number }
   /** 安静模式：关闭全部趣味动画（§20.6） */
   quietMode: boolean
   /** 停留在对话页时新交付件计数（Tab 上的小角标） */
@@ -247,6 +253,13 @@ interface UiState {
   setLeftPanelOpen: (open: boolean) => void
   /** ⌘⇧B：左栏收起 / 展开（持久化） */
   toggleLeftPanel: () => void
+  /** M79-C：切换左栏页签（会话 | 联系人） */
+  setLeftTab: (tab: 'sessions' | 'contacts') => void
+  /** M79-F：会话列表筛选 chip */
+  setSessionFilter: (filter: 'all' | 'team' | 'chat') => void
+  /** M79-F：请求打开「新建群聊」对话框（非管理员路径；联系人面板消费） */
+  requestGroupCreate: () => void
+  consumeGroupCreate: () => void
   /** M49：展开深度工作台（交付件 / 数据库 / 终端；deepFrom 记录返回目标） */
   expandWorkspace: (view: WorkspaceView) => void
   /** M49：关闭深度工作台，返回展开前的主 tab */
@@ -277,6 +290,9 @@ interface UiState {
   /** 引用到输入框：切回对话页并排队插入 */
   insertToComposer: (text: string) => void
   consumeComposerInsert: () => void
+  /** M79-AD：「在 3D 工作台打开」请求（store 通道——工作台挂载后消费，根治事件时序竞态） */
+  pendingStudioOpen: string | null
+  setPendingStudioOpen: (path: string | null) => void
   /** M56：请求聚焦设置页某分组（调用方通常随即 setAppView('settings')） */
   requestSettingsFocus: (section: string) => void
   consumeSettingsFocus: () => void
@@ -310,12 +326,15 @@ interface UiState {
 }
 
 export const useUiStore = create<UiState>((set, get) => ({
+  pendingStudioOpen: null,
   appView: loadAppView(),
   mainTab: 'chat',
   rightView: initialRight.current,
   lastOf: initialRight.lastOf,
   rightPanelOpen: loadRightPanelOpen(),
   leftPanelOpen: loadLeftPanelOpen(),
+  leftTab: 'sessions',
+  sessionFilter: 'team',
   quietMode: false,
   newArtifactCount: 0,
   newCanvasCount: 0,
@@ -373,6 +392,10 @@ export const useUiStore = create<UiState>((set, get) => ({
     persistLeftPanelOpen(next)
     set({ leftPanelOpen: next })
   },
+  setLeftTab: (tab) => set({ leftTab: tab }),
+  setSessionFilter: (filter) => set({ sessionFilter: filter }),
+  requestGroupCreate: () => set((s) => ({ groupCreateRequest: { nonce: (s.groupCreateRequest?.nonce ?? 0) + 1 } })),
+  consumeGroupCreate: () => set({ groupCreateRequest: undefined }),
   expandWorkspace: (view) =>
     set((s) => ({
       // 从深度工作台再展开另一工作台（dd → 终端）时保留原返回目标
@@ -420,6 +443,7 @@ export const useUiStore = create<UiState>((set, get) => ({
       composerInsert: { text, nonce: (s.composerInsert?.nonce ?? 0) + 1 },
     })),
   consumeComposerInsert: () => set({ composerInsert: undefined }),
+  setPendingStudioOpen: (path) => set({ pendingStudioOpen: path }),
   requestSettingsFocus: (section) =>
     set((s) => ({ settingsFocus: { section, nonce: (s.settingsFocus?.nonce ?? 0) + 1 } })),
   consumeSettingsFocus: () => set({ settingsFocus: undefined }),

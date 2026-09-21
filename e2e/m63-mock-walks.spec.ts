@@ -14,6 +14,13 @@
 import { expect, test, type Page } from '@playwright/test'
 import { AGENT_NAME, COMPOSER_PLACEHOLDER, createSession, expectYourTurn, openApp, sendMessage } from './helpers'
 
+/**
+ * 长链走查预算：三盘召唤 × 串行发言的 mock 回复路径在长套件负载下可显著慢于单跑；
+ * 用例内等待上限为 120_000（expectYourTurn），必须高于全局 90_000 的测试预算才具语义
+ * （否则任何波动都会以「测试超时」呈现，掩盖真实断言结果）。
+ */
+test.describe.configure({ timeout: 150_000 })
+
 /** 钉顶助手（role=log 滚动容器；与 m63 其余 spec 同法） */
 async function pinTop(page: Page): Promise<void> {
   await page.locator('[role="log"]').evaluate((el) => {

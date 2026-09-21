@@ -21,7 +21,6 @@ import type { SwatchData } from '../../chat/md-ext/remark-ext'
 import { StudioPlanView } from '../../studio/StudioPlanView'
 import { StudioPrintSheet } from '../../studio/StudioPrintSheet'
 import { StudioSurface } from '../../studio/studio-lazy'
-import { STUDIO_OPEN_EVENT } from '../../studio/studio-open'
 import {
   addFurniture,
   applyMaterialColor,
@@ -88,18 +87,17 @@ export function StudioPanel(): React.JSX.Element {
     // 交付件版本驱动；notFound / reload 经 ref 瞬时读取（避免把 ds 全量拉进依赖）
   }, [refreshFiles, artifactVersion])
 
-  // M65-C：layout 卡 → 工作台打开联动（跨组件通道；路径合法性在加载侧校验）
+  // M79-AD：layout 卡「在 3D 工作台打开」→ store 通道消费（挂载后消费，无时序竞态）
+  const pendingStudioOpen = useUiStore((s) => s.pendingStudioOpen)
   React.useEffect(() => {
-    const onOpen = (e: Event): void => {
-      const path = (e as CustomEvent<string>).detail
-      if (typeof path !== 'string' || !path.endsWith('.scene.json')) return
-      setExtraSources((prev) => (prev.includes(path) ? prev : [...prev, path]))
-      setCurrent(path)
-      setSelectedId(null)
-    }
-    window.addEventListener(STUDIO_OPEN_EVENT, onOpen)
-    return () => window.removeEventListener(STUDIO_OPEN_EVENT, onOpen)
-  }, [])
+    if (!pendingStudioOpen) return
+    useUiStore.getState().setPendingStudioOpen(null)
+    const path = pendingStudioOpen
+    if (!path.endsWith('.scene.json')) return
+    setExtraSources((prev) => (prev.includes(path) ? prev : [...prev, path]))
+    setCurrent(path)
+    setSelectedId(null)
+  }, [pendingStudioOpen])
 
   const sources = React.useMemo(() => {
     const merged = [...fileSources]

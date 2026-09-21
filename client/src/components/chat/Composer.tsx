@@ -12,7 +12,7 @@
 import * as React from 'react'
 import { toast } from 'sonner'
 import { CornerDownLeft, Loader2, Paperclip, Send, Square } from 'lucide-react'
-import type { AgentDefinition, AgentRunState, Artifact, MessageAttachment, SkillMeta, TurnMode } from '@multi-agent/shared'
+import type { UserAvatar, AgentDefinition, AgentRunState, Artifact, MessageAttachment, SkillMeta, TurnMode } from '@multi-agent/shared'
 import { apiGet, apiUpload } from '../../lib/api'
 import { memberViews } from '../../lib/members'
 import {
@@ -31,6 +31,10 @@ import { useSessionStore } from '../../stores/session-store'
 import { useUiStore } from '../../stores/ui-store'
 import { Button } from '../ui/button'
 import { AgentAvatar } from '../agents/AgentAvatar'
+import { HumanAvatar } from './HumanAvatar'
+import { OnlineDot } from './OnlineDot'
+import { useAuthStore } from '../../stores/auth-store'
+import { useWsStore } from '../../stores/ws-store'
 import { AttachmentLightbox, type LightboxItem } from './AttachmentLightbox'
 import { AttachmentTray, type TrayItem } from './AttachmentTray'
 import { ContextBar } from '../context/ContextBar'
@@ -102,7 +106,7 @@ function AgentStatusDot({ status }: { status: AgentRunState }): React.JSX.Elemen
   )
 }
 
-type CandidateKind = 'agent' | 'file' | 'skill'
+type CandidateKind = 'agent' | 'file' | 'skill' | 'human'
 
 interface Candidate {
   kind: CandidateKind
@@ -112,6 +116,8 @@ interface Candidate {
   agent?: AgentDefinition
   /** M77：自定义插入文本（「全部 N 位」全伞条目 = 逐一点名多 token；缺省 = `@标签 `） */
   insertText?: string
+  /** M79-E：人类候选头像（协作成员组） */
+  avatar?: UserAvatar
 }
 
 /** 从光标处回扫，探测未闭合的 @token（M77：字符集含 `·` 与 `~`——实例标签与分身机器键可连续输入） */
@@ -170,8 +176,17 @@ export function Composer({ onReady, locked = false, lockedHint }: ComposerProps)
   const queued = useRunStore((s) => s.queued)
   const queue = useRunStore((s) => s.queue)
   const composerInsert = useUiStore((s) => s.composerInsert)
+  // M79-E：会话人类（@ 真人候选；显示名优先，重名时回退 @username）
+  const humanProfiles = useSessionStore((s) => s.humanProfiles)
+  // M79-G：人类候选在线点（可见域 = 好友 ∪ 同会话成员）
+  const presenceMap = useWsStore((s) => s.presenceMap)
+  const myUserId = useAuthStore((s) => s.user?.id)
 
   const session = sessions.find((s) => s.id === currentId)
+  /** M79-E：触发提示依据（waiting 命中优先；team「仅点名唤起」且未 @ 时的静默发送提示） */
+  const waitingMe = !!myUserId && (session?.waitingOn ?? []).includes(myUserId)
+  const mentionSilent =
+    !!session && session.kind !== 'direct' && session.kind !== 'group' && (session.routeMode ?? 'auto') === 'mention'
   // M33：上传进行中（托盘三态派生；用于按钮 spinner / 发送拦截）
   const uploading = tray.some((t) => t.status === 'uploading')
   const trayRef = React.useRef<TrayItem[]>([])
@@ -191,13 +206,22 @@ export function Composer({ onReady, locked = false, lockedHint }: ComposerProps)
   )
   // M77：在场成员实例（同角多魂 = 各自一条召唤条目 / 一个候选；@ 插入「名字·灵魂名」点名具体分身）
   const poolMembers = React.useMemo(() => memberViews(agents, session), [agents, session])
-  /** 召唤条条目（空会话回退全量角色） */
+  /** 召唤条条目（team/场景空编制回退全量角色；人物会话不回退——见下） */
+  const isChatSession = session?.kind === 'direct' || session?.kind === 'group'
+  // M79-P：纯人聊天（人物会话且无 agent 编制）隐藏 AI 状态条——范式 chips / 上下文与费用 / 轨迹；
+  // 混编群（有 agent）与 team / 场景会话（含 M48 空编制·会 PRS 组队）保留
+  const aiBarVisible = !isChatSession || poolMembers.length > 0
   const stripItems = React.useMemo(
     () =>
       poolMembers.length > 0
         ? poolMembers.map((m) => ({ key: m.key, label: m.label, agent: m.agent }))
-        : agents.map((a) => ({ key: a.id, label: a.name, agent: a })),
-    [poolMembers, agents],
+        : // M79-M：人物会话（direct/group）不展示「全量 agent」兜底——纯人聊天 @agent 不触发（服务端
+          // 要求 agent ∈ 编制，防展示面误导）；混编群的在编 agent 走上行（poolMembers 非空）；
+          // team / 场景会话保留零编制兜底（M48 零选择开场的召唤面，行为不变）
+          isChatSession
+          ? []
+          : agents.map((a) => ({ key: a.id, label: a.name, agent: a })),
+    [poolMembers, agents, isChatSession],
   )
 
   // 成员条统一常驻（ADR 0135，修订 M52-G）：输入条成员条是 Composer 的常驻主入口，全场景一致展示——
@@ -266,6 +290,29 @@ export function Composer({ onReady, locked = false, lockedHint }: ComposerProps)
         people.push({ kind: 'agent', key: `a:${x.key}`, label: x.label, hint: x.agent.role, agent: x.agent })
       }
     }
+    // M79-E：协作成员（@ 真人——显示名优先；与成员撞名 / 人类重名时插入 @username）
+    const reserved = new Set<string>()
+    for (const x of poolSorted) {
+      reserved.add(x.agent.name.toLowerCase())
+      reserved.add(x.agent.id.toLowerCase())
+    }
+    const humanEntries = Object.entries(humanProfiles).filter(([id]) => id !== myUserId)
+    const nameCounts = new Map<string, number>()
+    for (const [, p] of humanEntries) nameCounts.set(p.name.toLowerCase(), (nameCounts.get(p.name.toLowerCase()) ?? 0) + 1)
+    const humans: Candidate[] = []
+    for (const [userId, p] of humanEntries) {
+      const nameUsable = (nameCounts.get(p.name.toLowerCase()) ?? 0) <= 1 && !reserved.has(p.name.toLowerCase())
+      const token = nameUsable ? p.name : (p.username ?? p.name)
+      if (q && !p.name.toLowerCase().includes(q) && !(p.username ?? '').toLowerCase().includes(q)) continue
+      humans.push({
+        kind: 'human',
+        key: `h:${userId}`,
+        label: p.name,
+        hint: nameUsable ? (p.headline ?? '协作成员') : `与他人重名 · 将插入 @${token}`,
+        avatar: p.avatar,
+        insertText: `@${token} `,
+      })
+    }
     // 文件 / 技能候选仅在输入了查询词时展示（避免默认菜单过噪）
     const fileHits: Candidate[] =
       q.length > 0
@@ -281,8 +328,25 @@ export function Composer({ onReady, locked = false, lockedHint }: ComposerProps)
             .slice(0, 5)
             .map((s) => ({ kind: 'skill', key: `s:${s.name}`, label: s.name, hint: s.description }))
         : []
-    return [...people, ...fileHits, ...skillHits]
-  }, [mention.open, mention.query, poolSorted, files, skills])
+    return [...people, ...humans, ...fileHits, ...skillHits]
+  }, [mention.open, mention.query, poolSorted, files, skills, humanProfiles, myUserId])
+
+  // M79-J（§14.4）：人类成员条（chat 会话输入区；头像 + 在线点 + 名字；点击插入 @显示名，冲突回退 @username）
+  const humanStrip = React.useMemo(() => {
+    const entries = Object.entries(humanProfiles).filter(([id]) => id !== myUserId)
+    if (entries.length === 0) return []
+    const reserved = new Set<string>()
+    for (const x of poolSorted) {
+      reserved.add(x.agent.name.toLowerCase())
+      reserved.add(x.agent.id.toLowerCase())
+    }
+    const counts = new Map<string, number>()
+    for (const [, p] of entries) counts.set(p.name.toLowerCase(), (counts.get(p.name.toLowerCase()) ?? 0) + 1)
+    return entries.map(([userId, p]) => {
+      const nameUsable = (counts.get(p.name.toLowerCase()) ?? 0) <= 1 && !reserved.has(p.name.toLowerCase())
+      return { userId, label: p.name, token: nameUsable ? p.name : (p.username ?? p.name), avatar: p.avatar }
+    })
+  }, [humanProfiles, myUserId, poolSorted])
 
   // 提及菜单打开时拉取文件候选（30s 内复用缓存）
   const filesFetchedAtRef = React.useRef(0)
@@ -698,7 +762,7 @@ export function Composer({ onReady, locked = false, lockedHint }: ComposerProps)
               <React.Fragment key={c.key}>
                 {i > 0 && candidates[i - 1].kind !== c.kind && (
                   <div className="px-2 pb-1 pt-2 text-[10.5px] uppercase tracking-wide text-muted-foreground">
-                    {c.kind === 'file' ? '文件' : '技能'}
+                    {c.kind === 'human' ? '协作成员' : c.kind === 'file' ? '文件' : '技能'}
                   </div>
                 )}
                 <button
@@ -713,6 +777,8 @@ export function Composer({ onReady, locked = false, lockedHint }: ComposerProps)
                 >
                   {c.kind === 'agent' && c.agent ? (
                     <AgentAvatar agent={c.agent} size={22} animated={false} />
+                  ) : c.kind === 'human' ? (
+                    <HumanAvatar avatar={c.avatar} name={c.label} size={22} />
                   ) : (
                     <span className="w-[22px] shrink-0 text-center text-[11px]" aria-hidden>
                       {c.kind === 'file' ? '📄' : '🧩'}
@@ -721,6 +787,7 @@ export function Composer({ onReady, locked = false, lockedHint }: ComposerProps)
                   <span className="max-w-40 truncate font-medium">
                     <HighlightMatch text={c.label} query={mention.query} />
                   </span>
+                  {c.kind === 'human' && <OnlineDot online={presenceMap[c.key.slice(2)]} />}
                   <span className="min-w-0 flex-1 truncate text-[11.5px] text-muted-foreground">
                     <HighlightMatch text={c.hint} query={mention.query} />
                   </span>
@@ -730,9 +797,16 @@ export function Composer({ onReady, locked = false, lockedHint }: ComposerProps)
             ))}
           </div>
         )}
-        {/* M11 指挥台：成员快捷召唤条（点击插入 @；实时状态点与排队序号）；M16：按场景分组、组色圆点分隔、新成员高亮；
-            ADR 0135：全场景统一常驻（M52-G 席位让位判定已撤销——席位与成员条同屏并存） */}
-        {!disabled && poolSorted.length > 0 && (
+        {/* M79-E：触发提示（自己被点名优先；team「仅点名唤起」且未 @ 时静默发送提示） */}
+        {!disabled && (waitingMe || (mentionSilent && value.trim().length > 0 && !value.includes('@'))) && (
+          <div className="mx-2.5 mt-1.5 rounded-md bg-amber-500/10 px-2 py-1 text-[11px] text-amber-700">
+            {waitingMe ? '你在本会话被点名：回复即解除等待' : '未点名成员：本条将作为协作消息发送（AI 不响应）'}
+          </div>
+        )}
+        {/* M11 指挥台：成员快捷召唤条（点击插入 @；实时状态点与排队序号）；M16 ：按场景分组、组色圆点分隔、新成员高亮；
+            ADR 0135：全场景统一常驻（M52-G 席位让位判定已撤销——席位与成员条同屏并存）；
+            M79-J（§14.4）：人类成员条并排（头像 + 在线点 + 名字；分组序 = agent 编制序 → 人类） */}
+        {!disabled && (poolSorted.length > 0 || humanStrip.length > 0) && (
           <div className="flex items-center gap-1 overflow-x-auto px-2.5 pb-0.5 pt-2">
             {poolSorted.map((x, i) => {
               const a = x.agent
@@ -777,6 +851,20 @@ export function Composer({ onReady, locked = false, lockedHint }: ComposerProps)
                 </React.Fragment>
               )
             })}
+            {/* M79-J：人类成员条（并排在 agent 之后；点击插入 @显示名 / 冲突回退 @username） */}
+            {humanStrip.map((h) => (
+              <button
+                key={`human-${h.userId}`}
+                type="button"
+                title={`点名 ${h.label}（协作成员）`}
+                onClick={() => insert(`@${h.token} `)}
+                className="group flex shrink-0 items-center gap-1 rounded-full border border-transparent bg-muted/70 py-0.5 pl-0.5 pr-2 text-[11.5px] text-muted-foreground transition-all hover:border-primary/25 hover:bg-primary/5 hover:text-primary"
+              >
+                <HumanAvatar avatar={h.avatar} name={h.label} size={18} />
+                <span className="font-medium">{h.label}</span>
+                <OnlineDot online={presenceMap[h.userId]} />
+              </button>
+            ))}
           </div>
         )}
 
@@ -795,7 +883,11 @@ export function Composer({ onReady, locked = false, lockedHint }: ComposerProps)
               ? (lockedHint ?? '只读共享（viewer）：无写权限')
               : disabled
                 ? '先创建或选择一个会话…'
-                : '输入消息，@ 召唤成员 / 文件 / 技能，/ 使用命令，可直接拖拽或粘贴图片 / 文档…'
+                : session?.kind === 'direct'
+                  ? '发消息…（@ 可点名）'
+                  : session?.kind === 'group'
+                    ? '发消息…（@ 可点名成员或 AI）'
+                    : '输入消息，@ 召唤成员 / 文件 / 技能，/ 使用命令，可直接拖拽或粘贴图片 / 文档…'
           }
           className="block w-full resize-none bg-transparent px-3.5 py-3 pr-28 text-[13.5px] leading-6 placeholder:text-muted-foreground focus:outline-none"
           onChange={onChange}
@@ -873,7 +965,8 @@ export function Composer({ onReady, locked = false, lockedHint }: ComposerProps)
       </div>
 
       <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 px-1 text-[11px] text-muted-foreground">
-        {/* M24：消息级范式选择器（三态 chip；运行中禁用——插话不支持范式选择） */}
+        {/* M24：消息级范式选择器（三态 chip；运行中禁用——插话不支持范式选择）；M79-P：纯人聊天不渲染 */}
+        {aiBarVisible && (
         <span className="inline-flex items-center gap-1.5">
           <span className="flex overflow-hidden rounded-full border bg-muted/40 p-0.5">
             {MODE_CHIPS.map((c) => (
@@ -907,6 +1000,7 @@ export function Composer({ onReady, locked = false, lockedHint }: ComposerProps)
             </span>
           ) : null}
         </span>
+        )}
         <span className="inline-flex items-center gap-1">
           <CornerDownLeft className="size-3" />
           Enter 发送 · Shift+Enter 换行 · @ 召唤 · / 命令
@@ -924,10 +1018,12 @@ export function Composer({ onReady, locked = false, lockedHint }: ComposerProps)
             {queued ? ' · 已排队' : ''}
           </span>
         )}
-        {/* 上下文电池格条（M8/M9→M25）：分段水位右对齐常驻；本 Run 费用 / 轨迹入口同排 */}
-        <span className="ml-auto inline-flex items-center gap-1.5">
-          <ContextBar />
-        </span>
+        {/* 上下文电池格条（M8/M9→M25）：分段水位右对齐常驻；本 Run 费用 / 轨迹入口同排；M79-P：纯人聊天不渲染 */}
+        {aiBarVisible && (
+          <span className="ml-auto inline-flex items-center gap-1.5">
+            <ContextBar />
+          </span>
+        )}
       </div>
 
       {/* M33：附件预览浮层（托盘图片 / 视频；多张时左右切换） */}

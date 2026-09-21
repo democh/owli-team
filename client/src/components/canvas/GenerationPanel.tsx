@@ -32,6 +32,7 @@ import { cn } from '../../lib/utils'
 import { useCanvasStore } from '../../stores/canvas-store'
 import { useConnectionsStore } from '../../stores/connections-store'
 import { useMediaStore } from '../../stores/media-store'
+import { useSessionStore } from '../../stores/session-store'
 import { useUiStore } from '../../stores/ui-store'
 
 /** 一次提交的变体数量上限（批量探索） */
@@ -155,6 +156,8 @@ export function GenerationPanel(): React.JSX.Element | null {
   const lastError = useMediaStore((s) => s.lastError)
   const sessionId = useCanvasStore((s) => s.sessionId)
   const { screenToFlowPosition } = useReactFlow()
+  // M79-AF：只读共享（viewer）→ 提交 / 取消 / 再生成只读（服务端另有写闸门兜底）
+  const readOnly = useSessionStore((s) => s.sessions.find((x) => x.id === s.currentId)?.role) === 'viewer'
 
   const [providerId, setProviderId] = React.useState<string>()
   const [capability, setCapability] = React.useState<MediaCapability>('text2image')
@@ -239,6 +242,7 @@ export function GenerationPanel(): React.JSX.Element | null {
     !!provider &&
     prompt.trim().length > 0 &&
     !submitting &&
+    !readOnly &&
     (inputKind === 'none' ||
       (inputKind === 'image' && genRef.images.length > 0) ||
       (inputKind === 'firstlast' && !!genRef.firstFrame && !!genRef.lastFrame))
@@ -597,8 +601,9 @@ export function GenerationPanel(): React.JSX.Element | null {
                     <span className="shrink-0 tabular-nums">{job.progress != null ? `${job.progress}%` : job.progressText}</span>
                     <button
                       type="button"
-                      title="取消"
-                      className="shrink-0 transition-colors hover:text-rose-500"
+                      title={readOnly ? '只读共享（viewer）：无操作权限' : '取消'}
+                      disabled={readOnly}
+                      className="shrink-0 transition-colors hover:text-rose-500 disabled:pointer-events-none disabled:opacity-40"
                       onClick={() => void useMediaStore.getState().cancelJob(job.id)}
                     >
                       <X className="size-3" />
@@ -646,8 +651,9 @@ export function GenerationPanel(): React.JSX.Element | null {
                   </span>
                   <button
                     type="button"
-                    title="再生成"
-                    className="hidden shrink-0 text-muted-foreground transition-colors hover:text-foreground group-hover:block"
+                    title={readOnly ? '只读共享（viewer）：无操作权限' : '再生成'}
+                    disabled={readOnly}
+                    className="hidden shrink-0 text-muted-foreground transition-colors hover:text-foreground group-hover:block disabled:pointer-events-none disabled:opacity-40"
                     onClick={() => void useMediaStore.getState().retryJob(job.id)}
                   >
                     <RefreshCw className="size-3" />

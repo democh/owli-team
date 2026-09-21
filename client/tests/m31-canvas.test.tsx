@@ -577,6 +577,91 @@ describe('canvas-store 编辑动作与历史（M31）', () => {
     expect(putCalls()).toHaveLength(1)
   })
 
+  /** M79-AG：严格 baseVersion 校验的 PUT mock（旧版本 → 409 带回服务端最新 doc） */
+  const strictPutMock = (): void => {
+    fetchMock.mockImplementation(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === 'PUT') {
+        const body = JSON.parse(String(init.body)) as {
+          baseVersion: number
+          nodes: CanvasNode[]
+          edges: CanvasEdge[]
+          viewport: CanvasDoc['viewport']
+        }
+        if (body.baseVersion !== docRef.version) {
+          return { ok: false, status: 409, json: async () => ({ error: '画布已被并发修改', doc: docRef }) }
+        }
+        docRef = { ...docRef, version: body.baseVersion + 1, nodes: body.nodes, edges: body.edges, viewport: body.viewport }
+        return { ok: true, status: 200, json: async () => ({ doc: docRef }) }
+      }
+      return { ok: true, status: 200, json: async () => ({ doc: docRef, mediaBound: false }) }
+    })
+  }
+
+  it('M79-AG：保存 409 → 三方合流（远端新增节点保留；本地编辑保留；双方都改时位置取本地）', async () => {
+    const nodeA = mk('note', 'a', 0, 0, { text: '甲' })
+    await loadFresh([nodeA])
+    // 本地编辑：移动 A + 新增本地节点 l
+    useCanvasStore.getState().updateNodes([{ id: 'a', position: { x: 50, y: 50 } }])
+    useCanvasStore.getState().addNodes([mk('note', 'l', 300, 0, { text: '本地' })])
+    // 远端并发写入（模拟 agent 落位）：服务端 v2 = A + B（本地尚未拉取）
+    const nodeB = mk('image', 'b', 400, 100, {})
+    docRef = { ...docRef, version: 2, nodes: [nodeA, nodeB] }
+    strictPutMock()
+    await useCanvasStore.getState().flush()
+
+    // 两次 PUT：首 409 → 合流重放 200（baseVersion 采纳服务端最新）
+    const puts = putCalls()
+    expect(puts).toHaveLength(2)
+    const retryBody = JSON.parse(String(puts[1][1]?.body)) as { baseVersion: number; nodes: CanvasNode[] }
+    expect(retryBody.baseVersion).toBe(2)
+    expect(retryBody.nodes.map((n) => n.id).sort()).toEqual(['a', 'b', 'l']) // 远端 B 不丢 + 本地新增 L 保留
+    // 本地文档同步合流结果：含远端 B；A 位置取本地
+    const doc = docOf()
+    expect(doc.version).toBe(3)
+    expect(doc.nodes.find((n) => n.id === 'b')).toBeTruthy()
+    expect(doc.nodes.find((n) => n.id === 'a')?.position).toEqual({ x: 50, y: 50 })
+    expect(useCanvasStore.getState().dirty).toBe(false)
+  })
+
+  it('M79-AG：合流尊重已同步删除（本地删除 + 远端未改 → 删除生效）', async () => {
+    const nodeA = mk('note', 'a', 0, 0, { text: '甲' })
+    const nodeX = mk('note', 'x', 100, 0, { text: '乙' })
+    await loadFresh([nodeA, nodeX])
+    useCanvasStore.getState().removeNodes(['x']) // 本地删除已同步节点
+    const nodeB = mk('image', 'b', 400, 100, {})
+    docRef = { ...docRef, version: 2, nodes: [nodeA, nodeX, nodeB] } // 远端仅新增 B（X 未动）
+    strictPutMock()
+    await useCanvasStore.getState().flush()
+    const doc = docOf()
+    expect(doc.nodes.map((n) => n.id).sort()).toEqual(['a', 'b']) // X 删除生效 + 远端 B 保留
+  })
+
+  it('M79-AH：viewer 只读——编辑入口全部拦截（不脏 / 无 PUT）；视口浏览允许且不落盘', async () => {
+    await loadFresh([mk('note', 'n', 0, 0, { text: 'x' })])
+    // 注入只读共享角色（多用户 viewer）
+    useSessionStore.setState({
+      sessions: [{ id: docRef.sessionId, title: 'T', role: 'viewer' }] as never,
+      currentId: docRef.sessionId,
+    } as never)
+    // 内容编辑（更新 / 新增 / 删除 / 撤销）一律拦截
+    useCanvasStore.getState().updateNodes([{ id: 'n', position: { x: 9, y: 9 } }])
+    useCanvasStore.getState().addNodes([mk('note', 'n2', 1, 1, { text: 'no' })])
+    useCanvasStore.getState().removeNodes(['n'])
+    useCanvasStore.getState().undo()
+    const doc = docOf()
+    expect(doc.nodes.map((x) => x.id)).toEqual(['n'])
+    expect(doc.nodes[0]!.position).toEqual({ x: 0, y: 0 })
+    expect(useCanvasStore.getState().dirty).toBe(false)
+    // 视口浏览：本地生效但不标脏、不触发保存（PUT 零调用）
+    useCanvasStore.getState().setViewport({ x: 10, y: 20, zoom: 1.5 })
+    expect(docOf().viewport).toEqual({ x: 10, y: 20, zoom: 1.5 })
+    expect(useCanvasStore.getState().dirty).toBe(false)
+    await vi.advanceTimersByTimeAsync(2000)
+    expect(putCalls()).toHaveLength(0)
+    // 清理角色注入（防泄漏到后续用例）
+    useSessionStore.setState({ sessions: [], currentId: undefined } as never)
+  })
+
   it('copySelection + pasteClipboard：边随选区复制、连续粘贴递增偏移并选中新节点', async () => {
     const a = mk('prompt', 'a', 10, 20, { text: '词' })
     const b = mk('image', 'b', 310, 20, {})

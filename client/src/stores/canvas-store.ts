@@ -3,8 +3,10 @@
  * undo-redo 快照栈 / 剪贴板 / 节点与边的编辑动作（对齐、分布、网格、z 序、画框收纳）。
  *
  * 保存协议：PUT 携带 baseVersion（服务端 version 乐观锁）。
- * - 冲突（409）策略「本地优先」：单机单用户语义下用户正在编辑的副本即最新意图——
- *   采纳服务端版本号后用本地内容重存一次；agent 并发写入的差异由随后拉取合流兜底。
+ * - 冲突（409）策略「合流重放」（M79-AG）：以「上次同步快照」为三方合并 base，将本地变更重放到
+ *   服务端最新文档之上——远端新增（如 agent 落位/写入）不再被本地保存静默清掉；本地编辑优先，
+ *   双方都改同一节点时「位置/尺寸取本地、其余字段取远端」（保 agent 状态机更新不丢）。
+ *   （原「本地优先覆盖」在 agent 并发写画布时会把服务端新写入整体覆盖——该缺陷由 m31 E2E trace 定性。）
  * - 自动保存：本地变更后 debounce 800ms；saving / saveError / lastSavedAt 供 UI 状态徽标。
  * - 远端变更（notify:canvas-changed, by=agent）：本地空闲 → 立即拉取合流；本地脏 → 标记待拉取，
  *   保存完成后自动补拉（不打断正在进行的编辑，也不丢失 agent 产物）。
@@ -50,6 +52,81 @@ const AUTOSAVE_DEBOUNCE_MS = 800
 const HISTORY_LIMIT = 50
 /** 粘贴偏移（连续粘贴逐级递增） */
 const PASTE_OFFSET = 28
+
+/**
+ * M79-AG：上次与服务端同步的文档快照（409 三方合并的 base）——
+ * load / pullRemote / save 成功时更新；配合 mergeCanvasDocs 防止本地保存覆盖远端并发写入。
+ */
+let lastSyncedDoc: CanvasDoc | null = null
+
+/** 结构等价（节点/边为不可变对象；409 冲突低频，字符串比较换取确定性） */
+function sameShape(a: unknown, b: unknown): boolean {
+  return a === b || JSON.stringify(a) === JSON.stringify(b)
+}
+
+/**
+ * M79-AG：409 冲突的三方合并（base = 上次同步快照；mine = 本地待保存；theirs = 服务端最新）。
+ * 规则（节点；边同构无字段级）：
+ * - 远端新增（base 无 + theirs 有）→ 保留（agent 落位/写入不丢——本修复核心）；
+ * - 本地新增（base 无 + mine 有）→ 保留；
+ * - 一方存在另一方无且 base 有：未改方缺席 = 该方删除生效；改过方缺席 = 远端删除/本地删除按「已改优先」保留在场方；
+ * - 双方都有：远端未改 → 本地；本地未改 → 远端；双方都改 → 位置/尺寸/选中取本地、其余取远端。
+ * 顺序：本地节点顺序优先，远端新增追加尾部。
+ */
+function mergeCanvasDocs(
+  base: CanvasDoc | null,
+  mine: CanvasDoc,
+  theirs: CanvasDoc,
+): { nodes: CanvasNode[]; edges: CanvasEdge[] } {
+  const byId = <T extends { id: string }>(list: T[]): Map<string, T> => new Map(list.map((n) => [n.id, n]))
+  const baseNodes = byId(base?.nodes ?? [])
+  const mineNodes = byId(mine.nodes)
+  const theirNodes = byId(theirs.nodes)
+  const nodes: CanvasNode[] = []
+  for (const n of mine.nodes) {
+    const t = theirNodes.get(n.id)
+    if (!t) {
+      const b = baseNodes.get(n.id)
+      if (b && sameShape(n, b)) continue // 本地未碰且远端已删 → 删除生效
+      nodes.push(n) // 本地新增 / 本地改过的保留
+      continue
+    }
+    const b = baseNodes.get(n.id)
+    const mineChanged = !b || !sameShape(n, b)
+    const theirsChanged = !b || !sameShape(t, b)
+    if (!theirsChanged) nodes.push(n)
+    else if (!mineChanged) nodes.push(t)
+    else nodes.push({ ...t, position: n.position, width: n.width, height: n.height })
+  }
+  for (const t of theirs.nodes) {
+    if (mineNodes.has(t.id)) continue
+    const b = baseNodes.get(t.id)
+    if (b && sameShape(t, b)) continue // 本地删除且远端未改 → 删除生效
+    nodes.push(t) // 远端新增（agent 占位/写入）→ 保留
+  }
+  const baseEdges = byId(base?.edges ?? [])
+  const mineEdges = byId(mine.edges)
+  const theirEdges = byId(theirs.edges)
+  const edges: CanvasEdge[] = []
+  for (const e of mine.edges) {
+    const t = theirEdges.get(e.id)
+    if (!t) {
+      const b = baseEdges.get(e.id)
+      if (b && sameShape(e, b)) continue
+      edges.push(e)
+      continue
+    }
+    const b = baseEdges.get(e.id)
+    edges.push(b && sameShape(t, b) ? e : t)
+  }
+  for (const t of theirs.edges) {
+    if (mineEdges.has(t.id)) continue
+    const b = baseEdges.get(t.id)
+    if (b && sameShape(t, b)) continue
+    edges.push(t)
+  }
+  return { nodes, edges }
+}
 
 interface CanvasSnapshot {
   nodes: CanvasNode[]
@@ -216,25 +293,36 @@ export const useCanvasStore = create<CanvasState>((set, get) => {
     set({ undoDepth: 0, redoDepth: 0 })
   }
 
-  /** 保存一次（本地优先冲突策略；成功后若远端有积压变更则补拉） */
+  /** 保存一次（M79-AG：409 冲突按三方合并「合流重放」；成功后若远端有积压变更则补拉） */
   const save = async (): Promise<void> => {
     const { sessionId, doc, dirty, saving } = get()
     if (!sessionId || !doc || !dirty || saving) return
+    // M79-AH：viewer 防御——即便因异常路径标脏也不发 PUT（清脏静默收口）
+    if (viewerReadOnly()) {
+      set({ dirty: false })
+      return
+    }
     // 入口先清 dirty：保存期间若又有编辑会再次置位 → 结束后据此判断「保存中是否又脏」
     set({ saving: true, dirty: false })
-    const payload = { viewport: doc.viewport, nodes: doc.nodes, edges: doc.edges }
-    const put = async (baseVersion: number): Promise<Response> =>
+    const put = async (
+      baseVersion: number,
+      body: { viewport: CanvasDoc['viewport']; nodes: CanvasNode[]; edges: CanvasEdge[] },
+    ): Promise<Response> =>
       fetch(`/api/sessions/${sessionId}/canvas`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ baseVersion, ...payload }),
+        body: JSON.stringify({ baseVersion, ...body }),
       })
     try {
-      let res = await put(doc.version)
+      let res = await put(doc.version, { viewport: doc.viewport, nodes: doc.nodes, edges: doc.edges })
       if (res.status === 409) {
-        // 冲突：采纳服务端版本号，本地内容重存一次（本地优先）
+        // M79-AG：冲突合流——以远端最新为基底重放本地变更（替代「本地优先覆盖」：
+        //   agent 落位/写入等远端新增不再被本地保存静默清掉；base = 上次同步快照）
         const conflict = (await res.json().catch(() => ({}))) as { doc?: CanvasDoc }
-        if (conflict.doc) res = await put(conflict.doc.version)
+        if (conflict.doc) {
+          const merged = mergeCanvasDocs(lastSyncedDoc, doc, conflict.doc)
+          res = await put(conflict.doc.version, { viewport: doc.viewport, nodes: merged.nodes, edges: merged.edges })
+        }
       }
       if (!res.ok) {
         const data = (await res.json().catch(() => ({}))) as { error?: string; doc?: CanvasDoc }
@@ -243,6 +331,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => {
       }
       const body = (await res.json()) as { doc: CanvasDoc }
       const savedDoc = body.doc
+      lastSyncedDoc = savedDoc // M79-AG：同步锚点（下次 409 合并的 base）
       // 保存期间又有新编辑（dirty 已再次置位）→ 保持 dirty，继续调度
       const stillDirty = get().dirty
       set({
@@ -274,6 +363,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => {
       const fresh = await fetchDoc(sessionId)
       if (get().sessionId !== sessionId) return
       remotePending = false
+      lastSyncedDoc = fresh.doc // M79-AG：同步锚点（本次拉取即最新共识）
       resetHistory() // 远端替换文档：旧快照坐标语义可能失联，清栈防「撤销跨端」
       set({ doc: fresh.doc, mediaBound: fresh.mediaBound })
       // M31 修订：远端写入高亮（过滤为合流后仍存在的节点；边 id 自然被过滤掉）
@@ -288,10 +378,30 @@ export const useCanvasStore = create<CanvasState>((set, get) => {
     }
   }
 
+  /**
+   * M79-AH：只读共享（viewer）判定——画布编辑入口的统一闸门（服务端 PUT 写守卫兜底）。
+   * 编辑被拒时 2s 节流提示一次；浏览（视口平移/缩放/选中/查找）不受限。
+   */
+  const viewerReadOnly = (): boolean => {
+    const st = useSessionStore.getState()
+    return st.sessions.find((s) => s.id === st.currentId)?.role === 'viewer'
+  }
+  let readOnlyToastAt = 0
+  const denyEdit = (): void => {
+    const now = Date.now()
+    if (now - readOnlyToastAt < 2_000) return
+    readOnlyToastAt = now
+    toast.info('只读共享（viewer）：无画布编辑权限')
+  }
+
   /** 内容变更的统一入口（history 快照 → 不可变更新 → 调度保存） */
   const mutate = (mutator: (doc: CanvasDoc) => CanvasDoc, history = true): void => {
     const { doc } = get()
     if (!doc) return
+    if (viewerReadOnly()) {
+      denyEdit()
+      return
+    }
     if (history) get().pushHistory()
     const next = mutator(doc)
     if (next === doc) return
@@ -315,12 +425,14 @@ export const useCanvasStore = create<CanvasState>((set, get) => {
       if (get().sessionId === sessionId && get().doc) return
       window.clearTimeout(saveTimer)
       remotePending = false
+      lastSyncedDoc = null // M79-AG：跨会话切换——同步锚点作废（防串会话合并）
       lastToastMessage = undefined
       resetHistory()
       set({ sessionId, doc: null, loading: true, dirty: false, saving: false, saveError: undefined, selectedIds: [] })
       try {
         const fresh = await fetchDoc(sessionId)
         if (get().sessionId !== sessionId) return // 已切走：丢弃过期响应
+        lastSyncedDoc = fresh.doc // M79-AG：同步锚点（加载即最新共识）
         set({ doc: fresh.doc, mediaBound: fresh.mediaBound, loading: false })
       } catch (err) {
         if (get().sessionId !== sessionId) return
@@ -332,6 +444,10 @@ export const useCanvasStore = create<CanvasState>((set, get) => {
     applyLocal: (mutator, opts) => {
       const { doc } = get()
       if (!doc) return
+      if (viewerReadOnly()) {
+        denyEdit()
+        return
+      }
       if (opts?.history) get().pushHistory()
       const next = mutator(doc)
       if (next === doc) return
@@ -424,6 +540,10 @@ export const useCanvasStore = create<CanvasState>((set, get) => {
       const doc = get().doc
       const prev = undoStack.pop()
       if (!doc || !prev) return
+      if (viewerReadOnly()) {
+        denyEdit()
+        return
+      }
       redoStack.push({ nodes: doc.nodes, edges: doc.edges })
       const aliveIds = new Set(prev.nodes.map((n) => n.id))
       set({
@@ -440,6 +560,10 @@ export const useCanvasStore = create<CanvasState>((set, get) => {
       const doc = get().doc
       const next = redoStack.pop()
       if (!doc || !next) return
+      if (viewerReadOnly()) {
+        denyEdit()
+        return
+      }
       undoStack.push({ nodes: doc.nodes, edges: doc.edges })
       const aliveIds = new Set(next.nodes.map((n) => n.id))
       set({
@@ -648,6 +772,11 @@ export const useCanvasStore = create<CanvasState>((set, get) => {
       const doc = get().doc
       if (!doc) return
       if (doc.viewport.x === viewport.x && doc.viewport.y === viewport.y && doc.viewport.zoom === viewport.zoom) return
+      // M79-AH：viewer 允许自由浏览（本地视口不落盘、不标脏——服务端写守卫兜底，避免 403 噪音）
+      if (viewerReadOnly()) {
+        set({ doc: { ...doc, viewport } })
+        return
+      }
       set({ doc: { ...doc, viewport }, dirty: true })
       scheduleFlush()
     },

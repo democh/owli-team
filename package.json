@@ -26,6 +26,7 @@
     "memory:reindex": "npm run memory:reindex -w @multi-agent/server --",
     "e2e": "playwright test",
     "e2e:report": "playwright show-report",
+    "e2e:reset": "node scripts/e2e-reset.mjs",
     "llm:ping": "npm run llm:ping -w @multi-agent/server --",
     "avatar:preview": "node -e \"console.log('启动 npm run dev 后打开 http://localhost:5173/#/avatars')\""
   },

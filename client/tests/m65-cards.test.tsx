@@ -12,7 +12,7 @@ import { buildLayoutText, parseLayoutItems } from '../src/components/chat/md-ext
 import { renderProductPath } from '../src/components/chat/md-ext/RenderCard'
 import { parseSwatches } from '../src/components/chat/md-ext/StyleBoardCard'
 import { seedOfParams, tplAdjustRoom, tplApplyStyleboard, tplRegenRender, tplSnapshotToRender } from '../src/lib/ds-templates'
-import { STUDIO_OPEN_EVENT } from '../src/components/studio/studio-open'
+
 import { useUiStore } from '../src/stores/ui-store'
 
 const LAYOUT = [
@@ -58,17 +58,12 @@ describe('M65-C：设计容器族', () => {
     expect(screen.getByTitle(/在 3D 工作台打开/)).toBeTruthy()
   })
 
-  it('layout：点击「在 3D 工作台打开」→ STUDIO_OPEN_EVENT 携带方案源', () => {
-    const handler = vi.fn()
-    window.addEventListener(STUDIO_OPEN_EVENT, handler)
-    try {
-      render(<Markdown content={LAYOUT} />)
-      fireEvent.click(screen.getByTitle(/在 3D 工作台打开/))
-      expect(handler).toHaveBeenCalledTimes(1)
-      expect((handler.mock.calls[0]![0] as CustomEvent<string>).detail).toBe('design/plan-a.scene.json')
-    } finally {
-      window.removeEventListener(STUDIO_OPEN_EVENT, handler)
-    }
+  it('layout：点击「在 3D 工作台打开」→ 打开请求入 store 通道（面板挂载后消费）', async () => {
+    render(<Markdown content={LAYOUT} />)
+    fireEvent.click(screen.getByTitle(/在 3D 工作台打开/))
+    const { useUiStore } = await import('../src/stores/ui-store')
+    expect(useUiStore.getState().pendingStudioOpen).toBe('design/plan-a.scene.json')
+    useUiStore.getState().setPendingStudioOpen(null)
   })
 
   it('layout：房间行点击回填调整草稿（含房间 / 面积 / 要点）', () => {

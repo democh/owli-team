@@ -6,8 +6,9 @@
  * - 登录失败计数与锁定时间落库（`failed_login_count` / `locked_until`），跨重启存活；
  * - `backfillLegacyOwnership`：首个管理员 setup 后一次性回填存量数据归属（幂等）。
  */
-import type { UserInfo, UserPreferences, UserRole, UserStatus } from '@multi-agent/shared'
+import type { UserAvatar, UserInfo, UserPreferences, UserRole, UserStatus } from '@multi-agent/shared'
 import type { AppDb } from './db.js'
+import { avatarFileWellFormed, avatarPublicUrl } from '../auth/avatar.js'
 import { newId, nowIso } from './sessions.js'
 
 interface UserRow {
@@ -24,6 +25,10 @@ interface UserRow {
   updated_at: string
   last_login_at: string | null
   last_login_ip: string | null
+  /** M79-B：画像（迁移 v22；老库行缺省 NULL） */
+  headline?: string | null
+  bio?: string | null
+  avatar?: string | null
 }
 
 /** 存储层完整记录（含凭据字段；仅 auth 模块可见） */
@@ -35,14 +40,37 @@ export interface UserRecord extends UserInfo {
 
 export function toUserInfo(record: UserRecord): UserInfo {
   const { passwordHash: _ph, failedLoginCount: _fc, lockedUntil: _lu, ...info } = record
+  // M79-Q：图片头像——内部存文件名，对外投影为公开 URL（含 ts 版本化；唯一投影点，全域生效）
+  if (info.avatar?.kind === 'image') {
+    return { ...info, avatar: { kind: 'image', value: avatarPublicUrl(info.avatar.value) } }
+  }
   return info
 }
 
 function rowToUser(row: UserRow): UserRecord {
+  let avatar: UserAvatar | undefined
+  if (row.avatar) {
+    try {
+      const parsed = JSON.parse(row.avatar) as UserAvatar
+      const kindOk = parsed && (parsed.kind === 'color' || parsed.kind === 'emoji' || parsed.kind === 'image')
+      // M79-Q：image 的 value 为服务端文件名（宽松白名单形态；拒绝路径字符）
+      // image 的 value 必须为服务端文件名格式（严格白名单；历史坏值安全降级）
+      const valueOk =
+        typeof parsed?.value === 'string' && (parsed.kind === 'image' ? avatarFileWellFormed(parsed.value) : true)
+      if (kindOk && valueOk) {
+        avatar = parsed
+      }
+    } catch {
+      avatar = undefined
+    }
+  }
   return {
     id: row.id,
     username: row.username,
     displayName: row.display_name,
+    ...(row.headline ? { headline: row.headline } : {}),
+    ...(row.bio ? { bio: row.bio } : {}),
+    ...(avatar ? { avatar } : {}),
     role: row.role as UserRole,
     status: row.status as UserStatus,
     mustChangePassword: row.must_change_password === 1 ? true : undefined,
@@ -149,6 +177,40 @@ export class UserStore {
       nowIso(),
       id,
     )
+  }
+
+  /**
+   * M79-B：画像维护（本人自助；null = 清除该项；缺省 = 不改动）。
+   * 例：`{ headline: null }` 清头衔；`{ avatar: { kind:'color', value:'#6366f1' } }` 设色块头像。
+   */
+  updateProfile(
+    id: string,
+    patch: { displayName?: string; headline?: string | null; bio?: string | null; avatar?: UserAvatar | null },
+  ): UserRecord | undefined {
+    const user = this.get(id)
+    if (!user) return undefined
+    const displayName = patch.displayName !== undefined ? patch.displayName.trim() : user.displayName
+    if (!displayName) throw new Error('显示名不能为空')
+    const headline = patch.headline !== undefined ? patch.headline?.trim() || null : user.headline ?? null
+    const bio = patch.bio !== undefined ? patch.bio?.trim() || null : user.bio ?? null
+    const avatar =
+      patch.avatar !== undefined
+        ? patch.avatar
+          ? JSON.stringify(patch.avatar)
+          : null
+        : user.avatar
+          ? JSON.stringify(user.avatar)
+          : null
+    this.db.run(
+      'UPDATE users SET display_name = ?, headline = ?, bio = ?, avatar = ?, updated_at = ? WHERE id = ?',
+      displayName,
+      headline,
+      bio,
+      avatar,
+      nowIso(),
+      id,
+    )
+    return this.get(id)
   }
 
   /** 登录失败：累加计数；达到阈值写入锁定截止时间（返回最新状态） */

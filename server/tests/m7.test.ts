@@ -90,16 +90,51 @@ function newSession(env: Env): { sessionId: string; root: string } {
   return { sessionId: session.id, root: env.artifacts.ensureSessionDir(session.id) }
 }
 
-function sendMessage(env: Env, sessionId: string, content: string): string {
+function sendMessage(env: Env, sessionId: string, content: string, userId?: string): string {
   const message = env.sessions.appendMessage({
     sessionId,
     role: 'user',
     content,
     mentions: [],
     status: 'complete',
+    ...(userId ? { userId } : {}),
   })
   const { runId } = env.engine.launch(sessionId, message.id)
   return runId
+}
+
+/**
+ * M79-AF：以假 SSE Response 附着并收集事件（可带订阅者身份；同 m16 / m4 模式）。
+ * 身份用于审批事件（approval:requested/resolved）的定向过滤断言；缺省 undefined = 兼容模式放行。
+ */
+function attachSse(env: Env, runId: string, userId?: string): Array<Record<string, unknown>> {
+  const events: Array<Record<string, unknown>> = []
+  const res = {
+    writableEnded: false,
+    write: (payload: string) => {
+      for (const line of payload.split('\n')) {
+        if (!line.startsWith('data: ')) continue
+        try {
+          events.push(JSON.parse(line.slice(6)) as Record<string, unknown>)
+        } catch {
+          // 心跳等非 JSON 帧忽略
+        }
+      }
+      return true
+    },
+    end: () => undefined,
+  }
+  env.engine.attach(runId, res as unknown as Parameters<typeof env.engine.attach>[1], userId)
+  return events
+}
+
+/** 等待条件成立（轮询；超时抛错） */
+async function waitCond(cond: () => boolean, timeoutMs = 5000): Promise<void> {
+  const start = Date.now()
+  while (!cond()) {
+    if (Date.now() - start > timeoutMs) throw new Error('条件未在预期时间内满足')
+    await new Promise((r) => setTimeout(r, 10))
+  }
 }
 
 // ---------- ApprovalService ----------
@@ -214,6 +249,71 @@ describe('M7：引擎审批门', () => {
     expect(fs.readFileSync(path.join(root, 'app.ts'), 'utf8')).toContain('v = 2')
     expect(env.published.some((n) => n.type === 'notify:approval-resolved')).toBe(true)
     expect(env.runs.get(runId)?.state).not.toBe('awaiting_approval')
+  })
+
+  it('M79-AD：审批帧定向触发者（用户主题投递；会话广播不含审批帧）', async () => {
+    const env = makeEnv()
+    const { sessionId, root } = newSession(env)
+    fs.writeFileSync(path.join(root, 'app.ts'), 'export const v = 1\n')
+    scriptProvider(env, (_req, round) =>
+      round === 0
+        ? [toolCall('write_file', { path: 'app.ts', content: 'export const v = 2\n' }), done]
+        : [handoffUser, done],
+    )
+
+    const runId = sendMessage(env, sessionId, '把 app.ts 的 v 改成 2', 'u_owner')
+    const pending = await waitApproval(env, runId)
+
+    // 定向：仅触发者（用户主题）收到审批帧——其他真人不可见
+    expect(env.publishedToUser.some((x) => x.userId === 'u_owner' && x.type === 'notify:approval-requested')).toBe(true)
+    expect(env.published.some((n) => n.type === 'notify:approval-requested')).toBe(false)
+
+    env.approvals.decide(runId, pending.id, 'approve')
+    await waitRunFinished(env.engine, runId)
+    expect(env.publishedToUser.some((x) => x.userId === 'u_owner' && x.type === 'notify:approval-resolved')).toBe(true)
+    expect(env.published.some((n) => n.type === 'notify:approval-resolved')).toBe(false)
+  })
+
+  it('M79-AF：审批 SSE 定向——触发者/属主可见，他人订阅不收（实时 + 补发 + resolved 全程过滤）', async () => {
+    const env = makeEnv()
+    // 会话属主需为真实账号（owner_id 外键）；触发者为消息 userId（无外键约束）
+    const alice = env.users.create({ username: 'alice', displayName: 'Alice', passwordHash: 'x', role: 'member' })
+    const session = env.sessions.create(['backend'], 'M7 AF 定向', { ownerId: alice.id })
+    const root = env.artifacts.ensureSessionDir(session.id)
+    fs.writeFileSync(path.join(root, 'app.ts'), 'export const v = 1\n')
+    scriptProvider(env, (_req, round) =>
+      round === 0
+        ? [toolCall('write_file', { path: 'app.ts', content: 'export const v = 2\n' }), done]
+        : [handoffUser, done],
+    )
+
+    const runId = sendMessage(env, session.id, '把 app.ts 的 v 改成 2', 'u_trigger')
+    // 挂起前订阅三方：触发者 / 属主 / 其他成员
+    const triggerEvents = attachSse(env, runId, 'u_trigger')
+    const ownerEvents = attachSse(env, runId, alice.id)
+    const otherEvents = attachSse(env, runId, 'u_other')
+
+    const pending = await waitApproval(env, runId)
+    // 实时定向：触发者与属主收到；他人不收
+    await waitCond(() => triggerEvents.some((e) => e.type === 'approval:requested'))
+    await waitCond(() => ownerEvents.some((e) => e.type === 'approval:requested'))
+    await new Promise((r) => setTimeout(r, 30))
+    expect(otherEvents.some((e) => e.type === 'approval:requested')).toBe(false)
+
+    // 补发过滤（挂起后 attach）：触发者 / 兼容（无身份）命中；他人不收
+    const triggerLate = attachSse(env, runId, 'u_trigger')
+    const compatLate = attachSse(env, runId)
+    const otherLate = attachSse(env, runId, 'u_other')
+    expect(triggerLate.some((e) => e.type === 'approval:requested')).toBe(true)
+    expect(compatLate.some((e) => e.type === 'approval:requested')).toBe(true)
+    expect(otherLate.some((e) => e.type === 'approval:requested')).toBe(false)
+
+    // resolved 同样定向（含挂起后订阅者）
+    env.approvals.decide(runId, pending.id, 'approve')
+    await waitRunFinished(env.engine, runId)
+    expect(triggerEvents.some((e) => e.type === 'approval:resolved')).toBe(true)
+    expect(otherEvents.some((e) => e.type === 'approval:resolved')).toBe(false)
+    expect(otherLate.some((e) => e.type === 'approval:resolved')).toBe(false)
   })
 
   it('拒绝：模型收到反馈并改方案（验收：拒绝后换 edit_file 完成）', async () => {

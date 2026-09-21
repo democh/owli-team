@@ -89,6 +89,8 @@ export interface CanvasToolbarProps {
   /** 拖动吸附模式：智能参考线（默认）↔ 10px 网格（与参考线互斥） */
   gridSnap: boolean
   onGridSnapChange(on: boolean): void
+  /** M79-AH：只读共享（viewer）——写类工具钮（添加 / 上传 / 脑图 / 撤销 / 重做）禁用（浏览类保留） */
+  readOnly?: boolean
 }
 
 export function CanvasToolbar({
@@ -104,6 +106,7 @@ export function CanvasToolbar({
   onToolChange,
   gridSnap,
   onGridSnapChange,
+  readOnly,
 }: CanvasToolbarProps): React.JSX.Element {
   const selectedIds = useCanvasStore((s) => s.selectedIds)
   const undoDepth = useCanvasStore((s) => s.undoDepth)
@@ -148,10 +151,10 @@ export function CanvasToolbar({
       <ToolBtn title="查找节点（/）" onClick={onSearch}>
         <Search className="size-4" />
       </ToolBtn>
-      <ToolBtn title="添加节点" onClick={onAdd}>
+      <ToolBtn title="添加节点" disabled={readOnly} onClick={onAdd}>
         <Plus className="size-4" />
       </ToolBtn>
-      <ToolBtn title="上传图片 / 视频" onClick={onUpload}>
+      <ToolBtn title="上传图片 / 视频" disabled={readOnly} onClick={onUpload}>
         <Upload className="size-4" />
       </ToolBtn>
       {canGenerate && (
@@ -159,16 +162,20 @@ export function CanvasToolbar({
           <Sparkles className="size-4" />
         </ToolBtn>
       )}
-      <ToolBtn title="脑图工坊（AI 生成 / 大纲导入）" onClick={onMind}>
+      <ToolBtn title="脑图工坊（AI 生成 / 大纲导入）" disabled={readOnly} onClick={onMind}>
         <Waypoints className="size-4" />
       </ToolBtn>
       <ToolSep />
-      <ToolBtn title="撤销 ⌘Z" disabled={undoDepth === 0} onClick={() => useCanvasStore.getState().undo()}>
+      <ToolBtn
+        title="撤销 ⌘Z"
+        disabled={readOnly || undoDepth === 0}
+        onClick={() => useCanvasStore.getState().undo()}
+      >
         <Undo2 className="size-4" />
       </ToolBtn>
       <ToolBtn
         title="重做 ⇧⌘Z"
-        disabled={redoDepth === 0}
+        disabled={readOnly || redoDepth === 0}
         onClick={() => useCanvasStore.getState().redo()}
       >
         <Redo2 className="size-4" />

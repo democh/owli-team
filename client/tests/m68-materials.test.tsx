@@ -1,7 +1,7 @@
 /**
  * M68 素材库前端测试：
  * - library-store：列表 / 容量拉取；上传（raw + x-file-name，成功后刷新）；删除；放入画布（无会话引导 / 入仓 + sendArtifact）；
- * - MaterialsConsole：空态引导 / 列表网格渲染 / 类型筛选（服务端参数）/ 上传按钮。
+ * - MaterialsConsole：空态引导 / 列表网格渲染 / 类型筛选（默认「图片」首筛；服务端参数）/ 上传按钮。
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
@@ -44,7 +44,9 @@ beforeEach(() => {
     const method = init?.method ?? 'GET'
     if (url.startsWith('/api/library/items') && method === 'GET') {
       lastListUrl = url
-      return res({ items: itemList })
+      // 与服务端同口径：kind 过滤（未带 kind = 全量）
+      const kind = new URLSearchParams(url.split('?')[1] ?? '').get('kind')
+      return res({ items: kind ? itemList.filter((i) => i.kind === kind) : itemList })
     }
     if (url === '/api/library/usage') return res({ usage: { count: itemList.length, bytes: 2048 * itemList.length } })
     if (url === '/api/library/uploads' && method === 'POST') {
@@ -59,7 +61,7 @@ beforeEach(() => {
     return res({}, 404)
   })
   vi.stubGlobal('fetch', fetchMock)
-  useLibraryStore.setState({ items: [], usage: undefined, loading: false, uploading: 0 })
+  useLibraryStore.setState({ items: [], usage: undefined, loading: false, uploading: 0, lastFilter: undefined })
   useSessionStore.setState({ currentId: undefined })
   useCanvasStore.setState({ sendArtifact: vi.fn(async () => 'nd_new') })
 })
@@ -116,24 +118,38 @@ describe('M68 MaterialsConsole', () => {
     expect(screen.getAllByRole('button', { name: /上传素材/ }).length).toBeGreaterThan(0)
   })
 
-  it('列表：网格渲染素材卡片；类型筛选触发服务端参数', async () => {
+  it('列表：默认「图片」首筛（首载即带 kind）；网格渲染 + 类型筛选触发服务端参数', async () => {
     itemList = [mkItem(), mkItem({ id: 'mat_2', name: '视频.mp4', kind: 'video', sizeBytes: 3 * 1024 * 1024 })]
     render(<MaterialsConsole />)
+    // 默认选中第一个 chip（图片）：首载即带 kind=image（不回落全量）
+    await waitFor(() => expect(lastListUrl).toContain('kind=image'))
     expect(await screen.findByText('猫咪.png')).toBeTruthy()
-    expect(screen.getByText('视频.mp4')).toBeTruthy()
+    await waitFor(() => expect(screen.queryByText('视频.mp4')).toBeNull()) // 图片筛下视频不出现
     expect(screen.getByText('2 KB')).toBeTruthy() // 大小格式化
-    expect(screen.getByText('3.0 MB')).toBeTruthy()
 
     await userEvent.click(screen.getByRole('button', { name: '视频' }))
     await waitFor(() => expect(lastListUrl).toContain('kind=video'), { timeout: 2_000 })
+    expect(await screen.findByText('视频.mp4')).toBeTruthy()
+    await waitFor(() => expect(screen.queryByText('猫咪.png')).toBeNull())
+    expect(screen.getByText('3.0 MB')).toBeTruthy()
+
+    // 不设「全部」chip：再点「视频」取消筛选 → 请求回到不带 kind 的全量
+    expect(screen.queryByRole('button', { name: '全部' })).toBeNull()
+    await userEvent.click(screen.getByRole('button', { name: '视频' }))
+    await waitFor(() => expect(lastListUrl).not.toContain('kind='), { timeout: 2_000 })
+    expect(await screen.findByText('猫咪.png')).toBeTruthy()
+    expect(screen.getByText('视频.mp4')).toBeTruthy()
   })
 
-  it('类型筛选-音频：chip 触发 kind=audio 服务端参数', async () => {
+  it('类型筛选-音频：默认「图片」筛下无命中（没有匹配）；点「音频」chip 触发 kind=audio 且条目可见', async () => {
     itemList = [mkItem({ id: 'mat_3', name: '配乐.mp3', kind: 'audio', ext: '.mp3' })]
     render(<MaterialsConsole />)
-    await screen.findByText('配乐.mp3')
+    // 库非空（usage 计数 1）但当前筛选无命中 → 「没有匹配的素材」（而非「还没有素材」）
+    expect(await screen.findByText('没有匹配的素材')).toBeTruthy()
+    expect(screen.queryByText(/还没有素材/)).toBeNull()
     await userEvent.click(screen.getByRole('button', { name: '音频' }))
     await waitFor(() => expect(lastListUrl).toContain('kind=audio'), { timeout: 2_000 })
+    expect(await screen.findByText('配乐.mp3')).toBeTruthy()
   })
 
   it('放入画布按钮：调用 toCanvas（入仓 + 落节点）', async () => {

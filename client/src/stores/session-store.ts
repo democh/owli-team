@@ -9,7 +9,7 @@
  */
 import { create } from 'zustand'
 import { sanitizeModelText } from '@multi-agent/shared'
-import type { ChatMessage, RunSnapshot, Session, SessionSummary } from '@multi-agent/shared'
+import type { UserAvatar, ChatMessage, RunSnapshot, Session, SessionSummary } from '@multi-agent/shared'
 import { apiDelete, apiGet, apiPatch, apiPost } from '../lib/api'
 
 export interface SessionDetailResponse {
@@ -19,6 +19,17 @@ export interface SessionDetailResponse {
   latestRun?: RunSnapshot | null
   /** M57 P2：共享会话人类署名表（userId → 昵称；兼容模式为空） */
   humanNames?: Record<string, string>
+  /** M79-B：人类画像投影（头像 / 头衔；随行返回；缺省 = 无） */
+  humanProfiles?: Record<string, HumanProfile>
+}
+
+/** M79-B：人类成员画像（会话详情随行投影；与 humanNames 并存，前端优先取本表渲染） */
+export interface HumanProfile {
+  name: string
+  /** M79-E：用户名（@ 寻址回退 token；缺省 = 老服务端投影） */
+  username?: string
+  headline?: string
+  avatar?: UserAvatar
 }
 
 export interface SessionState {
@@ -32,6 +43,8 @@ export interface SessionState {
   latestRun: RunSnapshot | null
   /** M57 P2：当前会话人类署名表（userId → 昵称；共享会话消息气泡用；兼容模式为空对象） */
   humanNames: Record<string, string>
+  /** M79-B：当前会话人类画像表（userId → 画像；头像 / 头衔渲染优先取本表） */
+  humanProfiles: Record<string, HumanProfile>
   loadingSessions: boolean
   loadingMessages: boolean
   /** 交付件刷新版本号：artifact:updated 递增，交付件浏览器据此重拉列表 */
@@ -50,6 +63,10 @@ export interface SessionState {
   refreshMessages: () => Promise<void>
   renameSession: (id: string, title: string) => Promise<void>
   removeSession: (id: string) => Promise<void>
+  /** M79-D：隐藏会话（仅本人列表；DM「删除」语义——新消息自动复现） */
+  hideSession: (id: string) => Promise<void>
+  /** M79-W：跨会话消息到达——即时更新列表行预览（排序 / 权威未读由 loadSessions 对账） */
+  noteIncoming: (sessionId: string, message: ChatMessage) => void
   upsertMessage: (message: ChatMessage) => void
   patchMessage: (id: string, patch: Partial<ChatMessage>) => void
   appendDelta: (id: string, delta: string) => void
@@ -105,6 +122,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   order: [],
   latestRun: null,
   humanNames: {},
+  humanProfiles: {},
   loadingSessions: false,
   loadingMessages: false,
   artifactVersion: 0,
@@ -139,7 +157,17 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     set((s) => ({
       sessions: s.sessions.map((x) =>
         x.id === session.id
-          ? { ...x, ...session, planFirst: session.planFirst, serial: session.serial, memberSouls: session.memberSouls }
+          ? {
+              ...x,
+              ...session,
+              // M79-K：「键缺失 = 空 / 关闭」字段显式归一——waiting_on 清空 / route_mode=auto /
+              // 无编制等场景服务端序列化会省略键，浅合并将保留旧值（持球徽章不消失 / 策略开关不复位）
+              waitingOn: session.waitingOn ?? [],
+              routeMode: session.routeMode,
+              planFirst: session.planFirst,
+              serial: session.serial,
+              memberSouls: session.memberSouls,
+            }
           : x,
       ),
     })),
@@ -176,13 +204,18 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   selectSession: async (id) => {
     // M55：切换会话后旧缓冲失去意义（消息将整体重拉），随视图一并清空
     rawStreams.clear()
-    set({ currentId: id, byId: new Map(), order: [], latestRun: null, humanNames: {} })
+    set({ currentId: id, byId: new Map(), order: [], latestRun: null, humanNames: {}, humanProfiles: {} })
     if (!id) return
     set({ loadingMessages: true })
     try {
       const res = await apiGet<SessionDetailResponse>(`/api/sessions/${id}`)
       if (get().currentId !== id) return // 切换竞态守卫
-      set({ ...toStores(res.messages), latestRun: res.latestRun ?? null, humanNames: res.humanNames ?? {} })
+      set({
+        ...toStores(res.messages),
+        latestRun: res.latestRun ?? null,
+        humanNames: res.humanNames ?? {},
+        humanProfiles: res.humanProfiles ?? {},
+      })
     } finally {
       if (get().currentId === id) set({ loadingMessages: false })
     }
@@ -193,7 +226,12 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     if (!id) return
     const res = await apiGet<SessionDetailResponse>(`/api/sessions/${id}`)
     if (get().currentId !== id) return
-    set({ ...toStores(res.messages), latestRun: res.latestRun ?? null, humanNames: res.humanNames ?? {} })
+    set({
+      ...toStores(res.messages),
+      latestRun: res.latestRun ?? null,
+      humanNames: res.humanNames ?? {},
+      humanProfiles: res.humanProfiles ?? {},
+    })
   },
 
   renameSession: async (id, title) => {
@@ -208,6 +246,32 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       ...(s.currentId === id ? { currentId: undefined, byId: new Map(), order: [] } : {}),
     }))
   },
+
+  /** M79-D：隐藏会话（仅本人列表；DM「删除」语义——新消息自动复现） */
+  hideSession: async (id) => {
+    await apiPost(`/api/sessions/${id}/hide`)
+    await get().loadSessions()
+    if (get().currentId === id) void get().selectSession(undefined)
+  },
+
+  noteIncoming: (sessionId, message) =>
+    set((s) => ({
+      sessions: s.sessions.map((x) =>
+        x.id === sessionId
+          ? {
+              ...x,
+              lastMessage: {
+                role: message.role,
+                ...(message.agentId ? { agentId: message.agentId } : {}),
+                ...(message.memberKey ? { memberKey: message.memberKey } : {}),
+                content: message.content,
+                createdAt: message.createdAt,
+                ...(message.userId ? { userId: message.userId } : {}),
+              },
+            }
+          : x,
+      ),
+    })),
 
   upsertMessage: (message) =>
     set((s) => {

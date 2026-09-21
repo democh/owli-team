@@ -11,10 +11,12 @@ import * as React from 'react'
 import { ArrowRight, CircleSlash, FileText, Wrench } from 'lucide-react'
 import type { ChatMessage } from '@multi-agent/shared'
 import { useAgentStore } from '../../stores/agent-store'
+import { useSessionStore } from '../../stores/session-store'
 import { useUiStore } from '../../stores/ui-store'
 import { formatClock } from '../../lib/time'
 import { cn } from '../../lib/utils'
 import { AgentAvatar } from '../agents/AgentAvatar'
+import { HumanAvatar } from './HumanAvatar'
 
 /** 入场动效窗口：仅新近消息播放，虚拟列表重挂载不重放 */
 const HANDOFF_ANIMATE_WINDOW_MS = 60_000
@@ -53,6 +55,9 @@ export function HandoffBar({ message }: { message: ChatMessage }): React.JSX.Ele
   const agents = useAgentStore((s) => s.agents)
   const quiet = useUiStore((s) => s.quietMode)
   const insertToComposer = useUiStore((s) => s.insertToComposer)
+  // M79-AA：交还目标的具体真人（画像优先，回退名单 id）
+  const humanProfiles = useSessionStore((s) => s.humanProfiles)
+  const humanNames = useSessionStore((s) => s.humanNames)
 
   if (message.role !== 'agent') return null
   if (message.status === 'streaming') return null
@@ -63,7 +68,47 @@ export function HandoffBar({ message }: { message: ChatMessage }): React.JSX.Ele
   const targets = mentions.filter((x) => x !== 'user')
   const shellCls = cn(SHELL, !quiet && Date.now() - Date.parse(message.createdAt) < HANDOFF_ANIMATE_WINDOW_MS && 'handoff-in')
 
-  // 交还用户：显示「你的回合」
+  // M79-AA：交还真人——显示具体真人（头像流 + 名字；点击一键接棒），替代泛称「你的回合」
+  const humanTargets = message.humanMentions ?? []
+  if (humanTargets.length > 0) {
+    const names = humanTargets.map((id) => humanProfiles[id]?.name ?? humanNames[id] ?? id)
+    return (
+      <div className="mt-2 flex justify-center">
+        <div className={shellCls} title={`${from?.name ?? message.agentId} 交还 给 ${names.join('、')}`}>
+          <AgentAvatar agent={from} size={22} animated={false} className="ring-1 ring-primary/15" />
+          <span className="shrink-0 font-medium">{from?.name ?? message.agentId}</span>
+          <ArrowRight className="mx-0.5 size-3 shrink-0 text-muted-foreground/60" />
+          <div className="flex shrink-0 -space-x-1.5">
+            {humanTargets.map((id, i) => {
+              const name = names[i]!
+              return (
+                <button
+                  key={id}
+                  type="button"
+                  title={`一键接棒：插入 @${name}，由 TA 继续推进`}
+                  className="rounded-full transition-transform hover:z-10 hover:-translate-y-0.5"
+                  onClick={() => insertToComposer(`@${name} `)}
+                >
+                  <HumanAvatar
+                    avatar={humanProfiles[id]?.avatar}
+                    name={name}
+                    size={22}
+                    className="ring-2 ring-card"
+                  />
+                </button>
+              )
+            })}
+          </div>
+          <span className="min-w-0 truncate font-medium text-primary" data-handoff-targets="">
+            {names.join('、')}
+          </span>
+          <HandoffMeta message={message} />
+        </div>
+      </div>
+    )
+  }
+
+  // 交还用户（兼容回退：无具体目标数据的旧消息）：显示「你的回合」
   if (mentions.includes('user') && targets.length === 0) {
     return (
       <div className="mt-2 flex justify-center">

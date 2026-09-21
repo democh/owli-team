@@ -17,6 +17,7 @@ import { TraceDrawer } from '../src/components/observability/TraceDrawer'
 import { SessionList } from '../src/components/sessions/SessionList'
 import { MetricsPanel } from '../src/components/team/MetricsPanel'
 import { useAgentStore } from '../src/stores/agent-store'
+import { useAuthStore } from '../src/stores/auth-store'
 import { useRunStore } from '../src/stores/run-store'
 import { useSessionStore } from '../src/stores/session-store'
 import { useUiStore } from '../src/stores/ui-store'
@@ -440,6 +441,67 @@ describe('MessageActions 反馈（M9）', () => {
       messageId: 'm2',
       rating: -1,
     })
+  })
+})
+
+// ---------- M79-AF：写项 gating（服务端口径的展示层对齐） ----------
+
+describe('MessageActions 写项 gating（M79-AF）', () => {
+  it('viewer：重生成 / fork / 删除隐藏；读面项保留', async () => {
+    const user = userEvent.setup()
+    useSessionStore.setState({
+      currentId: 's1',
+      sessions: [{ id: 's1', title: 'T', role: 'viewer' }] as never,
+      byId: new Map([['m2', makeMessage()]]),
+      order: ['m2'],
+    })
+    render(<MessageActions messageId="m2" />)
+    await user.click(screen.getByRole('button', { name: '消息操作' }))
+    expect(screen.queryByRole('menuitem', { name: /重新生成/ })).toBeNull()
+    expect(screen.queryByRole('menuitem', { name: /从这条 fork/ })).toBeNull()
+    expect(screen.queryByRole('menuitem', { name: /删除/ })).toBeNull()
+    expect(screen.getByRole('menuitem', { name: /复制/ })).toBeInTheDocument()
+    useSessionStore.setState({ sessions: [] })
+  })
+
+  it('他人人类消息（editor 非属主）：编辑 / 删除隐藏；本人消息两项均显示', async () => {
+    const user = userEvent.setup()
+    useAuthStore.setState({ user: { id: 'u_me' } } as never)
+    useSessionStore.setState({
+      currentId: 's1',
+      sessions: [{ id: 's1', title: 'T', role: 'editor' }] as never,
+      byId: new Map([['m2', makeMessage({ role: 'user', userId: 'u_other' })]]),
+      order: ['m2'],
+    })
+    const first = render(<MessageActions messageId="m2" />)
+    await user.click(screen.getByRole('button', { name: '消息操作' }))
+    expect(screen.queryByRole('menuitem', { name: /编辑重发/ })).toBeNull()
+    expect(screen.queryByRole('menuitem', { name: /删除/ })).toBeNull()
+    first.unmount()
+
+    // 本人消息 → 编辑与删除均显示
+    useSessionStore.setState({ byId: new Map([['m2', makeMessage({ role: 'user', userId: 'u_me' })]]) })
+    render(<MessageActions messageId="m2" />)
+    await user.click(screen.getByRole('button', { name: '消息操作' }))
+    expect(screen.getByRole('menuitem', { name: /编辑重发/ })).toBeInTheDocument()
+    expect(screen.getByRole('menuitem', { name: /删除/ })).toBeInTheDocument()
+    useAuthStore.setState({ user: undefined })
+    useSessionStore.setState({ sessions: [] })
+  })
+
+  it('兼容模式（无角色 / 无 userId）：写项全放行（零回归）', async () => {
+    const user = userEvent.setup()
+    useSessionStore.setState({
+      currentId: 's1',
+      sessions: [],
+      byId: new Map([['m2', makeMessage({ role: 'user' })]]),
+      order: ['m2'],
+    })
+    render(<MessageActions messageId="m2" />)
+    await user.click(screen.getByRole('button', { name: '消息操作' }))
+    expect(screen.getByRole('menuitem', { name: /编辑重发/ })).toBeInTheDocument()
+    expect(screen.getByRole('menuitem', { name: /删除/ })).toBeInTheDocument()
+    expect(screen.getByRole('menuitem', { name: /从这条 fork/ })).toBeInTheDocument()
   })
 })
 

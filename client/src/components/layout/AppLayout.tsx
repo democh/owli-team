@@ -44,6 +44,7 @@ import { useUiStore, type MainTab } from '../../stores/ui-store'
 import { useWsStore } from '../../stores/ws-store'
 import { attachActiveRunFor } from '../../stores/run-store'
 import { AccountDialog } from '../account/AccountDialog'
+import { InboxPanel } from './InboxPanel'
 import { Button } from '../ui/button'
 import { Dialog, DialogContent, DialogTitle } from '../ui/dialog'
 import { Tabs, TabsList, TabsTrigger } from '../ui/tabs'
@@ -107,7 +108,7 @@ export function HeaderBar({ narrow, onOpenSessions }: { narrow?: boolean; onOpen
   const [accountOpen, setAccountOpen] = React.useState(false)
 
   return (
-    <header className="flex h-12 shrink-0 items-center gap-3 border-b bg-card/80 px-3 shadow-sm shadow-slate-900/5 backdrop-blur-md sm:px-4">
+    <header className="relative z-40 flex h-12 shrink-0 items-center gap-3 border-b bg-card/80 px-3 shadow-sm shadow-slate-900/5 backdrop-blur-md sm:px-4">
       {narrow && onOpenSessions && (
         <Button variant="ghost" size="icon-sm" title="会话列表" onClick={onOpenSessions}>
           <PanelLeft className="size-4" />
@@ -138,6 +139,7 @@ export function HeaderBar({ narrow, onOpenSessions }: { narrow?: boolean; onOpen
             {wsStatus === 'open' ? '通知已连接' : wsStatus === 'connecting' ? '连接中' : '降级轮询'}
           </span>
         </span>
+        <InboxPanel />
         <Button
           variant="ghost"
           size="icon-sm"
@@ -220,13 +222,18 @@ function BottomMemberBar({ onOpenTeam }: { onOpenTeam: () => void }): React.JSX.
   const currentId = useSessionStore((s) => s.currentId)
   const session = sessions.find((s) => s.id === currentId)
   const members = React.useMemo(() => memberViews(agents, session), [agents, session])
+  // M79-S：纯人聊天隐藏「团队」抽屉入口（人类成员条保留——@ 点名仍需要）
+  const humanOnlyChat =
+    !!session && (session.kind === 'direct' || session.kind === 'group') && members.length === 0
 
   return (
     <div className="flex h-12 shrink-0 items-center gap-1.5 overflow-x-auto border-t bg-card/80 px-2 backdrop-blur">
-      <Button variant="outline" size="xs" className="shrink-0" onClick={onOpenTeam} title="打开团队面板">
-        <PanelRight className="size-3.5" />
-        团队
-      </Button>
+      {!humanOnlyChat && (
+        <Button variant="outline" size="xs" className="shrink-0" onClick={onOpenTeam} title="打开团队面板">
+          <PanelRight className="size-3.5" />
+          团队
+        </Button>
+      )}
       {members.map((m) => (
         <button
           key={m.key}
@@ -242,7 +249,7 @@ function BottomMemberBar({ onOpenTeam }: { onOpenTeam: () => void }): React.JSX.
           {m.label}
         </button>
       ))}
-      {members.length === 0 && (
+      {members.length === 0 && !humanOnlyChat && (
         <span className="px-1 text-[11.5px] text-muted-foreground">当前会话暂无成员 · 首条消息将自动组队</span>
       )}
     </div>
@@ -268,6 +275,15 @@ export function AppLayout(): React.JSX.Element {
   const closeWorkspaceView = useUiStore((s) => s.closeWorkspaceView)
   const rightPanelOpen = useUiStore((s) => s.rightPanelOpen)
   const leftPanelOpen = useUiStore((s) => s.leftPanelOpen)
+  // M79-S：纯人聊天（人物会话且无 agent 编制）隐藏右栏——与 Composer AI 状态条同口径；
+  // 不修改用户偏好（切走恢复原态），入口（头部按钮 / 窄屏团队按钮）一并隐藏
+  const layoutAgents = useAgentStore((s) => s.agents)
+  const currentSession = useSessionStore((s) => s.sessions.find((x) => x.id === s.currentId))
+  const humanOnlyChat =
+    !!currentSession &&
+    (currentSession.kind === 'direct' || currentSession.kind === 'group') &&
+    memberViews(layoutAgents, currentSession).length === 0
+  const rightVisible = rightPanelOpen && !humanOnlyChat
   const narrow = useMediaQuery('(max-width: 900px)')
   // 左栏（会话）宽度：默认约 200px、最窄可拖到约 160px；小屏上限 17%/15%
   const sessionDefault = toPanelSize(200, 17)
@@ -405,7 +421,7 @@ export function AppLayout(): React.JSX.Element {
             </TabsList>
           </Tabs>
         )}
-        {!narrow && <PanelToggleButton side="right" className="ml-auto" />}
+        {!narrow && !humanOnlyChat && <PanelToggleButton side="right" className="ml-auto" />}
       </div>
       <ErrorBoundary>
         <React.Suspense
@@ -440,12 +456,14 @@ export function AppLayout(): React.JSX.Element {
           />
         </DialogContent>
       </Dialog>
-      <Dialog open={teamDrawer} onOpenChange={setTeamDrawer}>
-        <DialogContent hideClose className="h-[72vh] max-w-md overflow-hidden p-0">
-          <DialogTitle className="sr-only">团队面板</DialogTitle>
-          <TeamPanel />
-        </DialogContent>
-      </Dialog>
+      {!humanOnlyChat && (
+        <Dialog open={teamDrawer} onOpenChange={setTeamDrawer}>
+          <DialogContent hideClose className="h-[72vh] max-w-md overflow-hidden p-0">
+            <DialogTitle className="sr-only">团队面板</DialogTitle>
+            <TeamPanel />
+          </DialogContent>
+        </Dialog>
+      )}
       <CommandPalette />
       <ShortcutHelp />
       <TraceDrawer />
@@ -487,7 +505,7 @@ export function AppLayout(): React.JSX.Element {
             {appView === 'workspace' ? (
               <>
                 {mainPane}
-                <BottomMemberBar onOpenTeam={() => setTeamDrawer(true)} />
+                {!humanOnlyChat && <BottomMemberBar onOpenTeam={() => setTeamDrawer(true)} />}
               </>
             ) : (
               consoleView
@@ -517,7 +535,7 @@ export function AppLayout(): React.JSX.Element {
                   // 左右任一收起：主区兼得的合并份额按原三栏比例拆还，展开时回到原位（不跳变）；
                   // 无记忆（刷新后）以挂载默认三栏为基准——口径须与下方 Panel defaultSize 一致（S, 100−S−26, 26）
                   const prev = paneLayout.current ?? [sessionDefault, 100 - sessionDefault - 26, 26]
-                  if (rightPanelOpen) {
+                  if (rightVisible) {
                     // 左收右开：[main, team] → main 拆回 [sessions, main]
                     const [m0, t0] = layout
                     const rest = prev[0] + prev[1]
@@ -556,8 +574,8 @@ export function AppLayout(): React.JSX.Element {
                   paneLayout.current
                     ? paneLayout.current[1] +
                       (leftPanelOpen ? 0 : (paneLayout.current[0] ?? 0)) +
-                      (rightPanelOpen ? 0 : (paneLayout.current[2] ?? 0))
-                    : 100 - (leftPanelOpen ? sessionDefault : 0) - (rightPanelOpen ? 26 : 0)
+                      (rightVisible ? 0 : (paneLayout.current[2] ?? 0))
+                    : 100 - (leftPanelOpen ? sessionDefault : 0) - (rightVisible ? 26 : 0)
                 }
                 minSize={35}
                 className="min-h-0"
@@ -565,10 +583,10 @@ export function AppLayout(): React.JSX.Element {
                 {mainPane}
               </Panel>
 
-              {rightPanelOpen && (
+              {rightVisible && (
                 <PanelResizeHandle className="w-px bg-border transition-colors hover:bg-primary/50 data-[resize-handle-active]:bg-primary" />
               )}
-              {rightPanelOpen && (
+              {rightVisible && (
                 <Panel
                   id="team"
                   order={3}

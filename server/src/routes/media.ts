@@ -51,13 +51,23 @@ export function createMediaRouter(deps: ApiDeps): Router {
     return true
   }
 
-  /** M57：媒体任务守卫（任务 → 所属会话 → 归属）；跨用户一律 404 */
-  const guardJob = (req: Request): { ok: true } | { ok: false } => {
+  /**
+   * M57：媒体任务守卫（任务 → 所属会话 → 归属）；跨用户一律 404。
+   * M79-AF：forWrite=true（cancel / retry）时追加会话写权限——viewer 只读（不可取消 / 重试）。
+   */
+  const guardJob = (req: Request, forWrite = false): { ok: true } | { ok: false; status?: number } => {
     const job = deps.media!.get(req.params.id)
     if (!job) return { ok: false }
     const user = (req as Request & { user?: AuthUser }).user
-    if (job.sessionId && !deps.access.canAccessSession(user, job.sessionId)) return { ok: false }
+    if (job.sessionId) {
+      if (!deps.access.canAccessSession(user, job.sessionId)) return { ok: false }
+      if (forWrite && !deps.access.canWriteSession(user, job.sessionId)) return { ok: false, status: 403 }
+    }
     return { ok: true }
+  }
+  const denyJob = (res: import('express').Response, result: { ok: false; status?: number }): void => {
+    if (result.status === 403) res.status(403).json({ error: '当前为只读共享（viewer）：无操作权限' })
+    else res.status(404).json({ error: '任务不存在' })
   }
 
   router.get('/media/providers', (_req, res) => {
@@ -87,14 +97,17 @@ export function createMediaRouter(deps: ApiDeps): Router {
 
   router.get('/media/jobs/:id', (req, res) => {
     if (!requireService(res)) return
-    if (!guardJob(req)) return res.status(404).json({ error: '任务不存在' })
+    // M79-AF 修正：guardJob 返回结构体，原 `!guardJob(req)` 恒为 false（校验从未生效）——改按 .ok 判定
+    const verdict = guardJob(req)
+    if (!verdict.ok) return denyJob(res, verdict)
     const job = deps.media!.get(req.params.id)
     res.json({ job })
   })
 
   router.post('/media/jobs/:id/cancel', (req, res) => {
     if (!requireService(res)) return
-    if (!guardJob(req)) return res.status(404).json({ error: '任务不存在' })
+    const verdict = guardJob(req, true)
+    if (!verdict.ok) return denyJob(res, verdict)
     const result = deps.media!.cancel(req.params.id)
     if ('error' in result) return res.status(400).json({ error: result.error })
     res.json({ job: result.job })
@@ -102,7 +115,8 @@ export function createMediaRouter(deps: ApiDeps): Router {
 
   router.post('/media/jobs/:id/retry', (req, res) => {
     if (!requireService(res)) return
-    if (!guardJob(req)) return res.status(404).json({ error: '任务不存在' })
+    const verdict = guardJob(req, true)
+    if (!verdict.ok) return denyJob(res, verdict)
     const result = deps.media!.retry(req.params.id)
     if ('error' in result) return res.status(400).json({ error: result.error })
     res.json({ job: result.job })

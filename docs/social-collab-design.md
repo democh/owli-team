@@ -1,7 +1,7 @@
 # 社交协作专项设计（M79）——好友 · 私聊/群聊 · 真人入会话与 @ 调度 · 实时通道稳定化
 
-> **文档定位**：最终设计与实施文档（含前端交互设计、触发判断专题、批次任务分解）。**状态：规划中 · 等待确认后实施**（2026-09-19 稿；确认前不落任何代码）
-> 预测编号（实施收口期全仓检索复核，实际落位为准）：里程碑 **M79**（**M78 已被 `docs/tarot-ritual-design.md` 预测占用**；已检索 M79–M83 空闲）· ADR **0187–0195**（现最大 0185；0186 为 tarot 预测）· design.md **§114**（现最大 §112；§113 为 tarot 预测）· CHANGELOG **v98+**（现 v96）· 新 E2E `m79-social.spec.ts` / `m79-realtime.spec.ts`
+> **文档定位**：最终设计与实施文档（含前端交互设计、触发判断专题、批次任务分解）。**状态：已实施（M79 批次 A–E 全量落地；F–Z 补批收口；2026-09-20 收口）**
+> 实际落位（2026-09-20 复核）：里程碑 **M79** · ADR **0188–0201** · design.md **§114** · 迁移 **v21–v26**（编号让位：M78 / ADR 0187 / §113 已被塔罗批次占用；ADR 0186 为输出完整性治理批占用）· E2E `m79-social.spec.ts` / `m79-realtime.spec.ts` 已落地
 > 范围：用户画像 · 好友关系图 · 私聊与群聊（人物会话）· 真人驻 Agent 会话与 @ 真人调度 · **触发判断体系** · 通知/未读/在线状态的 WebSocket 稳定化基座
 > 关联：ADR 0134（M57 多用户基座，§90）· M57 P2 会话共享（ADR 0142）· M48 平台路由步 PRS（ADR 0101）· WsHub（§18.3）· StreamHub（M22）· M62 连接线治理（ADR 0139–0141）
 > 现状基线（规划时仓库快照，数字以开工复跑为准）：迁移 **v20** · design.md **§112** · docs/adr 至 **0185** · 三 WS 通道并存：`/ws`（通知总线）/ `/ws/stream`（浏览器帧）/ `/ws/ssh`（终端）
@@ -460,7 +460,7 @@ ALTER TABLE sessions ADD COLUMN waiting_on TEXT;                          -- JSO
 ### 9.6 在线状态（presence）
 
 - **推导**：`online = 活跃连接引用计数 > 0`；最后一条连接关闭 → `lastSeenAt = now`（离线事件延迟 30s 发出，吸收刷新 / 切页抖动）；
-- **可见范围**：仅推送给「好友 ∪ 与该用户同会话成员」（服务端查询 + 30s 缓存）；群聊成员不互见在线（仅好友可见，防群内全互通）；
+- **可见范围**：仅推送给「好友 ∪ 与该用户同会话人类成员」（M79-G 落地的唯一口径：收件人工厂 `createPresenceRecipients`——好友 ∪ 主体所属每个会话的属主与全部人类成员；去重、排除本人；非好友且不同会话的用户不可见）；
 - **节流**：变更事件 500ms 聚合为批量帧 `notify:presence { users: [...] }`；
 - **边界**：单进程内存态，重启后重建（首帧全量对齐）；不做多实例 presence（§9.7）。
 
@@ -583,9 +583,11 @@ server：`m79-friends.test.ts`——状态机全链（请求 / 重复请求 409 
 - owner 可移出成员 / 改群名 / 删群（复用 shares DELETE / `PATCH /sessions/:id` 扩展 title 对 group 放开给 owner）；
 - viewer 角色对 chat 形态不开放（邀请入群恒 editor；只读共享仅团队会话语义）。
 
+**实施注记（M79-AA，ADR 0201）**：退出 / 解散入口落地「成员」弹窗（行内二次确认；成员「退出群聊」/ 群主「解散群聊」，chat 形态此前无入口）；退出与移出补系统事件条留痕（group「群聊」/ team「协作」+ turn-end 广播）；群名 `PATCH title` 收紧为 **owner-only**（editor 403）；`/leave` 对 direct 400 防护；解散广播 `notify:session-deleted` payload 增 `kind`（成员端「群聊已被解散」文案）；会话列表行补群聊重命名入口（owner 可见）。
+
 ### 12.4 列表与未读
 
-- `GET /sessions` 增 `kind` + `unreadCount`（服务端计算）；客户端会话列表：团队 / 聊天同列按更新时间（kind 图标区分：Users / MessageCircle）+ 顶部筛选 chip「全部 / 团队 / 聊天」（见 §14.1）；
+- `GET /sessions` 增 `kind` + `unreadCount`（服务端计算）；客户端会话列表：团队 / 聊天同列按更新时间（kind 图标区分：Users / MessageCircle）+ 顶部筛选 chip「团队 / 聊天」（**默认选中第一个「团队」**，点选过滤 / 再点取消回全部——2026-09-20 修订移除「全部」项 + 默认首项；见 §14.1）；
 - 未读徽章 = 服务端值（D7）；会话头部：`direct` 显示对端画像行（名 + 头衔 + 在线点）；`group` 显示成员头像组（人类）+ 人数。
 
 ### 12.5 测试
@@ -665,7 +667,7 @@ server：`m79-trigger.test.ts`（矩阵全表逐行——空闲 / 运行 × @age
 │ [会话 | 联系人]  ← 顶部 Tabs（新增；仅 multiUser 渲染）
 │ ── 会话模式（现状）───────
 │  头部：会话 N + ＋新建 / 搜索框（现状）
-│  筛选 chip（新增）：全部 | 团队 | 聊天
+│  筛选 chip（新增）：团队 | 聊天（默认选中「团队」；点选过滤 / 再点取消 = 全部）
 │  会话行：kind 图标 + 标题 + [协作/只读徽章] + 未读[服务端] + 预览
 │   direct 行标题 = 对端显示名；副信息 = 在线点 + 最近消息
 │ ── 联系人模式（新组件 ContactsPanel）────
@@ -674,7 +676,7 @@ server：`m79-trigger.test.ts`（矩阵全表逐行——空闲 / 运行 × @age
 ```
 
 - Tabs 在「联系人」上有未处理请求数角标（红色小徽章，复用 badge-pop 样式）；
-- 会话筛选 chip：仅过滤本列表显示（不影响未读总计）；默认「全部」；状态存 ui-store（会话级内存，不持久化）；
+- 会话筛选 chip：仅过滤本列表显示（不影响未读总计）；**默认选中第一个「团队」**（无「全部」项，点选过滤 / 再点取消回全部——2026-09-20 修订：移除「全部」项 + 默认首项）；状态存 ui-store（会话级内存，不持久化）；
 - kind 图标：team = 无图标（现状）；direct = `MessageCircle`；group = `Users`（12–13px，置于标题左侧，与画布小点同排纪律）；
 - 命令面板（CommandPalette）同步增「打开联系人」「新建群聊」两个条目（沿用现有条目样式）。
 
@@ -765,6 +767,8 @@ server：`m79-trigger.test.ts`（矩阵全表逐行——空闲 / 运行 × @age
 - **多端同步**：`notify:read-state` 到端 → 徽章即时清零；
 - 通知权限：沿用现有 `Notification.permission` 请求（无新流程）。
 
+**M79-I 补注（通知中心）**：持久收件箱的 UI 落点——顶栏「通知」按钮 + 未读徽章；面板按 seq 新在上列出跨会话个人事件（好友申请 / 已同意 / 会话邀请 / @提及 / 等你回复 / 系统）；点击条目 = **单项已读**（`POST /inbox/read { ids }`）+ 跳转（会话类打开会话并订阅；好友类切联系人页签）；「全部已读」= `upTo`。**ack 语义收敛**：打开联系人面板仅将「好友申请」类置为已读（内容已在请求区可视），邀请 / 提及 / 持球保留未读交由通知中心复看——替换原设计「打开联系人即整段已读」（`inbox-ack` 整段语义仍保留给「全部已读」动作）。
+
 ### 14.9 设置页（成员视角）
 
 - 新「我的资料」卡（置顶于成员设置页；`client/src/components/settings/` 新增 `MyProfileCard.tsx`）：
@@ -836,6 +840,13 @@ server：`m79-trigger.test.ts`（矩阵全表逐行——空闲 / 运行 × @age
 | 隐藏会话 | 本人 | 本人 | 本人 | 本人 | — |
 | 收件箱 | 本人 | 本人 | 本人 | 本人 | 本人 |
 | 在线状态可见 | 好友 ∪ 同会话 | 同左 | 同左 | 同左 | ✗ |
+| **M79-AF 补充行（操作面写闸门：可读不可写 → 403，不可读 → 404）** | | | | | |
+| 浏览器接管 / 归还 / 关闭 / takeover token | — | ✓ | ✓ | ✗ | 404 |
+| 定时任务 改 / 删 / 立即触发 / 启停 | — | ✓ | ✓ | ✗ | 404 |
+| 媒体任务 取消 / 重试 | — | ✓ | ✓ | ✗ | 404 |
+| 运行 停止 / 指挥台重排 | — | ✓ | ✓ | ✗ | 404 |
+| **审批 批准 / 拒绝（决定与读面同口径：触发者 ∪ 属主）** | — | ✓（属主兜底） | 仅本 Run 触发者 | ✗ | 404 |
+| 交还提示（awaiting-user toast） | — | 属主收到 | 持球 targets 收到 | 非持球不收 | — |
 
 ---
 
@@ -927,7 +938,7 @@ server：`m79-trigger.test.ts`（矩阵全表逐行——空闲 / 运行 × @age
 | auto 默认下的误触发（人类讨论被 AI 响应） | 体验 / 成本 | 显式引导（邀请第二位人类时提示 + 头部一键切换）+ 发送侧提示条；矩阵可解释；不隐式抑制 |
 | @ 寻址冲突（重名 / 与 agent 重名） | 误派 | 降级链（§8.7）+ Composer 标注 + 解析单测矩阵；极端情况不可点名（文档明示） |
 | waiting 与运行态并发（罕见） | 语义模糊 | waiting 命中优先为 inject（显式例外，单测锁定）；正常时序下 Run 已收束 |
-| admin 可见性隐私争议 | 信任 | 文档 + ADR 明示边界；后续 `DM_ADMIN_VISIBLE` 开关预留；拉黑四面切断兜底 |
+| admin 可见性隐私争议 | 信任 | 文档 + ADR 明示边界；**M79-G 更正**：admin 对成员私有会话本就无内容旁路（owner ∪ 成员唯一事实源；ADR 0197），不需要 `DM_ADMIN_VISIBLE` 开关；拉黑四面切断兜底 |
 | 通知风暴（群聊 + 多端 + presence） | 带宽 / 性能 | 聚合节流（presence 500ms / 提及 60s）+ 连接上限 8 + 背压 resync |
 | 好友请求 / 搜索滥用 | 骚扰 | 日限流 / 搜索限流 / 拉黑即时生效 / `allowFriendRequests` 开关 |
 | 迁移兼容（存量会话） | 回归 | `kind='team'` / `route_mode='auto'` 默认值 + 新列可空 + 兼容模式路径断言进测试 |
@@ -952,3 +963,69 @@ server：`m79-trigger.test.ts`（矩阵全表逐行——空闲 / 运行 × @age
 8. **兼容冒烟**：`multiUser=false` 启动跑通首屏 / 会话 / 联系人入口隐藏三断言；
 9. **镜像面**：server / client 测试计数、E2E helpers（双用户工具函数）、agents/CHANGELOG（若涉资产协议则登记，否则不登）。
 
+---
+
+## 22. 落地注记（2026-09-20，实施后回填）
+
+**批次与提交范围**：M79-A（实时通道基座）→ B（画像）→ C（好友）→ D（人物会话）→ E（触发判断与 @ 调度）全量落地；迁移 v21–v25；ADR 0188–0196。
+
+**实施期与规划的差异（以代码为准）**：
+
+1. **画像维护端点**：规划 `PATCH /api/me/profile` → 实现落 `PATCH /api/auth/profile`（与 `/auth/me`、`/auth/preferences` 同族；`GET /api/me` 复用 `/auth/me` 投影，不另设重复端点）；
+2. **presence 可见范围**：规划「好友 ∪ 同会话成员」→ v1 曾收窄为好友面 → **M79-G 已扩展回设计原案**（收件人工厂 `createPresenceRecipients`；见注记 7）；
+3. **触发矩阵实现单点**：落于 `routes/sessions.ts` POST /messages 的 `shouldTrigger`（agent 定向 / waiting 命中 / 无定向且 auto）；引擎侧仅补 `handedTo` 累积与收尾写入（`deps.sessionHumans` / `deps.onHandedTo` 注入——测试环境缺省即零差异）；
+4. **E2E spec 已补批落地**：`e2e/m79-social.spec.ts`（1 例：好友 UI 全链 → 私聊 → 群聊 → 邀请实时化（M57 缺口修复断言）→ @真人提及 chips → 触发策略零引擎）+ `e2e/m79-realtime.spec.ts`（1 例：多端未读实时增量 + read-state 对账徽章消失）；auth 项目 testMatch 扩展为 `(m57-auth|m79-social|m79-realtime)`，新增 `PW_AUTH_PORT` / `PW_AUTH_DATA_DIR` 隔离参数（默认 8790 / data/e2e-auth 零变化）；默认实例 5/5（m57×3 + m79×2）、隔离实例（8791）两轮连跑 2/2 幂等；
+5. **`notify:turn-end` 复用为 chat 补播帧**（payload 携带 message；无 message 时维持原「旁观态轻微信号」语义）。
+6. **M79-F 前端收口（设计 §14 补齐）**：群 / 私聊头部「成员」入口替代「共享」（团队保持共享语义）；ChatMembersDialog（成员名单 + 群主移出二次确认 + 「邀请好友」选择器——候选 = 好友 − 已在场，role 恒 editor）；ShareDialog 多人协作静默引导行（owner + 已有成员 + 仍为 auto → 一键切「仅点名唤起」）；会话列表筛选 chip（团队 / 聊天；2026-09-20 修订：移除「全部」项 + 默认选中第一个「团队」——点选过滤 / 再点取消回全部）；命令面板「打开联系人 / 新建群聊」（仅多用户模式）；
+7. **M79-G 隐私与可见性收口**：presence 可见域 = 好友 ∪ 同会话人类成员（收件人计算工厂化可测；客户端 `ws-store.presenceMap` 通用面 + `OnlineDot` 抽公共——成员弹窗 / @ 人类候选 / 联系人共用）；**admin 无会话内容旁路**经代码复核确认并回归固化（`m79-privacy.test.ts`：详情 / 写操作 404、列表仅自有、搜索无命中、WS 可见集不含）——本条更正注记此前「admin 对私聊可见」的表述，且**不引入** `DM_ADMIN_VISIBLE`（ADR 0197）；
+8. **M79-H 拉黑消息面补完与微体验**：拉黑对在**人物私聊**发新消息 → 403 拒发（落库前，文案分视角不泄漏拉黑事实；团队协作面不受限，历史可回看——ADR 0198）；`.env` 无新增；联系人离线点 tooltip「最后在线：x 分钟前」；E2E 补强：m79-social 增群「成员」弹窗 + 同会话在线点（bob 重连产生确定性 presence 事件）+ 会话筛选 chip 步骤，行定位改「标题精确匹配」（修掉残留群会话预览同名导致的误点）；
+9. **M79-I 通知中心（持久收件箱 UI 落点）**：`InboxPanel`（顶栏入口 + 未读徽章 + 类型标签 + 单项已读/全部已读/跳转；兼容模式不渲染）；`inbox-store.ack(ids)` 新增；联系人面板 ack 收敛为「仅好友申请类」；E2E 补通知中心复看步骤；层叠修复：banner `backdrop-blur` 建立的堆叠上下文使面板无法覆盖主区 → header 显式 `relative z-40`；
+10. **M79-J 设计对账审计（行级补齐）**：对 §14/§16/§18 逐条核验后补——① §14.9 隐私开关 UI（`MyPrivacyCard`：允许搜索 / 允许好友申请，GET/PUT `/auth/preferences` 即时保存 + 失败回滚）与 admin 用户管理行头像画像；② §14.4 chat 形态头部（direct = 对端名 + 在线点 + 头衔副行；group = 群名 + 「N 人」）+ 输入区人类成员条（头像 + 在线点 + 名字；点击 @显示名，冲突回退 @username）+ chat 专属 placeholder；③ §8.8 `<human_roster>` 软约束注入（assembler L3 + 交还指令行；engine 4 处 prepareTurn 透传；无人类零差异）+ `HumanMentionInfo.headline` 随行；④ §16 矩阵落地：成员编制管理（`POST/DELETE/PATCH /sessions/:id/members*`）team/direct 收紧 owner-only、group 放宽 editor（`canManageLineup` 单点；m57-p2-shares 写探针改用重命名并固化 403 语义）；⑤ §14.11 ARIA（未读徽章「N 条未读」/ 联系人角标「N 条好友请求」）；⑥ 测试账合并说明：`m79-human-mention` / `m79-waiting` 按 §17 许可并入 `m79-trigger`（§13.7 原案允许「可并为 m79-human」）；
+11. **M79-K E2E 终账（§17 ⑦ + MockProvider 剧本扩）**：E2E 补第 4c 步——@agent 唤起 → mock 行首 @真人（`[[handoff:姓名]]` 剧本标记）→ `waiting_on` 持球徽章 → 被点名提示条 → 回复即清除（补齐 §17 ⑥⑦ 之间的持球全链）；过程连带修复三处真实缺陷：① **mock 触发块在共享会话静默失效**（`lastUserText` 只认 `【用户】` 前缀，M57 P2 署名后共享会话恒为空 → 一切触发块/标记不生效；改 `【…】` 泛匹配）；② **`notify:session-meta` 客户端零消费**（ws-store 无归约分支——「他人回复清除持球」广播到达但徽章不消失；补 applySession 归并）；③ **`applySession` 空键残留**（waiting_on 清空 / route_mode=auto 时服务端序列化省略键，浅合并保留旧值——含「切回自动应答开关不复位」同因 bug；关键字段显式归一）；E2E 收束等待改用「停止」出现→消失双段（「你的回合」历史胶囊会立即命中，不可作收束信号）；
+12. **M79-L 多实例演进（共享总线 / 跨实例 presence）**：`NOTIFY_BUS=db` 启用——NotifyHub 挂载 `DbNotifyBus`（本地下发保持现状；总线行跨实例传输，`kind=session|user`；origin 排除防回环；实例启动游标 = maxId 不重放历史，缺口由重连 resync + REST 权威层补齐）；跨实例 presence 计数表 `presence_instances`（离线广播前合并全局合计、stale 忽略；30s 心跳刷行 + 回收）；迁移 v26；配置 `NOTIFY_BUS` / `NOTIFY_BUS_POLL_MS` / `NOTIFY_BUS_RETENTION_MINUTES` / `INSTANCE_ID`；`ws/stats.bus` 观测；ADR 0199；测试 `m79-multibus`（两实例共享 DB 真 WS 跨实例投递 + 防回环 + 存储/门控单测）；**默认 memory 模式单实例零开销、行为逐字节一致**；
+13. **M79-M 聊天模式 @agent 边界澄清与展示面收口**（用户实测反馈）：行为边界（本就如此，经测试固化）——**纯人聊天**（direct/group 无 agent 编制）@agent 名不触发（人类定向语义仅存储，无 runId）；**混编群**（agent 经成员 API 入编）@agent → 正常唤起 Run（m79-chats 增正/反例断言）；展示面修复——Composer 成员条对**人物会话**不再走「全量 agent 兜底」（该兜底为 team/场景空编制的 M48 召唤面，保留不变），纯人聊天不再展示任何 agent 条目（防「可 @」误示）；混编群仅展示在编 agent；@ 候选面板同源自动收敛；客户端 composer 测试增四态用例（direct/group 无编制收口 · 混编群仅在场 · team 空编制兜底回归）；
+14. **M79-N 实测反馈三修**：① 他人人类消息气泡加 `w-fit max-w-full`（容器 `flex-1` 致短文本被拉到 82% 全宽——截图实测缺陷；编辑态同修）；② ShareDialog 增「从好友选择」快捷邀请（好友 − 属主 − 已在场，点选即邀 editor，免输用户名——团队模式「加不了真人」的体验根因：原仅用户名输入；团队邀请本不要求好友，功能一直可用）；③ 澄清：私聊不可扩为多人（IM 惯例，ADR 0194）；多人群聊走「新建群聊」多选好友（1–50 人）——当前环境仅 2 账号故候选 1 人；
+15. **M79-O 新建会话直接拉真人（一步邀请）**：建会话组队台（`CreateSessionDialog`）编制栏底部新增「协作成员（真人）」好友多选（多用户模式；打开时拉好友，空态提示）；创建成功后对选中好友自动 `POST /sessions/:id/shares { role: editor }`（`Promise.allSettled` 汇总成败，失败不阻塞会话创建）；**纯真人组合（无 agent 编制）自动置 `routeMode=mention`**（防未 @ 消息触发 PRS 组队——UI 内有琥珀提示）且按钮文案计入真人（「创建并进入（N 位成员）」）；E2E 增 5b 步（勾好友 → 填标题 → 创建即进入 → 自动「仅点名唤起」可见 → 对方不刷新实时收到邀请）；两条原生路径并存：聊天形态一步（私聊/群聊创建）· 团队形态一步（本项）· 既有「先建后共享」仍可用；
+16. **M79-P 纯人聊天隐藏 AI 状态条**（实测反馈）：Composer 底条对「人物会话且无 agent 编制」隐藏 范式 chips（执行/规划/评审）与右端上下文电池/本 Run 费用/轨迹（`ContextBar`）——判据 `aiBarVisible = !isChatSession || poolMembers.length > 0`（混编群有 agent → 保留；team / 场景含 M48 空编制会 PRS 组队 → 保留）；快捷键提示（Enter 发送 · @ 召唤 · / 命令）保留；composer 测试增三态用例；E2E 私聊处负例 + 团队处正例；
+17. **M79-Q 真人图片头像（kind:'image' 实装）**：客户端 `cropSquareImage` 裁 256²（WebP 回退 PNG）→ `POST /api/auth/avatar`（raw ≤2MB；**服务端魔数重算**仅 PNG/JPEG/WebP，拒绝 SVG）→ DB 存文件名 / `toUserInfo` **唯一投影点**转公开 URL（`/api/avatars/<file>`，ts 版本化 + immutable）→ `HumanAvatar` 图片分支（onError 回退首字，全域组件自动生效）；清理三路：换图删旧 / PATCH 显式改色块删旧 / 删号级联；「保存资料」在图片模式不携带 avatar（防清除）；兼容模式 400；E2E 增 5c（设置页上传 → 对端联系人可见）；ADR 0200；
+18. **M79-R 团队共享弹窗升级为完整成员管理（与聊天成员弹窗一致）**：邀请区**好友多选批量**（勾选 chips → 「邀请（N 人）」`Promise.allSettled` 汇总成败；按用户名输入保留为兜底路径——团队邀请不要求好友）；成员行**移出二次确认**（点『移出共享』进确认态 → 『确认移出』/『取消』；点即删改为确认后删）；文案锚点全保留（placeholder『用户名（由管理员在「用户管理」创建）』/『邀请成员（按用户名）』/『邀请』/『改为只读』『改为可协作』/『移出共享』标题/『退出共享』——m57-shares 单测与 m57-auth E2E 依赖零破坏，E2E 移出流同步补『确认移出』步）；
+19. **M79-S 纯人聊天隐藏右栏（用户确认）**：人物会话（direct/group）且无 agent 编制时——宽屏右栏 Panel 不渲染（`rightVisible = rightPanelOpen && !humanOnlyChat`；布局换算同步口径）、头部右栏显隐按钮隐藏；窄屏「团队」抽屉入口（底部成员条按钮）与团队抽屉整体不渲染、底条对纯人聊天整体隐藏（人类成员 @ 条在 Composer，底条无可展示内容）；**不修改用户偏好**（`rightPanelOpen` 持久化值保留，切到团队/混编群会话即恢复原态）；混编群（有 agent）与 team/场景会话不受影响；E2E 私聊负例 + 团队正例；
+20. **M79-U 多真人会话 agent 消息实时补投（缺陷修复）**：缺陷——会话含多个真人时，agent 消息仅经 SSE 推给触发者，其他真人成员（及同账号其他标签页）收不到内容，**刷新后才可见**；根因——engine `finishTurn` 的 `notify:turn-end` 帧**不带 message**（仅元数据），客户端 handler 因无 message 直接忽略，`notify:run-completed` 只做提示与未读聚合；修复——`notify:turn-end` payload 附完整落库消息（与 routes 层补播模式一致；agent 消息收尾唯一路径（串/并行/续写共用 finishTurn）故一处修全链）；客户端既有 handler 同会话 upsert 自动生效（幂等：SSE 端 streaming 消息按 id 合并覆盖）；跨会话 agent 消息维持「不 upsert、不打扰」（未读由 run-completed 聚合）；验证——server `m79-chats`（帧含 message.role=agent / status=complete / messageId 一致）+ client `m79-realtime`（同会话 upsert / 跨会话不处理）+ E2E 4c（bob 触发的 pm 回复经 WS 实时出现在 admin 侧）。
+21. **M79-W 群聊式全同步（缺陷修复：触发型消息广播 / 订阅覆盖 / 跨会话全同步）**：症状——多真人会话中 A 触发 B/C 能收到，B 再触发 A/C 收不到需刷新；真人消息推不到其他真人。根因三处——① `POST /sessions/:id/messages` 的 **launch/inject 分支不广播**（触发型人类消息只走 SSE 单播；M79-D 补播仅覆盖 !shouldTrigger 分支）；② 客户端订阅依赖用户点击（ensureSubscribed 只在打开会话/收件箱帧时纳入「当时列表」，新分享会话从未订阅）；③ 跨会话 agent 消息被有意忽略（M79-U 口径）+ run-completed 才计未读（双计）。修复——① 服务端 launch/inject 分支补 `notify:turn-end(message)` 广播；② 客户端列表变化/首载自动全量订阅（ensureAllSubscribed）；③ turn-end 跨会话统一处理：任何消息（human/agent）计未读 + `noteIncoming` 列表行预览即时更新 + 800ms 防抖 `loadSessions` 权威对账（人类消息保持轻提示；自己的多标签消息只更新预览不计未读）；④ run-completed 移除本地 +1（未读归消息级计数，对账兜底）。验证——server `m79-chats` 触发型人类消息帧断言 + client `m79-realtime` 三用例（跨会话 agent/人类/own-human + run-completed 去双计）+ E2E 4e（双向实时气泡 + 跨会话未读徽标 + 轻提示 + active-run 轮询收束）；4d/4e 的「+2 计数」断言同步改「内容气泡 + 尾行锚点」（对话为虚拟列表，DOM 计数随窗口波动，不可作 +N 依据——2026-09-20 修订）。
+22. **M79-X 全同步审计收口（消息编辑/删除 · 会话删除 · 权限加固）**：以「真实群聊全同步」为口径逐面审计，补上三处硬缺口——① **消息编辑不广播**（PATCH /messages 只回响应）→ 广播 `notify:turn-end(message)`（upsert 语义天然覆盖内容更新）+ 仅作者本人可编辑（403）；② **消息删除不广播** → 新增 `notify:message-deleted`（同会话即时移除 + 列表对账）+ 权限（他人人类消息仅属主可删）；③ **会话删除不广播** → 新增 `notify:session-deleted`（成员与多标签列表即时移除；当前会话被删回到空态并提示）；另补：同会话 turn-end 同步更新列表行预览（noteIncoming 统一口径）。审计已确认无缺口的同步面：会话元数据（session-meta/applySession 跨会话生效）、成员变更、邀请 inbox→列表即时刷新、已读多端、presence、附件/交付件/画布、审批/计划/任务、运行状态。**有意不做**（IM 可选增强，非同步缺口）：typing 指示、对方已读回执（现设计为仅本人多端同步 + 未读对账）、旁观端逐字流（保持收尾整条以省流量）。验证——server m79-chats 帧断言（编辑/403/删除/会话删除）+ client m79-realtime（两帧处理）+ E2E 4f（编辑与删除跨用户实时）+ 清理步（会话删除成员侧列表即时移除）。
+23. **M79-Y 穷举式全量审计（写操作 × 广播矩阵）第二批缺口修复**：以「服务端全部写路由 × 是否广播 × 多实例覆盖 × 客户端消费」穷举核对，补上五处——① **计划批准不广播**（resolve approved 分支无帧，成员计划卡停留 submitted）→ 补 `notify:plan-updated`；② **指挥台重排不广播**（engine.reorderQueue 仅 SSE emit）→ 新增 `notify:queue-updated`（客户端仅本端活跃 Run 生效）；③ **ACL 撤销/踢出不跨实例**（revokeSession/kickUser 未走总线——多实例下被移出者仍收帧/禁用账号连接不断，安全面）→ NotifyBusEntry 扩展 `kind: revoke|kick` + deliverRemote 本地执行 + `listSince` kind 映射修复（原实现把非 user 一律归一 session，导致安全条目被吞）；④ **资料变更不广播**（昵称/头像改后好友列表需刷新）→ `AuthRouterDeps.onProfileChanged` 装配层给好友 `publishToUser(notify:friends-changed)`；⑤ **`notify:context-compressed` 客户端无消费分支** → 补 case（本端活跃 Run 压缩计数对齐）。确认无缺口面：plans 编辑、canvas（124 行）、media/schedules（service 层发布）、inbox/read、friends/shares、会话绑定（publishPanelOp 局部）、connection-status 死类型（无发布点）。**有意缓办**：会话资源绑定（MCP/连接）与记忆变更的成员间实时同步（弹窗打开时 REST 拉取正确，并发概率低）。验证——engine.test（queue 帧）+ m79-multibus 2 例（revoke 跨实例退订与非到达断言 / kick 跨实例断开）+ client m79-realtime（两 case 活跃 Run 语义）+ auth E2E 5/5 回归。
+24. **M79-Z 旁观端流式（打字机对齐）**：触发者走 SSE 逐字、旁观者此前仅收尾整条（体验不对称）。实现——engine 流式 delta 三处发出点旁路新增**节流聚合广播**（120ms 窗口合并 → `notify:message-delta`，payload：messageId/agentId/memberKey/delta；帧量 ~8fps/run 远低于 WS 背压阈值）；**顺序保证**：回合收尾前先 flush 残帧再发 turn-end 完整消息（客户端 upsert 按序覆盖为权威终态，丢帧自愈）；收尾后残帧（record 已移除）直接丢弃并回收聚合器（防 Map 常驻）。客户端——新 case：非本端活跃 Run（runId 守卫去重，触发者不重复渲染）且同会话时，首帧自动创建 streaming 占位（成员身份随帧；seq 占位 0，收尾权威覆盖）+ appendDelta（复用 40ms 批量净化管线）；跨会话不渲染（未读仍由 turn-end 计）。多标签同账号同样获得流式（与旁观者同路径）。验证——engine.test（delta 帧存在 + 字段 + **先 delta 后 turn-end** 顺序断言）+ client m79-realtime（首帧建占位/累积/触发者跳过/跨会话忽略）+ E2E 5/5 回归。
+25. **M79-AA 交接目标具体化 + 回放条收敛**：① **交接条泛称「你的回合」→ 具体真人渲染**：服务端新增 `record.messageHumanMentions`（per-message 人类交还目标，@具体人精确来源）；`emitTurnEnd` 统一落库 `message.humanMentions`——@用户（无具体 @人名）展开为**全体在场真人**（"所有真人都参加调度"），@具体人沿用解析目标，无人类列表时保底触发者；客户端 HandoffBar 新增 humanMentions 分支：HumanAvatar 头像流 + 具体名字（`data-handoff-targets` 锚）+ 点击头像一键接棒；旧消息（无目标数据）回退「你的回合」。② **波次回放条**：去「回放」文字（cap 改图标开关 `data-wave-toggle`）+ **默认隐藏**、点击展开/收起完整条（is-collapsed 紧凑样式）；m45 E2E 与单测同步适配（默认收起断言 + 展开步）。验证——server m79-chats（@用户 → humanMentions=全员集合断言）+ client handoff-bar（具体名/一键接棒/回退）+ m45-replay（折叠/展开）+ E2E auth 5/5（含交接条名字断言）与 m45 spec 1/1。
+26. **M79-AB 断线重连权威补偿（缺陷修复：断线窗口的用户主题帧丢失）**：症状——新建会话邀请对方后"要刷新"才可见。根因（结合 dev 实况数据与日志定位）——邀请/收件箱投递走**用户主题帧**（无游标、无重放缓冲），而**会话主题**有游标补发、**消息**有 REST 兜底；服务重启 / 网络抖动窗口内到达的用户主题帧**重连后无任何补偿**（实测：服务 13:21-13:26 重启，该窗口的邀请帧永久丢失）。修复——① 重连成功（非首次建连）→ REST 权威补偿：收件箱快照（`inbox sync`）+ 会话列表对账（`loadSessions`）；② 降级轮询（WS 不可用）每个 tick 同步补收件箱与会话列表（该例外路径此前同样漏用户主题）。验证——client `m79-reconnect`（重连补偿 +1 且首次建连不重复补偿）+ 全量回归（client 1319）与 E2E auth 5/5。附：member 创建会话链路核查无缺口（无配额限制 / 无首登闸门 / 前端入口无门控 / 历史有 member 成功创建）——"其他人创建不了"建议先刷新旧页面复测。
+27. **M79-AC 半开连接自愈闭环（缺陷修复：连接假死只能刷新恢复）**：症状——"连接好像不稳定，过一会要刷新才会恢复"。根因——**半开连接**（TCP 假死：链路已断但浏览器 `readyState` 仍为 OPEN、收不到 close 事件）下，客户端探活只"60s 无帧发一次 ping"，**探测无应答时无任何后续动作**——永久挂在假连接：降级横幅不出现（状态仍是 open）、推送静默丢失，唯一出路是刷新页面。修复（`lib/ws.ts`）——① **探活闭环**：60s 无帧发 ping；持续无应答（≥2× 阈值=120s）判定半开 → `close()` 触发常规重连（退避无限重试）；② 半开关闭握手挂起兜底：8s 后仍未 CLOSED → 弃用旧连接直接重连；③ 旧连接迟到事件（open/message/close）守卫——防双重重连与状态错乱。衔接 M79-AB：重连成功后自动补收件箱 + 会话列表（完整自愈链：断线→探测→重连→补订阅（带游标）→补权威数据，全程无刷新）。验证——client `m79-realtime`（半开用例：90s 探活 ping → 150s 强关 → 退避重连；fake timers 精确时序）+ 全量 1320 例 + E2E auth 5/5（其中 P3 首跑为并发资源竞争假失败，单跑 3/3 甄别）。
+28. **M79-AD 工作台打开通道 / 工具按钮 / 审批定向（用户实测三项）**：① **「在 3D 工作台打开」静默失效**（"有的打开了，有的没有"）：原通道为 window 事件——工作台面板尚未挂载时（首次进入/消息未加载完）事件无人接收、点击无反应。修复：迁移为 **ui-store `pendingStudioOpen` 状态通道**（requestStudioOpen → store；StudioPanel 挂载后消费并清空）——无论面板何时渲染，打开请求必被消费并选中方案（时机竞态根治）。② **工作台工具按钮竖排**（窄容器压缩致文字逐字换行）：`.studio-btn` 加 `flex:0 0 auto + white-space:nowrap`；`.studio-panel-btns` 加 `flex-wrap:wrap + justify-content:flex-end`（空间不足整行换行，不挤压）。③ **审批推送范围**：`notify:approval-requested/resolved` 原走会话主题全员广播——改为 **NotifyPort.publishToUser 定向触发者**（`publishApprovalFrame`；无触发者回退广播，兼容零差异）——审批仅发起该轮对话的人（含其多端）可见，会话其他真人不再被他人审批打扰/误批。验证——client m65-cards（点击 → store 通道断言）+ m65-studio-panel（挂载后消费 → 方案加入列表并选中）+ server m7（带触发者 → publishedToUser 含审批帧且会话广播不含；m7 全量 26 例）+ 全量门禁。
+29. **M79-AE 操作权限统一治理 + 通知补偿（穷举审计）**：以「会话域全部写操作 × 权限守卫 × 通知收件范围」穷举核对——**地基确认**：`/sessions/:id*` 全局守卫（读=owner∪成员、写=owner/editor、viewer 403、/leave 例外）+ `/runs/:runId` 同款 + 裸路径（schedules `guardTask` / media `guardJob` / memories `ownedByUser`）均有归属校验（兼容模式全放行）。**收敛缺口（治理口径：仅属主）**：① PATCH /sessions/:id 的**改名 / routeMode / serial / planFirst** 由「group 仅群主、team/direct owner∪editor」统一为**全 kind owner-only**（403「仅会话属主可修改会话名称与治理设置」）；② worktree **merge / discard** 收敛为 owner（合并主仓库为高敏感操作）。**通知补偿（收件箱 system 类型）**：① 会话删除 → 共享成员收「会话已被删除」（成员列表须在 remove 级联清理前收集）；② 成员被移出 → 收「你已被移出会话」。**前端口径同步**：ChatArea 触发策略开关由 `!isViewer` 收紧为 `isOwner`（兼容模式视为 owner）；SessionList 改名（group+owner）/删除（owner）gating 既有保持。**有意保持**：内容协作写（消息/画布/附件/记忆/定时任务）= editor+；hide/leave = 本人操作（viewer 例外可退出）；审批 API = owner/editor（UI 已定向触发者，owner 作兜底）；fork = owner/editor。验证——server m79-chats（editor 改名/routeMode 403、owner 200；删除/移出通知 delivered 断言；并行群管理批的「仅群主」断言适配统一文案）+ m57-p2-shares（editor 写探针改「发消息」、viewer 403 经写闸门）+ 全量 1410 + client 1321 + E2E auth 5/5。
+
+**门禁快照（含 M79-L 多实例收口）**：server **114 文件 / 1384 例** 全绿（+m79-multibus 5 例）；client **115 文件 / 1290 例** 全绿；`lint` **0 错误**；`npm run eval` 基线 **36/36 通过**；三端 typecheck 0 错；**E2E auth 5/5**（memory 模式零变化回归）+ **main smoke 5/5**；隔离实例 2/2；**`NOTIFY_BUS=db` 装配冒烟通过**（真实启动 + 总线启用日志 + health/stats 200）。
+
+**镜像面**：design.md §114 · docs/api.md §24 · docs/operations.md §9 · .env.example（WS_SEND_QUEUE_MAX / WS_MAX_CONNS_PER_USER / INBOX_RETENTION_DAYS / PRESENCE_AGGREGATE_MS / FRIEND_REQUEST_DAILY_LIMIT）· ADR 0188–0196 / 0203 + docs/adr/README.md 索引。
+
+**后续候选（未实施）**：无——收口清单已全部核销（M78 让位项之外的「多实例演进」已按 M79-L 落地，ADR 0199）。
+
+---
+
+## 23. 全量审计注记（2026-09-20，M79-AF 操作权限收口）
+
+以「多用户 × 多 Agent 同会话」为口径全量审计 **同步展示 / 消息发送 / 调度 / 推送 / 操作** 五面。核心链路结论（正确性）：消息级全同步（turn-end 全分支补播 + 未读服务端权威 + 三重补偿）· 触发矩阵单点 · Run 会话级互斥与排队 · 通知总线（用户主题定向 / 背压 / 多实例）均正确闭环。发现并修复的权限缺口（ADR 0203）：
+
+> 与注记 29（M79-AE）的关系：AE 批将「审批 API = owner/editor」列为**有意保持**（UI 已定向触发者）；本批按用户决策将**决定 / 读面 / SSE 三面**同步收窄为「本 Run 触发者 ∪ 会话属主」——AE 条目中「审批 API = owner/editor」自本批起由本注记取代。
+
+1. **viewer 越权三处（写闸门缺失）**：浏览器 takeover / release / close / takeover token、定时任务改删触发启停、媒体任务取消重试——资源级端点绕过 `/sessions/:id` 守卫且误用读校验；media 另有 `!guardJob(req)` 恒假判定（守卫从未生效）。统一收敛为会话写校验（可读不可写 403 / 不可读 404）；
+2. **审批口径四面对齐**（触发者 ∪ 属主）：WS 定向（M79-AD 已有）· SSE 广播与补发过滤（`engine.attach` 带订阅者身份）· 决定端点 403 · 读面空列表——「推送受众 = 操作受众」原则落地；
+3. **交还提示定向**：`notify:awaiting-user` 按 targets ∪ 属主客户端 gating（无 targets 保持广播语义）；
+4. **前端展示层 gating 双保险**：审批卡 / 指挥台 / 浏览器 / 定时 / 媒体面板按 `role === 'viewer'` 关位（服务端为准）；**消息操作菜单**对齐服务端口径——编辑=作者本人、删除=作者/属主（agent/system 不受限）、重新生成/续写/fork=非 viewer（兼容模式 role/userId 缺省 → 全放行零变化）；**M79-AH 画布只读模式**——store 闸门（mutate/applyLocal/undo/redo 拦截 + save 防御；视口浏览允许且不落盘）· ReactFlow 交互禁用（拖拽/连接/边重连/删除键/右键/双击/拖放）· 工具栏写类按钮禁用 · 只读浮条提示；**计划卡（PlanReviewCard）** 批准/驳回/保存修改禁用 + 只读提示（草稿仅本地）；
+5. **平台自动召集豁免明示**：route / handoff 增援属平台调度职责（M48），不纳入编制权限校验（trace 可审计），与 ADR 0101 精神一致——文档定性，不设代码限制；
+6. **扫尾补漏（穷举收口）**：对全部路由的权限调用点机械核对（canAccessSession / assert* / 守卫取反目标）后补两处——① **素材入仓（library to-canvas）**：实际为向会话工作区拷贝文件的写操作，但仅校验"可读"→ 路由层补写闸门（viewer 403 / 非成员 404）；② **反馈单条查询（GET /feedback?messageId=）**：跨用户可探测他人消息反馈状态 → 补会话归属（非成员视同未反馈 `item:null`——不泄漏存在性，客户端 `.catch` 语义零变化）。核实无缺口：finance watchlist（按 userId 归属）· memories 状态变更（ownedByUser）· context / memory 端点（/sessions/:id 前缀受守卫）· feedback 全量/导出（admin）· **settings 写（requireAdmin）· ActivityRail 导航（ADMIN_ITEMS 仅 admin + 非 admin 访问管理视图自动回退工作台）· /ws/ssh 握手（登录态 + 流 token 与用户绑定比对）**；
+7. **审计连带发现与修复（M79-AG，画布并发合流）**：main E2E 长套件审计中 m31-canvas-agent「落位与写入反馈」两次全量失败、单跑必过——trace 定性为**真实缺陷**：agent 落位写入被客户端「本地优先」409 策略静默覆盖（本地脏 → 保存携带旧 doc → 409 → 原样重 PUT 覆盖服务端新写入）。修复为 409 三方合并「合流重放」（base=lastSyncedDoc；**远端新增不丢** / 本地编辑保留 / 已同步删除尊重 / 双方都改时位置尺寸取本地+其余取远端；详见 [ADR 0204](adr/0204-canvas-merge-on-conflict.md)）；`m31-canvas` 单测 +2 锁定 + E2E 修复后验证。教训固化：**乐观锁冲突在多写入者系统必须三方合并**（「本地优先 / 服务端优先」二元策略都会丢数据）；长套件"固定用例必现 + 单跑必过"先用 trace 定性再判 flaky。
+
+验证：`m79-af-permissions`（server 7 例：三面 viewer 403/editor 放行/非成员 404 + 审批触发者∪属主放行/越权 403/读面空 + 素材入仓写闸门 + 反馈查询归属）· `m7` +1（审批 SSE 定向：实时 / attach 补发 / resolved 三阶段 × 触发者·属主·他人·兼容无身份四方）· client `m79-realtime` +1（awaiting-user gating 四态）+1（pollUrlOf 三态）+ `m9` +3（消息操作菜单写项 gating 三态）。
+
+**门禁快照（M79-AF 收口终版，2026-09-21；含 M79-AH 画布/计划卡只读）**：server **117 文件 / 1420 例** 全绿（+`m79-af-permissions` 7 例 + 游标 2 例 + 审批 SSE 定向 1 例）；client **118 文件 / 1330 例** 全绿（+awaiting-user gating 1 例 + pollUrlOf 1 例 + 菜单 gating 3 例 + 画布 409 合流 2 例 + viewer 只读 2 例）；`lint` **0 错误**；三端 typecheck 0 错；build ✓；**E2E：auth 5/5 · approval 1/1 · main 134/134 双连全绿**（全新数据目录 `PW_DATA_DIR=e2e-gold` 首发 13.8min + 同目录复跑 13.9min，严格单实例零并发）+ M79-AH 定向冒烟 **12/12**（m24-plan ×3 + m31-canvas-agent ×3 + m31-canvas-ux ×6）。
+main 长套件失败链的完整根因与修复（多轮 trace 实证）：① **spec 硬编码 `data/e2e-main` 路径**（m26/m27 回收站 / m28 mcp.json）——与轮换目录策略冲突 → 跟随 `PW_DATA_DIR`；② **收束信号被历史 DOM 秒过**（m43：`「你的回合」`旧胶囊命中 → 前一轮 submit 在途时发起下一次发送 → fill 被 `setValue('')` 清空 → 按钮永久 disabled 卡 144.8s）→ 固化 `expectRunSettled`（「停止」出现→消失双段，M79-K 先例）并替换 6 处；③ **点击稳定性饿死**（m31-canvas-ux 菜单项 not stable 卡死）→ `robustClick`（短超时 + DOM click 兜底）；④ **累积数据目录渲染压力**（e2e-main 1700+ 会话致 ux/m77 型卡顿）→ 轮换目录即解（134/134 用时 13.8min vs 累积目录 16-22min）。临时诊断 spec 已全部移除；`playwright.config.ts` 全局预算 120s（注释含先例）。
+
+**审计确认无缺口面**：消息发送（同会话互斥无竞态）· 未读口径（自己消息不计 / 单调推进）· 订阅 ACL（用户主题仅本人、全局主题 admin、会话主题归属可见）· 待决计划/审批的 SSE 重放（attach 快照）· 会话删除 / ACL 撤销的即时退订。**降级轮询增量游标（本批已实施）**：`GET /api/notifications` 增 `cursors`（客户端 `pollUrlOf` 携带 per-session 游标只拉增量，超长 / 非法 / 缺省回退全量）——`NotifyHub.list` 过滤下界 = `cursors[sid] ?? since`。**已知边界（不在本批）**：跨实例 seq 游标不可比（REST 快照补齐，ADR 0199；**全局化方案经评估否决**——全局 id 的分配序与到达序在两实例并发时不守恒，会引入"水位去重丢实时帧"窗口，而现状"远程条目现场分配新 seq"保证实时流严格单调，收益/风险不划算）· admin 对成员私有会话无旁路（M79-G 既定语义，m79-privacy 固化）。

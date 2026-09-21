@@ -9,13 +9,14 @@
  * - legacy AUTH_TOKEN：映射到最早创建的管理员（无用户时为合成管理员上下文），带弃用告警。
  */
 import crypto from 'node:crypto'
-import type { ApiKeyInfo, AuthStatus, UserInfo, UserRole } from '@multi-agent/shared'
+import type { ApiKeyInfo, AuthStatus, UserAvatar, UserInfo, UserRole } from '@multi-agent/shared'
 import type { AppConfig } from '../config.js'
 import type { ApiKeyStore, AuthSessionStore } from '../store/auth-sessions.js'
 import type { AuditStore } from '../store/audit.js'
 import type { SessionStore } from '../store/sessions.js'
 import type { UserRecord, UserStore } from '../store/users.js'
 import { toUserInfo } from '../store/users.js'
+import { isImageAvatar, removeAvatarFile } from './avatar.js'
 import { HttpError } from '../util/http-error.js'
 import { generateInitialPassword, hashPassword, passwordPolicyError, verifyPassword } from './passwords.js'
 
@@ -28,6 +29,10 @@ export interface AuthUser {
   /** 管理员下发初始密码后为 true：客户端强制进入改密页 */
   mustChangePassword?: boolean
   legacy?: boolean
+  /** M79-B：画像（头衔 / 简介 / 头像；缺省 = 未设置） */
+  headline?: string
+  bio?: string
+  avatar?: UserAvatar
 }
 
 export interface LoginResult {
@@ -54,6 +59,10 @@ function toAuthUser(record: UserRecord): AuthUser {
     id: record.id,
     username: record.username,
     displayName: record.displayName,
+    // M79-B：画像随登录态投影（/auth/me / 登录响应携带；缺省 = 未设置）
+    ...(record.headline ? { headline: record.headline } : {}),
+    ...(record.bio ? { bio: record.bio } : {}),
+    ...(record.avatar ? { avatar: record.avatar } : {}),
     role: record.role,
     mustChangePassword: record.mustChangePassword ? true : undefined,
   }
@@ -429,7 +438,10 @@ export class AuthService {
     if (target.role === 'admin' && this.deps.users.countAdmins() <= 1) {
       throw new HttpError(400, '系统至少保留一名管理员（不能删除最后一个管理员）')
     }
+    // M79-Q：级联清理图片头像文件（users 行删除后文件名信息不可再取，先留存）
+    const avatarFileName = isImageAvatar(target.avatar) ? target.avatar.value : undefined
     this.deps.users.remove(targetId)
+    if (avatarFileName) removeAvatarFile(this.deps.cfg.dataDir, avatarFileName)
     this.invalidate()
     this.deps.audit?.record({
       actor: 'user',

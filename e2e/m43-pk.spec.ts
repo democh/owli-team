@@ -11,7 +11,7 @@
  * （M52-D 同口径——第 0 波组滚出渲染窗口即被剪枝）。
  */
 import { expect, test } from '@playwright/test'
-import { composer, createSession, disableSerial, expectYourTurn, openApp, sendMessage } from './helpers'
+import { composer, createSession, disableSerial, expectRunSettled, openApp, sendMessage } from './helpers'
 
 test('M43 · 辩论场：对决组 → 配对卡已响应 → 裁决流', async ({ page }) => {
   test.setTimeout(150_000) // M66：新增交锋走查段（共享环境负载下链路更长）
@@ -23,7 +23,7 @@ test('M43 · 辩论场：对决组 → 配对卡已响应 → 裁决流', async 
 
   // @ 正反双方触发首波 2 人并行（parallelMax 2）→ 同波对决组
   await sendMessage(page, '@立言 @砺锋 辩一辩：远程办公利大于弊吗？正反双方逐轮交锋。')
-  await expectYourTurn(page)
+  await expectRunSettled(page)
 
   // 收束后滚顶：第 0 波对决组与两张卡进入虚拟渲染窗口
   await log.evaluate((el) => {
@@ -54,7 +54,7 @@ test('M43 · 辩论场：对决组 → 配对卡已响应 → 裁决流', async 
 
   // 已响应推导：@昭实 按编号回补 → 缺陷 1/2/3 均被后续提及 → 全行点亮
   await sendMessage(page, '@昭实 请按编号逐条回补反方挑出的缺陷，给出证据口径与缺口清单。')
-  await expectYourTurn(page)
+  await expectRunSettled(page)
   await log.evaluate((el) => {
     el.scrollTop = 0
     el.dispatchEvent(new Event('scroll'))
@@ -64,7 +64,7 @@ test('M43 · 辩论场：对决组 → 配对卡已响应 → 裁决流', async 
 
   // §72.5 裁决流：@明断 终局裁决 → arena 中轴 verdict 时间线 chip（状态色 + 点击定位）
   await sendMessage(page, '@明断 请给出终局裁决与复盘。')
-  await expectYourTurn(page)
+  await expectRunSettled(page)
   const flow = page.locator('[data-verdict-flow]')
   await expect(flow).toBeVisible()
   const chip = flow.locator('.scene-verdict-chip').first()
@@ -74,7 +74,7 @@ test('M43 · 辩论场：对决组 → 配对卡已响应 → 裁决流', async 
   // M63（A4/A2/A6/A5）：交锋走查 → 轮次判定（回合轴色点 + 轮次分）→ 交锋看板 → 结论条 → 参与条
   await sendMessage(page, '@明断 @立言 交锋走查：给出轮次判定与带等级证据的补充主张。')
   await expect(composer(page)).toHaveValue('') // 发送落地确认（防共享环境点击丢失）
-  await expectYourTurn(page)
+  await expectRunSettled(page)
   await expect(page.locator('.scene-rt-mark.is-long')).toBeVisible()
   await expect(page.locator('.scene-sb-note')).toHaveText('共 1 轮')
   const board = page.locator('[data-insight="cross-fire"]')
@@ -100,7 +100,7 @@ test('M43 · 谈判桌：报价卡与报价流（让步差值色标）', async (
   const log = page.locator('[role="log"]')
 
   await sendMessage(page, '@谭成 @祁弈 就这单采购谈一轮：先各自出价，再逐轮让步看能否成交。')
-  await expectYourTurn(page)
+  await expectRunSettled(page)
 
   // 中轴报价流面板：首轮出价 98 万 → 对手还价 68 万（↓30 万，is-down 色标）
   const panel = page.locator('[data-insight="offers"]')
@@ -124,7 +124,7 @@ test('M43 · 谈判桌：报价卡与报价流（让步差值色标）', async (
   // M63（G1/G2）：报价走查 → 报价折线（双方点位）+ 三桩基准线 + 让步刻度
   await sendMessage(page, '@谭成 @祁弈 报价走查：出价带齐三桩字段与让步理由。')
   await expect(composer(page)).toHaveValue('') // 发送落地确认（防共享环境点击丢失）
-  await expectYourTurn(page)
+  await expectRunSettled(page)
   const chart = panel.locator('[data-offer-chart]')
   await expect(chart).toBeVisible()
   // 点数随对话轮次浮动（串行谈判可能多轮交换）——断言下限而非定值

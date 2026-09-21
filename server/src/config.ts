@@ -8,6 +8,7 @@
  */
 import dotenv from 'dotenv'
 import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { z } from 'zod'
@@ -195,6 +196,24 @@ export interface AppConfig {
 
   wsHeartbeatMs: number
   wsReplayBuffer: number
+  /** M79-A：单连接待写队列上限（背压：超限发 resync 后断开；0 = 不限） */
+  wsSendQueueMax: number
+  /** M79-A：每用户并发 WS 连接上限（超限踢最旧；0 = 不限） */
+  wsMaxConnsPerUser: number
+  /** M79-A：收件箱保留期（天；仅清理已读项，未读恒保留；0 = 不清理） */
+  inboxRetentionDays: number
+  /** M79-A：在线状态聚合窗口（ms） */
+  presenceAggregateMs: number
+  /** M79-L：通知总线（memory = 单进程现状 / db = 多实例共享总线，默认零变化） */
+  notifyBus: 'memory' | 'db'
+  /** M79-L：总线轮询间隔（ms；db 模式跨实例投递延迟上限） */
+  notifyBusPollMs: number
+  /** M79-L：总线行保留期（分钟；0 = 不清理） */
+  notifyBusRetentionMinutes: number
+  /** M79-L：实例标识（presence 计数行 / 总线 origin；缺省 = 主机名:pid） */
+  instanceId: string
+  /** M79-A：好友请求日限额（每人） */
+  friendRequestDailyLimit: number
   runDetachOnDisconnect: boolean
   asyncRunMax: number
   notifyPollMs: number
@@ -381,6 +400,15 @@ const ConfigSchema = z.object({
   loginLockoutMs: z.number().int().min(10_000).max(86_400_000),
   loginRateLimit: z.number().int().min(1).max(1_000),
   runMaxPerUser: z.number().int().min(0).max(64),
+  wsSendQueueMax: z.number().int().min(0).max(65_536),
+  wsMaxConnsPerUser: z.number().int().min(0).max(256),
+  inboxRetentionDays: z.number().int().min(0).max(3_650),
+  presenceAggregateMs: z.number().int().min(100).max(60_000),
+  notifyBus: z.enum(['memory', 'db']),
+  notifyBusPollMs: z.number().int().min(50).max(30_000),
+  notifyBusRetentionMinutes: z.number().int().min(0).max(10_080),
+  instanceId: z.string().min(1).max(120),
+  friendRequestDailyLimit: z.number().int().min(1).max(1_000),
 })
 
 /** 内部一致性断言：启动（loadConfig）与运行期覆盖（settings）共用同一条校验路径 */
@@ -480,6 +508,17 @@ export function loadConfig(): AppConfig {
 
     wsHeartbeatMs: envNum('WS_HEARTBEAT_MS', 30_000, 1_000),
     wsReplayBuffer: envNum('WS_REPLAY_BUFFER', 200, 1),
+    // M79-A：实时通道稳定化（背压 / 连接上限 / 收件箱保留期 / presence 聚合 / 好友请求日限额）
+    wsSendQueueMax: envNum('WS_SEND_QUEUE_MAX', 256, 0, 65_536),
+    wsMaxConnsPerUser: envNum('WS_MAX_CONNS_PER_USER', 8, 0, 256),
+    inboxRetentionDays: envNum('INBOX_RETENTION_DAYS', 30, 0, 3_650),
+    presenceAggregateMs: envNum('PRESENCE_AGGREGATE_MS', 500, 100, 60_000),
+    // M79-L：多实例演进（默认 memory = 现状；db = 共享通知总线 + 跨实例 presence）
+    notifyBus: process.env.NOTIFY_BUS === 'db' ? 'db' : 'memory',
+    notifyBusPollMs: envNum('NOTIFY_BUS_POLL_MS', 400, 50, 30_000),
+    notifyBusRetentionMinutes: envNum('NOTIFY_BUS_RETENTION_MINUTES', 10, 0, 10_080),
+    instanceId: (process.env.INSTANCE_ID ?? '').trim() || `${os.hostname()}:${process.pid}`,
+    friendRequestDailyLimit: envNum('FRIEND_REQUEST_DAILY_LIMIT', 20, 1, 1_000),
     runDetachOnDisconnect: envBool('RUN_DETACH_ON_DISCONNECT', true),
     asyncRunMax: envNum('ASYNC_RUN_MAX', 3, 1),
     notifyPollMs: envNum('NOTIFY_POLL_MS', 5_000, 500),

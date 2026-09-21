@@ -146,6 +146,12 @@ export interface Session {
   participantIds: string[]
   /** M57（多用户）：会话属主（users.id）；缺省 = 单用户兼容模式（无账号体系时创建的历史数据） */
   ownerId?: string
+  /** M79：会话社会形态（team = 以 agent 编制为核心的协作；direct/group = 以人为核心的聊天；缺省 = team） */
+  kind?: SessionKind
+  /** M79：触发策略（auto = 无 @ 消息交给平台路由组队（现状）；mention = 仅点名唤起；缺省 = auto） */
+  routeMode?: SessionRouteMode
+  /** M79：持球方（被 agent 点名待回复的 userIds；空/缺省 = 无） */
+  waitingOn?: string[]
   /** 会话级灵魂覆盖（经典成员键 = agentId → soulId；空 = 用角色默认；M16 起支持随时换装） */
   memberSouls?: Record<string, string>
   /** M24：规划先行（会话级开关；用户未显式指定范式时首波默认进入 plan 范式；默认关闭） */
@@ -164,6 +170,8 @@ export interface SessionSummary extends Session {
   messageCount: number
   /** M57 P2：当前请求者相对会话的角色（owner / editor / viewer；单用户兼容模式缺省不标注） */
   role?: SessionAccessRole
+  /** M79：服务端权威未读数（当前请求者视角；缺省 = 无未读语义） */
+  unreadCount?: number
   lastMessage?: {
     /** system（成员变更事件条等）也会出现在摘要预览中 */
     role: 'user' | 'agent' | 'system'
@@ -231,6 +239,9 @@ export interface SessionShare {
   userId: string
   username: string
   displayName: string
+  /** M79-B：画像投影（头衔 / 头像；缺省 = 未设置） */
+  headline?: string
+  avatar?: UserAvatar
   role: SessionShareRole
   /** 邀请人（users.id；可空：历史 / 系统） */
   invitedBy?: string
@@ -270,6 +281,8 @@ export interface ChatMessage {
   content: string
   /** 持久化：交还用户时恒为 ['user']；否则为调度器实际接手的成员 */
   mentions: string[]
+  /** M79：人类定向（userIds；@在场人类 / 行首 @用户 解析结果——与 agent mentions 隔离） */
+  humanMentions?: string[]
   status: MessageStatus
   createdAt: string
   /** 本条消息产出的交付件（工作区相对路径） */
@@ -369,6 +382,14 @@ export type RunEvent =
 export type NotifyType =
   | 'notify:run-started'
   | 'notify:turn-end'
+  /** M79-X：消息删除（payload: { messageId }）——同会话即时移除；跨会见列表对账 */
+  | 'notify:message-deleted'
+  /** M79-X：会话删除（owner 操作；payload: {}）——共享成员与多标签列表即时移除 */
+  | 'notify:session-deleted'
+  /** M79-Y：指挥台队列重排（payload: { queue }）——触发者之外的其他端/成员实时对齐 */
+  | 'notify:queue-updated'
+  /** M79-Z：旁观端流式（节流聚合；payload: { messageId, agentId, memberKey, delta }）——非触发者同会话实时打字机 */
+  | 'notify:message-delta'
   | 'notify:run-completed'
   | 'notify:run-error'
   | 'notify:awaiting-user'
@@ -403,6 +424,16 @@ export type NotifyType =
   | 'notify:schedule-changed'
   /** M35：定时提醒到点（remind 型任务；payload: { scheduleId, title, instruction }） */
   | 'notify:schedule-reminder'
+  /** M79：收件箱事件实时投递（用户主题；payload: { item: InboxItem }） */
+  | 'notify:inbox'
+  /** M79：本用户其他端已读推进（payload: { sessionId, lastReadSeq }） */
+  | 'notify:read-state'
+  /** M79：在线状态聚合（payload: { users: [{ userId, online, lastSeenAt }] }） */
+  | 'notify:presence'
+  /** M79：好友关系变化（payload: { userId, action: 'request'|'accepted'|'removed'|'blocked' }） */
+  | 'notify:friends-changed'
+  /** M79：会话元数据变更（waitingOn / 标题 / routeMode；payload: { session }） */
+  | 'notify:session-meta'
 
 export interface NotifyEnvelope {
   v: 1
@@ -1751,6 +1782,12 @@ export interface UserInfo {
   id: string
   username: string
   displayName: string
+  /** M79：头衔（如「产品经理」；≤30 字） */
+  headline?: string
+  /** M79：一句话简介（≤120 字） */
+  bio?: string
+  /** M79：头像（色块 / emoji；kind:'image' 预留） */
+  avatar?: UserAvatar
   role: UserRole
   status: UserStatus
   /** 管理员创建 / 重置密码后为 true：首登强制改密 */
@@ -1785,6 +1822,10 @@ export interface ApiKeyInfo {
 export interface UserPreferences {
   /** 通知兜底轮询间隔覆盖（ms；缺省 = 服务端下发） */
   notifyPollMs?: number
+  /** M79：允许他人搜索到我（缺省 = true） */
+  searchable?: boolean
+  /** M79：允许好友申请（缺省 = true） */
+  allowFriendRequests?: boolean
 }
 
 /** 定时任务变更通知的 action 枚举（notify:schedule-changed） */
@@ -1798,6 +1839,103 @@ export type ScheduleNotifyAction =
   | 'skipped-missed'
   | 'paused'
   | 'error'
+
+// ---------- M79：社交协作（好友 / 收件箱 / 会话形态 / 触发策略） ----------
+
+/**
+ * 头像（M79-B；M79-Q 实装 kind:'image' 上传管道）。
+ *
+ * - color：`#rrggbb` 底 + 白色首字；
+ * - emoji：单个字符（存储可为多码点，≤2 码点）；
+ * - image：服务端存储侧 value = 文件名（`<userId>-<ts>.<ext>`）；**对外投影** value = 公开 URL（`/api/avatars/<file>`，含 ts 天然版本化）——见 toUserInfo。
+ */
+export interface UserAvatar {
+  kind: 'color' | 'emoji' | 'image'
+  /** color: #rrggbb；emoji: 单字符；image: 文件名（内部）/ 公开 URL（投影） */
+  value: string
+}
+
+/** 用户公开画像（搜索 / 好友 / 提及候选的统一投影；绝不含凭据） */
+export interface UserProfile {
+  userId: string
+  username: string
+  displayName: string
+  headline?: string
+  bio?: string
+  avatar?: UserAvatar
+  /** 在线（presence 推导；未装载实时层时缺省） */
+  online?: boolean
+  lastSeenAt?: string
+}
+
+/** 本人视角的好友关系态 */
+export type FriendState = 'none' | 'pending-in' | 'pending-out' | 'accepted' | 'blocked'
+
+/** 好友条目（GET /api/friends；按在线 → 最近活跃排序） */
+export interface FriendEntry extends UserProfile {
+  /** 最近私聊会话 id（无 = 尚未聊过） */
+  lastSessionId?: string
+}
+
+/** 好友请求（GET /api/friends/requests 收发两视图） */
+export interface FriendRequest {
+  /** friend_links.id */
+  id: string
+  direction: 'in' | 'out'
+  user: UserProfile
+  message?: string
+  createdAt: string
+}
+
+/** 好友请求聚合（GET /api/friends/requests） */
+export interface FriendRequestsView {
+  incoming: FriendRequest[]
+  outgoing: FriendRequest[]
+}
+
+/** 用户搜索结果条目（GET /api/users/search） */
+export interface UserSearchHit extends UserProfile {
+  relation: FriendState
+}
+
+/** 会话社会形态（M79-D） */
+export type SessionKind = 'team' | 'direct' | 'group'
+
+/** 触发策略（M79-E）：auto = 无 @ 消息交给平台路由（现状）；mention = 仅点名唤起 */
+export type SessionRouteMode = 'auto' | 'mention'
+
+/** 收件箱事件类型（user_inbox.type） */
+export type InboxType =
+  | 'friend-request'
+  | 'friend-accepted'
+  | 'session-invite'
+  | 'mention'
+  | 'waiting'
+  | 'system'
+
+/** 收件箱条目（GET /api/inbox；WS 用户主题 notify:inbox 实时投递） */
+export interface InboxItem {
+  id: string
+  /** 每用户单调递增序号（游标 / 缺口检测依据） */
+  seq: number
+  type: InboxType
+  sessionId?: string
+  actorId?: string
+  /** 触发者显示名（服务端投影，列表直接渲染） */
+  actorName?: string
+  title: string
+  body?: string
+  readAt?: string
+  createdAt: string
+}
+
+/** 收件箱增量响应（GET /api/inbox?since=&limit=） */
+export interface InboxListResponse {
+  items: InboxItem[]
+  /** 当前游标（下次 since 传值） */
+  cursor: number
+  unreadCount: number
+}
 
 // ---------- M68：用户素材库（per-user 私人素材；独立菜单管理页面） ----------
 

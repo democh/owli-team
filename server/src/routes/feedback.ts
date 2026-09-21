@@ -26,13 +26,18 @@ export function createFeedbackRouter(deps: ApiDeps): Router {
   })
 
   router.get('/feedback', (req, res) => {
+    const user = (req as Request & { user?: AuthUser }).user
     const messageId = String(req.query.messageId ?? '')
     if (messageId) {
       const item = deps.feedback.getByMessage(messageId)
+      // M79-AF：单条查询同走会话归属（非成员视同未反馈——不泄漏反馈存在性，客户端语义零变化）
+      if (item && deps.access.multiUser && !deps.access.canAccessSession(user, item.sessionId)) {
+        return res.json({ item: null })
+      }
       return res.json({ item: item ?? null })
     }
     // M57：全量列表（评测导出）→ 管理面
-    if (deps.access.multiUser && (req as Request & { user?: AuthUser }).user?.role !== 'admin') {
+    if (deps.access.multiUser && user?.role !== 'admin') {
       return res.status(403).json({ error: '需要管理员权限' })
     }
     const sinceMs = Number(req.query.sinceMs)

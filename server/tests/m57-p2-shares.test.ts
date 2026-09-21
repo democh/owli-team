@@ -91,14 +91,30 @@ describe('M57 P2：共享生命周期（HTTP）', () => {
       expect(invited.members).toHaveLength(1)
       expect(invited.members[0]).toMatchObject({ userId: b.id, role: 'editor' })
 
-      // B 可见：详情 200 + 写闸门放行（进入业务校验 → 400“未知成员”，而非守卫 403）
+      // B 可见：详情 200
       expect((await fetch(`${api.url}/api/sessions/${session.id}`, { headers: asUser(b.id) })).status).toBe(200)
-      const writeAsEditor = await fetch(`${api.url}/api/sessions/${session.id}/members`, {
+      // M79-J（§16 矩阵）：成员编制管理对 team 收紧为 owner-only → editor 一律 403（守卫放行后由编制权限拦截）
+      const lineupAsEditor = await fetch(`${api.url}/api/sessions/${session.id}/members`, {
         method: 'POST',
         headers: asUser(b.id),
         body: JSON.stringify({ agentIds: ['__nonexistent__'] }),
       })
-      expect(writeAsEditor.status).toBe(400)
+      expect(lineupAsEditor.status).toBe(403)
+      expect(((await lineupAsEditor.json()) as { error: string }).error).toContain('仅会话属主')
+      // M79-AE：治理字段（改名 / 触发策略）统一收敛为属主——editor 改名一律 403
+      const renameAsEditor = await fetch(`${api.url}/api/sessions/${session.id}`, {
+        method: 'PATCH',
+        headers: asUser(b.id),
+        body: JSON.stringify({ title: 'editor 改名探针' }),
+      })
+      expect(renameAsEditor.status).toBe(403)
+      // editor 常规写权限仍有效：以「发送消息」（内容协作写）为探针（201）
+      const writeAsEditor = await fetch(`${api.url}/api/sessions/${session.id}/messages`, {
+        method: 'POST',
+        headers: asUser(b.id),
+        body: JSON.stringify({ content: 'editor 写探针' }),
+      })
+      expect(writeAsEditor.status).toBe(201)
 
       // 属主改 B 为 viewer → 写 403（守卫），读仍 200
       const patch = await fetch(`${api.url}/api/sessions/${session.id}/shares/${b.id}`, {
@@ -107,10 +123,10 @@ describe('M57 P2：共享生命周期（HTTP）', () => {
         body: JSON.stringify({ role: 'viewer' }),
       })
       expect(patch.status).toBe(200)
-      const writeAsViewer = await fetch(`${api.url}/api/sessions/${session.id}/members`, {
+      const writeAsViewer = await fetch(`${api.url}/api/sessions/${session.id}/messages`, {
         method: 'POST',
         headers: asUser(b.id),
-        body: JSON.stringify({ agentIds: ['__nonexistent__'] }),
+        body: JSON.stringify({ content: 'viewer 写探针' }),
       })
       expect(writeAsViewer.status).toBe(403)
       expect((await fetch(`${api.url}/api/sessions/${session.id}`, { headers: asUser(b.id) })).status).toBe(200)

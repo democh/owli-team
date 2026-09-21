@@ -23,7 +23,9 @@ export function DockBrowserView(): React.JSX.Element {
   const busy = useBrowserStore((s) => s.busy)
   const imgRef = React.useRef<HTMLImageElement>(null)
   const wrapRef = React.useRef<HTMLDivElement>(null)
-  const input = useBrowserFrameInput(wrapRef, imgRef)
+  // M79-AF：只读共享（viewer）→ 接管 / 归还 / 启动 / 画面输入全部只读（服务端另有写闸门兜底）
+  const isViewer = useSessionStore((s) => s.sessions.find((x) => x.id === s.currentId)?.role) === 'viewer'
+  const input = useBrowserFrameInput(wrapRef, imgRef, !isViewer)
 
   // 懒加载：直播窗独立于右栏打开时也能就位（与右栏共用的数据源）
   React.useEffect(() => {
@@ -37,7 +39,12 @@ export function DockBrowserView(): React.JSX.Element {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-2 px-4 text-center">
         <p className="text-[11.5px] leading-relaxed text-muted-foreground">当前会话暂无浏览器</p>
-        <Button size="xs" disabled={!currentId || busy} onClick={() => void useBrowserStore.getState().start().catch(() => undefined)}>
+        <Button
+          size="xs"
+          disabled={!currentId || busy || isViewer}
+          title={isViewer ? '只读共享（viewer）：无操作权限' : undefined}
+          onClick={() => void useBrowserStore.getState().start().catch(() => undefined)}
+        >
           {busy && <Loader2 className="mr-1 size-3 animate-spin" />}
           打开浏览器
         </Button>
@@ -70,7 +77,7 @@ export function DockBrowserView(): React.JSX.Element {
         )}
         {mode !== 'takeover' && (
           <div className="pointer-events-none absolute inset-x-0 bottom-0 flex items-center justify-center gap-1 bg-gradient-to-t from-slate-900/80 to-transparent px-2 pb-1 pt-4 text-[10px] text-slate-200">
-            点击画面即可接管
+            {isViewer ? '只读共享（viewer）：仅可观察画面' : '点击画面即可接管'}
           </div>
         )}
       </div>
@@ -91,7 +98,13 @@ export function DockBrowserView(): React.JSX.Element {
             : '等待 Agent 操作…'}
         </span>
         {mode === 'takeover' ? (
-          <Button size="xs" variant="secondary" disabled={busy} onClick={() => void useBrowserStore.getState().release()}>
+          <Button
+            size="xs"
+            variant="secondary"
+            disabled={busy || isViewer}
+            title={isViewer ? '只读共享（viewer）：无操作权限' : undefined}
+            onClick={() => void useBrowserStore.getState().release()}
+          >
             <RotateCcw className="mr-1 size-3" />
             归还给 Agent
           </Button>
@@ -99,7 +112,8 @@ export function DockBrowserView(): React.JSX.Element {
           <Button
             size="xs"
             variant="outline"
-            disabled={busy || session.state === 'closed'}
+            disabled={busy || session.state === 'closed' || isViewer}
+            title={isViewer ? '只读共享（viewer）：无操作权限' : undefined}
             onClick={() => void useBrowserStore.getState().takeover().catch(() => undefined)}
           >
             <Hand className="mr-1 size-3" />

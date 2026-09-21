@@ -849,4 +849,140 @@ CREATE INDEX IF NOT EXISTS idx_materials_owner ON materials(owner_id, created_at
 ALTER TABLE messages ADD COLUMN member_key TEXT;
 `,
   },
+  {
+    version: 21,
+    name: 'user_inbox_and_session_reads',
+    sql: `
+-- ---------- M79-A：用户收件箱（跨会话个人事件的持久投递；WS 用户主题为快路径） ----------
+-- 语义：仅承载「个人事件」（好友请求 / 被邀请 / 被提及 / 持球提醒 / 系统）；DM 与群聊逐条消息不入箱；
+-- seq 每用户单调递增（客户端游标 / 缺口检测依据）；保留期清理仅删已读（未读恒保留）。
+CREATE TABLE IF NOT EXISTS user_inbox (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  seq INTEGER NOT NULL,
+  type TEXT NOT NULL,
+  session_id TEXT,
+  actor_id TEXT,
+  title TEXT NOT NULL,
+  body TEXT,
+  payload TEXT,
+  read_at TEXT,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_inbox_user_seq ON user_inbox(user_id, seq);
+CREATE INDEX IF NOT EXISTS idx_inbox_user_unread ON user_inbox(user_id, read_at);
+-- ---------- M79-A：会话已读游标（未读服务端权威；多端同步依据） ----------
+-- last_read_seq 以「消息 seq」为参照系；未读 = seq > last_read_seq 且非本人消息。
+CREATE TABLE IF NOT EXISTS session_reads (
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+  last_read_seq INTEGER NOT NULL DEFAULT 0,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (user_id, session_id)
+);
+`,
+  },
+  {
+    version: 22,
+    name: 'user_profile',
+    sql: `
+-- ---------- M79-B：用户画像（头衔 / 简介 / 头像；仅展示用途，零权限语义） ----------
+-- avatar 为 JSON：{"kind":"color","value":"#6366f1"} | {"kind":"emoji","value":"🐼"}（NULL = 未设置）；
+-- 显示名沿用 users.display_name（改由 PATCH /api/auth/profile 维护，admin 管理面亦可改）。
+ALTER TABLE users ADD COLUMN headline TEXT;
+ALTER TABLE users ADD COLUMN bio TEXT;
+ALTER TABLE users ADD COLUMN avatar TEXT;
+`,
+  },
+  {
+    version: 23,
+    name: 'friend_links',
+    sql: `
+-- ---------- M79-C：好友关系（单行双向；user_a < user_b 由应用层保证） ----------
+-- 状态机：pending（requested_by 发起）→ accepted / 行删除（拒绝 / 解除）；
+--         blocked（blocked_by 拉黑；隐含解除；解除拉黑 → 行删除回「无关系」）。
+-- 语义：accepted 唯一判定好友；blocked 对双方呈现「无关系」（被拉黑方不可发起请求 / 私聊 / 邀请）。
+CREATE TABLE IF NOT EXISTS friend_links (
+  id TEXT PRIMARY KEY,
+  user_a TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  user_b TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  state TEXT NOT NULL CHECK (state IN ('pending','accepted','blocked')),
+  requested_by TEXT NOT NULL,
+  message TEXT,
+  blocked_by TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE (user_a, user_b)
+);
+CREATE INDEX IF NOT EXISTS idx_friend_links_b ON friend_links(user_b, state);
+CREATE INDEX IF NOT EXISTS idx_friend_links_req ON friend_links(requested_by, created_at);
+`,
+  },
+  {
+    version: 24,
+    name: 'session_kind_and_hides',
+    sql: `
+-- ---------- M79-D：会话社会形态（team = agent 编制协作（存量默认）；direct = 私聊；group = 群聊） ----------
+-- dm_key：direct 唯一键（排序后两 userId 以 '|' 连接）——并发创建竞态由唯一索引兜底；
+-- 免路由：chat 形态（direct/group）无 @agent 时不启 Run（路由层判定，零引擎改动）。
+ALTER TABLE sessions ADD COLUMN kind TEXT NOT NULL DEFAULT 'team';
+ALTER TABLE sessions ADD COLUMN dm_key TEXT;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_sessions_dm ON sessions(dm_key) WHERE dm_key IS NOT NULL;
+-- ---------- M79-D：会话隐藏（DM「删除」语义 = 仅从本人列表隐藏；新消息自动复现） ----------
+-- 复现规则：查询侧「hidden && unreadCount == 0」才过滤（有未读即强制显示）。
+CREATE TABLE IF NOT EXISTS session_hides (
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+  hidden_at TEXT NOT NULL,
+  PRIMARY KEY (user_id, session_id)
+);
+`,
+  },
+  {
+    version: 25,
+    name: 'session_route_mode_and_waiting',
+    sql: `
+-- ---------- M79-E：触发策略与持球方（设计 §8） ----------
+-- route_mode：'auto'（无 @ 消息交给平台路由组队，存量默认）/ 'mention'（仅点名唤起）；
+--              chat 形态（direct/group）恒按 mention 语义（路由层判定，不落列）；
+-- waiting_on：JSON string[]——被 agent 行首 @ 点名待回复的 userIds（空 = 无持球）；
+--              写入于 Run 收尾（handedTo 非空）；任何目标回复即集合差清除。
+ALTER TABLE sessions ADD COLUMN route_mode TEXT NOT NULL DEFAULT 'auto';
+ALTER TABLE sessions ADD COLUMN waiting_on TEXT;
+-- 消息级人类定向（userIds JSON；与 agent mentions 隔离；NULL = 无）
+ALTER TABLE messages ADD COLUMN human_mentions TEXT;
+`,
+  },
+  {
+    version: 26,
+    name: 'notify_bus_and_presence_instances',
+    sql: `
+-- ---------- M79-L：多实例演进（共享通知总线 + 跨实例 presence） ----------
+-- notify_bus：跨实例通知传输（仅 NOTIFY_BUS=db 写入；每实例轮询消费非本实例行）。
+--   kind='session' → target=会话 id（各实例仅投给本地订阅者；本地 seq 独立分配）；
+--   kind='user'    → target=userId（各实例仅投给该用户的本地连接）；
+--   权威层不变（inbox / session_reads 仍在原表）——总线为快路径传输，缺口由 REST 快照补齐。
+CREATE TABLE IF NOT EXISTS notify_bus (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  origin TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  target TEXT NOT NULL,
+  type TEXT NOT NULL,
+  run_id TEXT,
+  payload TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_notify_bus_id ON notify_bus(id);
+-- presence_instances：各实例的本用户连接计数（行心跳刷新；离线广播前合并全局计数，
+--   防「A 实例断开但 B 实例仍有连接」被误判离线；stale 行按 updated_at 过期忽略并清理）。
+CREATE TABLE IF NOT EXISTS presence_instances (
+  instance_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  conn_count INTEGER NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (instance_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_presence_instances_user ON presence_instances(user_id);
+`,
+  },
 ]

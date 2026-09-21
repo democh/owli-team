@@ -31,6 +31,7 @@ import { commentDraft } from '../../lib/focus-artifact'
 import { labelOfMemberKey } from '../../lib/members'
 import { cn } from '../../lib/utils'
 import { useAgentStore } from '../../stores/agent-store'
+import { useAuthStore } from '../../stores/auth-store'
 import { useRunStore } from '../../stores/run-store'
 import { useSessionStore } from '../../stores/session-store'
 import { useUiStore } from '../../stores/ui-store'
@@ -88,6 +89,9 @@ export function MessageActions({
   const [reasonMode, setReasonMode] = React.useState(false)
   const [reason, setReason] = React.useState('')
   const rootRef = React.useRef<HTMLDivElement>(null)
+  // M79-AF：写项展示 gating（服务端为准；兼容模式 role/userId 缺省 → 全放行零变化）
+  const myUserId = useAuthStore((s) => s.user?.id)
+  const myRole = useSessionStore((s) => s.sessions.find((x) => x.id === s.currentId)?.role)
 
   // M9：打开菜单时同步已有反馈状态
   const feedbackTargetId = message?.id
@@ -222,6 +226,13 @@ export function MessageActions({
   }
 
   const isUser = message.role === 'user'
+  // M79-AF：写项可见性（与服务端口径一致；兼容模式 / 历史消息缺 userId → 放行零变化）——
+  // 编辑 = 作者本人；删除 = 作者 / 属主（agent/system 不受限）；运行写项（重生成 / 续写 / fork）= 非 viewer
+  const isViewer = myRole === 'viewer'
+  const isSessionOwner = !myRole || myRole === 'owner'
+  const mineHuman = !!message.userId && !!myUserId && message.userId === myUserId
+  const canEdit = isUser && (!message.userId || !myUserId || mineHuman)
+  const canDelete = !isViewer && (!isUser || !message.userId || !myUserId || mineHuman || isSessionOwner)
   const busyReason = active ? '运行中暂不可操作' : undefined
   /** M4：可续写态（已中断且有正文；streaming / complete 与空正文由服务端守卫拒绝） */
   const resumable = !isUser && (message.status === 'stopped' || message.status === 'error') && message.content.trim().length > 0
@@ -275,16 +286,18 @@ export function MessageActions({
             />
           ) : null}
           {isUser ? (
-            <MenuItem
-              icon={<SquarePen className="size-3.5" />}
-              label="编辑重发"
-              disabled={active}
-              title={busyReason}
-              onClick={edit}
-            />
+            canEdit ? (
+              <MenuItem
+                icon={<SquarePen className="size-3.5" />}
+                label="编辑重发"
+                disabled={active}
+                title={busyReason}
+                onClick={edit}
+              />
+            ) : null
           ) : (
             <>
-              {resumable ? (
+              {!isViewer && resumable ? (
                 <MenuItem
                   icon={<Play className="size-3.5" />}
                   label="继续生成"
@@ -293,30 +306,36 @@ export function MessageActions({
                   onClick={resume}
                 />
               ) : null}
-              <MenuItem
-                icon={<RefreshCw className="size-3.5" />}
-                label="重新生成"
-                disabled={active || message.status === 'streaming'}
-                title={busyReason}
-                onClick={regenerate}
-              />
+              {!isViewer ? (
+                <MenuItem
+                  icon={<RefreshCw className="size-3.5" />}
+                  label="重新生成"
+                  disabled={active || message.status === 'streaming'}
+                  title={busyReason}
+                  onClick={regenerate}
+                />
+              ) : null}
             </>
           )}
-          <MenuItem
-            icon={<GitBranch className="size-3.5" />}
-            label="从这条 fork"
-            disabled={active}
-            title={busyReason}
-            onClick={fork}
-          />
-          <MenuItem
-            icon={<Trash2 className="size-3.5" />}
-            label={confirmDelete ? '确认删除？' : '删除'}
-            danger
-            disabled={active}
-            title={busyReason}
-            onClick={remove}
-          />
+          {!isViewer ? (
+            <MenuItem
+              icon={<GitBranch className="size-3.5" />}
+              label="从这条 fork"
+              disabled={active}
+              title={busyReason}
+              onClick={fork}
+            />
+          ) : null}
+          {canDelete ? (
+            <MenuItem
+              icon={<Trash2 className="size-3.5" />}
+              label={confirmDelete ? '确认删除？' : '删除'}
+              danger
+              disabled={active}
+              title={busyReason}
+              onClick={remove}
+            />
+          ) : null}
 
           <div className="my-1 h-px bg-border" />
           {reasonMode ? (

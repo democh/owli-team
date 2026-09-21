@@ -7,11 +7,15 @@
  */
 import * as React from 'react'
 import { toast } from 'sonner'
-import { Check, Layers, Loader2, Search, Sparkles, X, Zap } from 'lucide-react'
-import type { AgentDefinition } from '@multi-agent/shared'
+import { Check, Layers, Loader2, Search, Sparkles, Users, X, Zap } from 'lucide-react'
+import type { AgentDefinition, Session } from '@multi-agent/shared'
 import { BLANK_SCENE_ID, baseAgentId } from '@multi-agent/shared'
+import { apiPatch } from '../../lib/api'
 import { useAgentStore } from '../../stores/agent-store'
+import { useAuthStore } from '../../stores/auth-store'
+import { useFriendsStore } from '../../stores/friends-store'
 import { useSessionStore } from '../../stores/session-store'
+import { useShareStore } from '../../stores/share-store'
 import { useMediaQuery } from '../../lib/hooks'
 import { resolveIcon } from '../../lib/avatar-icons'
 import { encodeParticipation, participationOf } from '../../lib/members'
@@ -23,6 +27,7 @@ import { AgentAvatar } from '../agents/AgentAvatar'
 import { AgentPicker } from '../agents/AgentPicker'
 import { GroupBadge } from '../agents/GroupBadge'
 import { SoulParticipantPicker } from '../agents/SoulPicker'
+import { HumanAvatar } from '../chat/HumanAvatar'
 
 /** 组队来源（快速组队 preset / 场景 scene 二选一；命令面板 pendingCreate 与此共用） */
 export interface CreateSource {
@@ -55,6 +60,10 @@ export function CreateSessionDialog({
   const [souls, setSouls] = React.useState<Record<string, string>>({})
   const [titleInput, setTitleInput] = React.useState('')
   const [busy, setBusy] = React.useState(false)
+  // M79-O：协作成员（真人）——创建时一步邀请（免「先建后共享」两步）
+  const [humanIds, setHumanIds] = React.useState<string[]>([])
+  const multiUser = useAuthStore((s) => s.status.multiUser)
+  const friends = useFriendsStore((s) => s.friends)
   const [source, setSource] = React.useState<CreateSource>()
   const [query, setQuery] = React.useState('')
   const [pane, setPane] = React.useState<Pane>('source')
@@ -79,6 +88,7 @@ export function CreateSessionDialog({
     setQuery('')
     setBusy(false)
     setSouls({})
+    setHumanIds([])
     if (preset) {
       setSource({ kind: 'preset', id: preset.id })
       setPicked(preset.members.filter((id) => known.has(id)))
@@ -91,6 +101,14 @@ export function CreateSessionDialog({
     }
     setPane(preset || group ? (narrowRef.current ? 'lineup' : 'source') : 'source')
   }, [open, initialSource])
+
+  // M79-O：打开时拉好友（协作成员候选；多用户模式）
+  React.useEffect(() => {
+    if (open && multiUser) void useFriendsStore.getState().load()
+  }, [open, multiUser])
+
+  const toggleHuman = (userId: string): void =>
+    setHumanIds((prev) => (prev.includes(userId) ? prev.filter((x) => x !== userId) : [...prev, userId]))
 
   const preset = source?.kind === 'preset' ? presets.find((p) => p.id === source.id) : undefined
   const group = source?.kind === 'scene' ? groups.find((g) => g.id === source.id) : undefined
@@ -195,11 +213,38 @@ export function CreateSessionDialog({
       // M46：souls 仅保留最终编制（取消勾选的成员不携带灵魂覆盖）
       const pickedSouls = Object.fromEntries(Object.entries(souls).filter(([id]) => picked.includes(id)))
       const session = await useSessionStore.getState().createSession(picked, titleInput.trim() || undefined, pickedSouls)
+      // M79-O：协作成员（真人）一步邀请（editor；失败不阻塞会话创建，汇总提示）
+      let invited = 0
+      const failed: string[] = []
+      if (humanIds.length > 0) {
+        const pickedFriends = friends.filter((f) => humanIds.includes(f.userId))
+        const results = await Promise.allSettled(
+          pickedFriends.map((f) => useShareStore.getState().invite(session.id, f.username, 'editor')),
+        )
+        results.forEach((r, i) => {
+          if (r.status === 'fulfilled') invited += 1
+          else failed.push(pickedFriends[i]!.displayName)
+        })
+        // 纯真人（无 agent 编制）→ 自动「仅点名唤起」：防未 @ 消息触发 PRS 组队（可在会话头部切回）
+        if (picked.length === 0 && invited > 0) {
+          try {
+            const res = await apiPatch<{ session: Session }>(`/api/sessions/${session.id}`, { routeMode: 'mention' })
+            useSessionStore.getState().applySession(res.session)
+          } catch {
+            // 失败不阻塞（会话头部可手动切换）
+          }
+        }
+      }
       // M21：预设开场指令预填为 Composer 草稿（须在 onSelect 前写入，切会话时读取恢复；键与 Composer.draftKey 一致）
       if (preset?.prompt) localStorage.setItem(`ma:draft:${session.id}`, preset.prompt)
       onOpenChange(false)
       onCreated(session.id)
-      toast(preset?.prompt ? `会话「${session.title}」已创建，开场指令已预填` : `会话「${session.title}」已创建`)
+      const invitedNote = invited > 0 ? `（已邀请 ${invited} 位好友）` : failed.length > 0 ? `；邀请失败：${failed.join('、')}` : ''
+      toast(
+        preset?.prompt
+          ? `会话「${session.title}」已创建，开场指令已预填${invitedNote}`
+          : `会话「${session.title}」已创建${invitedNote}`,
+      )
     } catch (err) {
       toast.error((err as Error).message)
     } finally {
@@ -531,6 +576,47 @@ export function CreateSessionDialog({
             未选成员：首条消息将由平台自动组队并派发任务
           </p>
         )}
+        {/* M79-O：协作成员（真人）——创建时一步邀请（好友多选；多用户模式） */}
+        {multiUser && (
+          <div className="rounded-lg border bg-muted/20 px-2 py-1.5">
+            <div className="mb-1 flex items-center gap-1.5 text-[11px] text-muted-foreground">
+              <Users className="size-3" />
+              协作成员（真人）
+              {humanIds.length > 0 && <span className="font-medium text-primary">已选 {humanIds.length} 位</span>}
+            </div>
+            {friends.length === 0 ? (
+              <p className="text-[11px] text-muted-foreground">还没有好友——在联系人页添加后可选</p>
+            ) : (
+              <div className="flex max-h-24 flex-wrap gap-1 overflow-y-auto">
+                {friends.map((f) => {
+                  const active = humanIds.includes(f.userId)
+                  return (
+                    <button
+                      key={f.userId}
+                      type="button"
+                      title={active ? `取消 ${f.displayName}` : `邀请 ${f.displayName} 加入`}
+                      onClick={() => toggleHuman(f.userId)}
+                      className={cn(
+                        'flex items-center gap-1 rounded-full border py-0.5 pl-0.5 pr-2 text-[11.5px] transition-all',
+                        active
+                          ? 'border-primary/40 bg-primary/[0.08] text-primary'
+                          : 'border-transparent bg-muted/70 text-muted-foreground hover:border-primary/25 hover:bg-primary/5 hover:text-primary',
+                      )}
+                    >
+                      <HumanAvatar avatar={f.avatar} name={f.displayName} size={16} />
+                      <span className="max-w-24 truncate">{f.displayName}</span>
+                    </button>
+                  )
+                })}
+              </div>
+            )}
+            {picked.length === 0 && humanIds.length > 0 && (
+              <p className="mt-1 text-[10.5px] leading-4 text-amber-700">
+                编制为空：将自动设为「仅点名唤起」，未 @ 的消息 AI 不响应（可在会话头部切换）
+              </p>
+            )}
+          </div>
+        )}
         <Input
           value={titleInput}
           onChange={(e) => setTitleInput(e.target.value)}
@@ -544,7 +630,9 @@ export function CreateSessionDialog({
           onClick={() => void submitCreate()}
         >
           {busy ? <Loader2 className="size-3.5 animate-spin" /> : <Check className="size-3.5" />}
-          {picked.length > 0 ? `创建并进入（${picked.length} 位成员）` : '空编制创建 · 交给平台组队'}
+          {picked.length + humanIds.length > 0
+            ? `创建并进入（${picked.length + humanIds.length} 位成员）`
+            : '空编制创建 · 交给平台组队'}
         </Button>
       </div>
     </div>

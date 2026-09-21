@@ -23,6 +23,7 @@ import { cn } from '../../lib/utils'
 import { Badge } from '../ui/badge'
 import { Button } from '../ui/button'
 import { AgentAvatar } from '../agents/AgentAvatar'
+import { HumanAvatar } from './HumanAvatar'
 import { Markdown } from './Markdown'
 import { DeliveryFiles } from './DeliveryList'
 import { ChangeCard, isChangeMessage } from './ChangeCard'
@@ -145,6 +146,8 @@ function MessageItemInner({ messageId }: { messageId: string }): React.JSX.Eleme
   // M57 P2：共享会话人类署名（他人昵称表 + 本人 id；兼容模式 humanNames 为空 → 仍为「你」）
   const myUserId = useAuthStore((s) => s.user?.id)
   const humanNames = useSessionStore((s) => s.humanNames)
+  // M79-B：人类画像表（头像 / 头衔；优先于 humanNames 渲染）
+  const humanProfiles = useSessionStore((s) => s.humanProfiles)
 
   // M37：消息级上下文（checklist / choice 容器需要 messageId 落交互态、sessionId 隔离存储键）
   const mdContext = React.useMemo<MdMessageInfo>(
@@ -221,83 +224,145 @@ function MessageItemInner({ messageId }: { messageId: string }): React.JSX.Eleme
 
   if (message.role === 'user') {
     // M57 P2：共享会话人类署名（他人消息显示昵称；自己/兼容模式仍为「你」）
-    const senderName = message.userId && message.userId !== myUserId ? (humanNames[message.userId] ?? '成员') : '你'
+    // M79-B：他人人类消息呈现升维（左对齐 + 头像 + 头衔）；自己的消息维持现状（右对齐、无头像）
+    const isSelf = !message.userId || message.userId === myUserId
+    const profile = message.userId ? humanProfiles[message.userId] : undefined
+    const senderName = isSelf
+      ? '你'
+      : (profile?.name ?? (message.userId ? (humanNames[message.userId] ?? '成员') : '成员'))
+    const headline = !isSelf ? profile?.headline : undefined
+    const corner = isSelf ? 'rounded-tr-md' : 'rounded-tl-md'
+    const bubble = editing ? (
+      <div className={cn('w-fit max-w-full rounded-xl border border-primary/40 bg-card px-3.5 py-2.5 shadow-soft ring-[3px] ring-primary/10', corner)}>
+        <textarea
+          value={draft}
+          autoFocus
+          rows={Math.min(8, Math.max(2, draft.split('\n').length))}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Escape') cancelEdit()
+            if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') void saveEdit()
+          }}
+          className="block w-full resize-none bg-transparent text-[13.5px] leading-6 focus:outline-none"
+        />
+        <div className="mt-2 flex items-center gap-1.5 border-t border-primary/10 pt-2">
+          <Button size="sm" className="h-6 px-2 text-[11.5px]" disabled={saving} onClick={() => void saveEdit()}>
+            {saving && <Loader2 className="size-3 animate-spin" />}
+            保存并重发
+          </Button>
+          <Button variant="outline" size="sm" className="h-6 px-2 text-[11.5px]" onClick={cancelEdit}>
+            取消
+          </Button>
+        </div>
+      </div>
+    ) : (
+      <div
+        className={cn(
+          // M79-N：w-fit 让气泡按内容宽度自适应（他人人类消息容器为 flex-1，短文本不再被拉到 82% 全宽）
+          'w-fit max-w-full rounded-xl border px-3.5 py-2.5 shadow-soft',
+          corner,
+          isSelf ? 'border-primary/20 bg-gradient-to-br from-primary/[0.08] to-primary/[0.03]' : 'bg-card',
+        )}
+      >
+        {/* M33：附件原生渲染（图片网格 / 视频播放器 / 文档卡；可与文本共存） */}
+        {message.attachments && message.attachments.length > 0 && (
+          <div className={cn(content && 'mb-2')}>
+            <MessageAttachments sessionId={message.sessionId} attachments={message.attachments} />
+          </div>
+        )}
+        {content ? (
+          <MessageContext.Provider value={mdContext}>
+            <Markdown content={content} />
+          </MessageContext.Provider>
+        ) : null}
+        {message.mentions.length > 0 && (
+          <div className="mt-2 flex flex-wrap items-center gap-1.5 border-t border-primary/10 pt-2 text-[11px] text-muted-foreground">
+            <span>点名</span>
+            {message.mentions.map((id) => {
+              const a = agents.find((x) => x.id === baseAgentId(id))
+              return (
+                <span
+                  key={id}
+                  className="inline-flex items-center gap-1 rounded-full bg-card py-0.5 pl-0.5 pr-2 shadow-sm ring-1 ring-primary/15"
+                >
+                  <AgentAvatar agent={a} size={16} animated={false} />
+                  <span className="text-[10.5px] font-medium text-foreground">
+                    {labelOfMemberKey(agents, session, id)}
+                  </span>
+                </span>
+              )
+            })}
+          </div>
+        )}
+        {/* M79-E：人类定向 chips（@真人；被提及人收「提及」提醒） */}
+        {message.humanMentions && message.humanMentions.length > 0 && (
+          <div className="mt-2 flex flex-wrap items-center gap-1.5 border-t border-primary/10 pt-2 text-[11px] text-muted-foreground">
+            <span>提及</span>
+            {message.humanMentions.map((id) => {
+              const p = humanProfiles[id]
+              const name = p?.name ?? humanNames[id] ?? '成员'
+              return (
+                <span
+                  key={id}
+                  className="inline-flex items-center gap-1 rounded-full bg-card py-0.5 pl-0.5 pr-2 shadow-sm ring-1 ring-primary/15"
+                >
+                  <HumanAvatar avatar={p?.avatar} name={name} size={16} />
+                  <span className="text-[10.5px] font-medium text-foreground">{name}</span>
+                </span>
+              )
+            })}
+          </div>
+        )}
+      </div>
+    )
+    if (isSelf) {
+      return (
+        <div
+          id={`msg-${message.id}`}
+          className={cn(
+            'group flex justify-end gap-2.5 px-4 py-[var(--msg-py)]',
+            animate && 'animate-fade-in-up',
+            flashed && 'msg-flash',
+          )}
+        >
+          <div className="max-w-[78%]">
+            <div className="mb-1 flex items-center justify-end gap-2 text-[11.5px] text-muted-foreground">
+              {message.scheduleId && <ScheduleBadge />}
+              {message.mode && message.mode !== 'execute' && <ModeBadge mode={message.mode} />}
+              <span>{formatClock(message.createdAt)}</span>
+              <span className="font-medium text-foreground">{senderName}</span>
+              <span className="flex items-center opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100 max-md:opacity-100">
+                <MessageActions messageId={message.id} />
+              </span>
+            </div>
+            {bubble}
+          </div>
+        </div>
+      )
+    }
     return (
       <div
         id={`msg-${message.id}`}
         className={cn(
-          'group flex justify-end gap-2.5 px-4 py-[var(--msg-py)]',
+          'group flex gap-2.5 px-4 py-[var(--msg-py)]',
           animate && 'animate-fade-in-up',
           flashed && 'msg-flash',
         )}
       >
-        <div className="max-w-[78%]">
-          <div className="mb-1 flex items-center justify-end gap-2 text-[11.5px] text-muted-foreground">
+        <HumanAvatar avatar={profile?.avatar} name={senderName} size={34} className="mt-0.5" />
+        <div className="min-w-0 max-w-[82%] flex-1">
+          <div className="mb-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11.5px] text-muted-foreground">
+            <span className="text-[12.5px] font-semibold text-foreground">{senderName}</span>
+            {headline && <span className="turn-role">{headline}</span>}
             {message.scheduleId && <ScheduleBadge />}
             {message.mode && message.mode !== 'execute' && <ModeBadge mode={message.mode} />}
+            <span className="text-[10.5px]">·</span>
             <span>{formatClock(message.createdAt)}</span>
-            <span className="font-medium text-foreground">{senderName}</span>
-            <span className="flex items-center opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100 max-md:opacity-100">
+            <span className="ml-auto flex items-center opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100 max-md:opacity-100">
               <MessageActions messageId={message.id} />
             </span>
           </div>
-          {editing ? (
-            <div className="rounded-xl rounded-tr-md border border-primary/40 bg-card px-3.5 py-2.5 shadow-soft ring-[3px] ring-primary/10">
-              <textarea
-                value={draft}
-                autoFocus
-                rows={Math.min(8, Math.max(2, draft.split('\n').length))}
-                onChange={(e) => setDraft(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Escape') cancelEdit()
-                  if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') void saveEdit()
-                }}
-                className="block w-full resize-none bg-transparent text-[13.5px] leading-6 focus:outline-none"
-              />
-              <div className="mt-2 flex items-center gap-1.5 border-t border-primary/10 pt-2">
-                <Button size="sm" className="h-6 px-2 text-[11.5px]" disabled={saving} onClick={() => void saveEdit()}>
-                  {saving && <Loader2 className="size-3 animate-spin" />}
-                  保存并重发
-                </Button>
-                <Button variant="outline" size="sm" className="h-6 px-2 text-[11.5px]" onClick={cancelEdit}>
-                  取消
-                </Button>
-              </div>
-            </div>
-          ) : (
-            <div className="rounded-xl rounded-tr-md border border-primary/20 bg-gradient-to-br from-primary/[0.08] to-primary/[0.03] px-3.5 py-2.5 shadow-soft">
-              {/* M33：附件原生渲染（图片网格 / 视频播放器 / 文档卡；可与文本共存） */}
-              {message.attachments && message.attachments.length > 0 && (
-                <div className={cn(content && 'mb-2')}>
-                  <MessageAttachments sessionId={message.sessionId} attachments={message.attachments} />
-                </div>
-              )}
-              {content ? (
-                <MessageContext.Provider value={mdContext}>
-                  <Markdown content={content} />
-                </MessageContext.Provider>
-              ) : null}
-              {message.mentions.length > 0 && (
-                <div className="mt-2 flex flex-wrap items-center gap-1.5 border-t border-primary/10 pt-2 text-[11px] text-muted-foreground">
-                  <span>点名</span>
-                  {message.mentions.map((id) => {
-                    const a = agents.find((x) => x.id === baseAgentId(id))
-                    return (
-                      <span
-                        key={id}
-                        className="inline-flex items-center gap-1 rounded-full bg-card py-0.5 pl-0.5 pr-2 shadow-sm ring-1 ring-primary/15"
-                      >
-                        <AgentAvatar agent={a} size={16} animated={false} />
-                        <span className="text-[10.5px] font-medium text-foreground">
-                          {labelOfMemberKey(agents, session, id)}
-                        </span>
-                      </span>
-                    )
-                  })}
-                </div>
-              )}
-            </div>
-          )}
+          {bubble}
         </div>
       </div>
     )

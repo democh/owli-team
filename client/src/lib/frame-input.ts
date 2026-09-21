@@ -41,6 +41,8 @@ export interface FrameInputHandlers {
 export function useBrowserFrameInput(
   wrapRef: React.RefObject<HTMLElement | null>,
   imgRef: React.RefObject<HTMLImageElement | null>,
+  /** M79-AF：只读共享（viewer）→ 整体屏蔽输入（含懒接管入口；服务端另有写闸门兜底） */
+  enabled = true,
 ): FrameInputHandlers {
   const session = useBrowserStore((s) => s.session)
   const frame = useBrowserStore((s) => s.frame)
@@ -68,7 +70,7 @@ export function useBrowserFrameInput(
   // 滚轮：原生监听（接管态 preventDefault；坐标换算实时读取）
   React.useEffect(() => {
     const el = wrapRef.current
-    if (!el) return
+    if (!el || !enabled) return
     const onWheel = (e: WheelEvent): void => {
       if (useBrowserStore.getState().mode !== 'takeover') return
       const point = coordsOf(e.clientX, e.clientY)
@@ -84,7 +86,7 @@ export function useBrowserFrameInput(
     }
     el.addEventListener('wheel', onWheel, { passive: false })
     return () => el.removeEventListener('wheel', onWheel)
-  }, [session, frame, coordsOf, wrapRef])
+  }, [session, frame, coordsOf, wrapRef, enabled])
 
   const sendAt = React.useCallback(
     async (
@@ -93,6 +95,7 @@ export function useBrowserFrameInput(
       type: 'down' | 'up' | 'move',
       button?: 'left' | 'right' | 'middle',
     ): Promise<void> => {
+      if (!enabled) return
       const point = coordsOf(e.clientX, e.clientY)
       if (!point) return
       await useBrowserStore.getState().sendInput({
@@ -104,7 +107,7 @@ export function useBrowserFrameInput(
         modifiers: modifiersOf(e),
       })
     },
-    [coordsOf],
+    [coordsOf, enabled],
   )
 
   const buttonOf = (b: number): 'left' | 'right' | 'middle' => (b === 2 ? 'right' : b === 1 ? 'middle' : 'left')
@@ -113,13 +116,14 @@ export function useBrowserFrameInput(
     onMouseDown: (e) => void sendAt(e, 'mouse', 'down', buttonOf(e.button)),
     onMouseUp: (e) => void sendAt(e, 'mouse', 'up', buttonOf(e.button)),
     onMouseMove: (e) => {
-      if (mode !== 'takeover' || streamStatus !== 'open') return
+      if (!enabled || mode !== 'takeover' || streamStatus !== 'open') return
       const now = Date.now()
       if (now - lastMoveAt.current < 40) return // 移动节流：40ms
       lastMoveAt.current = now
       void sendAt(e, 'mouse', 'move')
     },
     onKeyDown: (e) => {
+      if (!enabled) return
       if (useBrowserStore.getState().mode !== 'takeover') return
       const modifiers = modifiersOf(e)
       if (e.key.length === 1 && !e.metaKey && !e.ctrlKey) {
@@ -133,6 +137,7 @@ export function useBrowserFrameInput(
       }
     },
     onContextMenu: (e) => {
+      if (!enabled) return
       if (mode === 'takeover') e.preventDefault()
     },
   }

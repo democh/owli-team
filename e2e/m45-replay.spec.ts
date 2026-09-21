@@ -22,6 +22,7 @@ test('M45 · 波次回放条：两波刻度 + 点选跳转（闪光复用）+ �
   await expectYourTurn(page)
 
   const scrubber = page.locator('[data-wave-scrubber]').first()
+  await scrubber.locator('[data-wave-toggle]').click() // M79-AA：默认隐藏——展开后再断言
   await expect(scrubber).toBeVisible()
   await expect(scrubber.locator('[data-wave-tick]')).toHaveCount(2)
   await expect(scrubber.locator('.wave-scrubber-count')).toContainText('2 波')

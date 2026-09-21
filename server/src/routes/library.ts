@@ -98,6 +98,17 @@ export function createLibraryRouter(deps: ApiDeps): Router {
     if (!requireService(res)) return
     const parsed = ToCanvasSchema.safeParse(req.body ?? {})
     if (!parsed.success) return res.status(400).json({ error: '参数校验失败：需要 sessionId' })
+    // M79-AF：入仓 = 向会话工作区拷贝文件（与附件上传同族的写操作）——viewer 写闸门；
+    // 不可读 → 404 不泄漏（admin 无归属旁路，M79-G 隐私语义）；兼容模式全放行
+    if (deps.access.multiUser) {
+      const user = userOf(req)
+      if (deps.access.sessionRole(user, parsed.data.sessionId) === undefined) {
+        return res.status(404).json({ error: '会话不存在' })
+      }
+      if (!deps.access.canWriteSession(user, parsed.data.sessionId)) {
+        return res.status(403).json({ error: '当前为只读共享（viewer）：无操作权限' })
+      }
+    }
     const result = deps.library!.toSession(ownerOf(req), req.params.id, parsed.data.sessionId)
     if ('error' in result) return res.status(404).json({ error: result.error })
     res.json(result)

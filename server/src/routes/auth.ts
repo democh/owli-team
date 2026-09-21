@@ -6,12 +6,16 @@
  * - 会话令牌只经 HttpOnly cookie（sid）下发；`AUTH_COOKIE_SECURE=true` 时加 Secure（nginx HTTPS 网关后必开）；
  * - 失败文案统一（用户名错误与密码错误不可区分），首登强制改密由 mustChangePassword 透出。
  */
+import fs from 'node:fs'
+import path from 'node:path'
 import { Router } from 'express'
 import type { Request, RequestHandler, Response } from 'express'
 import { z } from 'zod'
+import { AVATAR_MAX_BYTES, avatarFileWellFormed, imagesDirOf, isImageAvatar, mimeOfAvatarFile, removeAvatarFile, saveAvatarFile, sniffImage } from '../auth/avatar.js'
 import type { AppConfig } from '../config.js'
 import type { AuthService } from '../auth/service.js'
 import type { UserStore } from '../store/users.js'
+import { toUserInfo } from '../store/users.js'
 import { SESSION_COOKIE } from '../middleware.js'
 import { firstIssue } from './schemas.js'
 
@@ -40,11 +44,24 @@ const prefsSchema = z
   })
   .strict()
 
+/** M79-B：画像维护（本人；null = 清除该字段） */
+const profileSchema = z.object({
+  displayName: z.string().trim().min(1, '显示名不能为空').max(60).optional(),
+  headline: z.string().trim().max(30, '头衔最长 30 字').nullable().optional(),
+  bio: z.string().trim().max(120, '简介最长 120 字').nullable().optional(),
+  avatar: z
+    .object({ kind: z.enum(['color', 'emoji']), value: z.string().trim().min(1).max(8) })
+    .nullable()
+    .optional(),
+})
+
 export interface AuthRouterDeps {
   cfg: AppConfig
   auth: AuthService
   users: UserStore
   loginLimiter: RequestHandler
+  /** M79-Y：资料（昵称 / 头像）变更回调（装配层向好友广播 friends-changed；缺省 = 不广播） */
+  onProfileChanged?: (userId: string) => void
 }
 
 /** 会话 cookie 写入（滑动 TTL 由服务端令牌控制；cookie Max-Age 仅浏览器保留期） */
@@ -202,6 +219,99 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
       return
     }
     res.json({ preferences: deps.users.setPrefs(user.id, parsed.data) })
+  })
+
+  /** M79-B：画像维护（本人自助：显示名 / 头衔 / 简介 / 头像；null = 清除） */
+  router.patch('/auth/profile', (req, res) => {
+    const user = (req as Request & { user?: { id: string } }).user
+    if (!user?.id) {
+      res.status(400).json({ error: '单用户兼容模式无画像存储；请先完成管理员初始化' })
+      return
+    }
+    const parsed = profileSchema.safeParse(req.body ?? {})
+    if (!parsed.success) {
+      res.status(400).json({ error: firstIssue(parsed.error) })
+      return
+    }
+    const avatar = parsed.data.avatar
+    if (avatar?.kind === 'color' && !/^#[0-9a-fA-F]{6}$/.test(avatar.value)) {
+      res.status(400).json({ error: '头像色需为 #rrggbb 格式' })
+      return
+    }
+    if (avatar?.kind === 'emoji' && [...avatar.value].length > 2) {
+      res.status(400).json({ error: '头像 emoji 仅支持单个字符' })
+      return
+    }
+    try {
+      // M79-Q：显式设置头像（color / emoji / null）时，清理遗留的图片头像文件
+      const previous = deps.users.get(user.id)
+      const updated = deps.users.updateProfile(user.id, parsed.data)
+      if (parsed.data.avatar !== undefined && isImageAvatar(previous?.avatar)) {
+        removeAvatarFile(deps.cfg.dataDir, previous.avatar.value)
+      }
+      // M79-Y：资料变更 → 好友侧列表实时更新（头像 / 昵称）
+      deps.onProfileChanged?.(user.id)
+      res.json({ user: updated ? toUserInfo(updated) : undefined })
+    } catch (err) {
+      res.status(400).json({ error: (err as Error).message })
+    }
+  })
+
+  /**
+   * M79-Q：头像图片上传（raw 二进制；客户端已裁 256²）。
+   * 安全：服务端以魔数重算格式（仅 PNG / JPEG / WebP，拒绝 SVG）——不信 content-type；文件名服务端生成。
+   */
+  router.post('/auth/avatar', (req, res) => {
+    const user = (req as Request & { user?: { id: string } }).user
+    if (!user?.id) {
+      res.status(400).json({ error: '单用户兼容模式无个人头像存储；请先完成管理员初始化' })
+      return
+    }
+    const body: unknown = req.body
+    if (!Buffer.isBuffer(body) || body.length === 0) {
+      res.status(400).json({ error: '请求体为空：请以 raw 二进制上传图片内容' })
+      return
+    }
+    if (body.length > AVATAR_MAX_BYTES) {
+      res.status(400).json({ error: `头像图片过大（上限 ${Math.round(AVATAR_MAX_BYTES / 1024 / 1024)}MB）` })
+      return
+    }
+    const sniffed = sniffImage(body)
+    if (!sniffed) {
+      res.status(400).json({ error: '仅支持 PNG / JPEG / WebP 图片' })
+      return
+    }
+    try {
+      const previous = deps.users.get(user.id)
+      const fileName = saveAvatarFile(deps.cfg.dataDir, user.id, body, sniffed.ext)
+      const updated = deps.users.updateProfile(user.id, { avatar: { kind: 'image', value: fileName } })
+      // M79-Y：头像变更 → 好友侧列表实时更新
+      if (isImageAvatar(previous?.avatar)) removeAvatarFile(deps.cfg.dataDir, previous.avatar.value)
+      deps.onProfileChanged?.(user.id)
+      res.status(201).json({ user: updated ? toUserInfo(updated) : undefined })
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message })
+    }
+  })
+
+  /**
+   * M79-Q：头像文件读取（已鉴权域内——多用户模式需登录；文件名白名单防穿越）。
+   * 文件名含时间戳 → 内容不变，`immutable` 长缓存；换头像即换名，天然击穿。
+   */
+  router.get('/avatars/:file', (req, res) => {
+    const name = req.params.file ?? ''
+    if (!avatarFileWellFormed(name)) {
+      res.status(404).json({ error: '头像不存在' })
+      return
+    }
+    const full = path.resolve(imagesDirOf(deps.cfg.dataDir), name)
+    if (!fs.existsSync(full)) {
+      res.status(404).json({ error: '头像不存在' })
+      return
+    }
+    res.setHeader('Content-Type', mimeOfAvatarFile(name))
+    res.setHeader('Cache-Control', 'private, max-age=31536000, immutable')
+    res.sendFile(full)
   })
 
   return router

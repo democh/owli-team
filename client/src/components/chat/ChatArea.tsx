@@ -10,21 +10,26 @@
  */
 import * as React from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
-import { ArrowDown, Eye, LayoutList, LayoutPanelLeft, Loader2, Plug, Rocket, RotateCcw, Users } from 'lucide-react'
+import { ArrowDown, Bot, Eye, Hourglass, LayoutList, LayoutPanelLeft, Loader2, Plug, Rocket, RotateCcw, Users } from 'lucide-react'
 import { toast } from 'sonner'
 import type { AgentDefinition } from '@multi-agent/shared'
 import { baseAgentId } from '@multi-agent/shared'
 import { labelOfMemberKey } from '../../lib/members'
-import { apiPost } from '../../lib/api'
+import { apiPatch, apiPost } from '../../lib/api'
 import { cn } from '../../lib/utils'
 import { resolveIcon } from '../../lib/avatar-icons'
 import { deriveRows, type WaveInfo } from '../../lib/chat-rows'
+import { memberViews } from '../../lib/members'
 import { useAgentStore, useGroup } from '../../stores/agent-store'
 import { useRunStore } from '../../stores/run-store'
 import { useSceneStore } from '../../stores/scene-store'
 import { useSessionStore } from '../../stores/session-store'
+import { useAuthStore } from '../../stores/auth-store'
+import { useWsStore } from '../../stores/ws-store'
 import { useUiStore } from '../../stores/ui-store'
 import { ShareDialog } from '../sessions/ShareDialog'
+import { OnlineDot } from './OnlineDot'
+import { ChatMembersDialog } from '../sessions/ChatMembersDialog'
 import { SessionResourcesDialog } from '../sessions/SessionResourcesDialog'
 import { AgentAvatar } from '../agents/AgentAvatar'
 import { SceneStage } from '../scene/SceneStage'
@@ -147,6 +152,8 @@ export function ChatArea(): React.JSX.Element {
   const [shareOpen, setShareOpen] = React.useState(false)
   /** M57 P3：会话资源弹窗（连接 / MCP 绑定——成员自助面；管理台仍为 admin-only） */
   const [resourcesOpen, setResourcesOpen] = React.useState(false)
+  /** M79-F：群 / 私聊成员弹窗（名单 + 邀请好友 + 群主移出） */
+  const [membersOpen, setMembersOpen] = React.useState(false)
 
   const containerRef = React.useRef<HTMLDivElement>(null)
   const atBottomRef = React.useRef(true)
@@ -163,6 +170,35 @@ export function ChatArea(): React.JSX.Element {
   // M57 P2：当前会话权限角色（兼容模式缺省 = owner；viewer = 只读共享）
   const myRole = session?.role ?? 'owner'
   const isViewer = myRole === 'viewer'
+  // M79-AE：会话治理（触发策略等）仅属主可操作（兼容模式 / 无角色投影 → owner）
+  const isOwner = !myRole || myRole === 'owner'
+  // M79-E：触发策略与持球（等待徽章 / 仅点名唤起开关）
+  const humanProfiles = useSessionStore((s) => s.humanProfiles)
+  // M79-J（§14.4）：chat 形态头部（direct = 对端名 + 在线点 + 头衔副行；group = 群名 + 「N 人」）
+  const presenceMap = useWsStore((s) => s.presenceMap)
+  const myUserId = useAuthStore((s) => s.user?.id)
+  const isChatKind = session?.kind === 'direct' || session?.kind === 'group'
+  const peerEntry = session?.kind === 'direct' ? Object.entries(humanProfiles).find(([id]) => id !== myUserId) : undefined
+  const chatMemberCount = session ? session.participantIds.length + Object.keys(humanProfiles).length : 0
+  // M79-AA：纯人聊天判定（与 M79-P/S 同口径：人物会话且编制无 agent）——AI 语义面（资源入口等）随此隐藏
+  const humanOnlyChat = isChatKind && memberViews(agents, session).length === 0
+  const routeMode = session?.routeMode ?? 'auto'
+  const waitingIds = session?.waitingOn ?? []
+  const waitingLabel = React.useMemo(() => {
+    const names = waitingIds.map((id) => humanProfiles[id]?.name ?? '成员')
+    return names.length > 2 ? `${names[0]} 等 ${names.length} 人` : names.join('、')
+  }, [waitingIds, humanProfiles])
+  const toggleRouteMode = async (): Promise<void> => {
+    if (!session) return
+    const next = (session.routeMode ?? 'auto') === 'mention' ? 'auto' : 'mention'
+    try {
+      const res = await apiPatch<{ session: typeof session }>(`/api/sessions/${session.id}`, { routeMode: next })
+      useSessionStore.getState().applySession(res.session)
+      toast(next === 'mention' ? '已切换为仅点名唤起（AI 不响应未点名消息）' : '已恢复 AI 自动应答')
+    } catch (err) {
+      toast.error((err as Error).message)
+    }
+  }
   const messageCount = order.length
   const participants = React.useMemo(
     () =>
@@ -316,7 +352,15 @@ export function ChatArea(): React.JSX.Element {
       {/* 会话标题栏 */}
       <div className="flex h-11 shrink-0 items-center gap-2 border-b px-4">
         <span className="truncate text-[13px] font-semibold">{session ? session.title : '未选择会话'}</span>
-        {session && (
+        {session && isChatKind && (
+          <span className="flex shrink-0 items-center gap-1.5 text-[11.5px] text-muted-foreground">
+            {session.kind === 'direct' && <OnlineDot online={peerEntry ? presenceMap[peerEntry[0]] : undefined} />}
+            <span className="truncate">
+              {session.kind === 'group' ? `${chatMemberCount} 人` : (peerEntry?.[1]?.headline ?? '私聊')}
+            </span>
+          </span>
+        )}
+        {session && !isChatKind && (
           <span className="text-[11.5px] text-muted-foreground">
             {participants.length} 位成员 · {messageCount} 条消息
           </span>
@@ -332,8 +376,18 @@ export function ChatArea(): React.JSX.Element {
             {listMode ? '工作区' : '纯列表'}
           </button>
         ) : null}
-        {/* M57 P2：共享入口（所有人可见：属主管理成员，成员查看 / 退出） */}
-        {session && (
+        {/* M57 P2：共享入口（团队会话：属主管理成员，成员查看 / 退出）；M79-F：chat 形态（群/私聊）改「成员」入口 */}
+        {session && (session.kind === 'direct' || session.kind === 'group') ? (
+          <button
+            type="button"
+            title="会话成员：名单查看（群主可移出成员 / 邀请好友）"
+            className="flex shrink-0 items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] text-muted-foreground transition-colors hover:border-primary/30 hover:text-primary"
+            onClick={() => setMembersOpen(true)}
+          >
+            <Users className="size-3.5" />
+            成员
+          </button>
+        ) : session ? (
           <button
             type="button"
             title="会话共享：邀请成员 / 角色管理 / 退出"
@@ -348,9 +402,10 @@ export function ChatArea(): React.JSX.Element {
             <Users className="size-3.5" />
             {myRole === 'owner' ? '共享' : myRole === 'editor' ? '已共享 · 可协作' : '已共享 · 只读'}
           </button>
-        )}
-        {/* M57 P3：资源入口（连接 / MCP 绑定——成员自助；viewer 只读查看） */}
-        {session && (
+        ) : null}
+        {/* M57 P3：资源入口（连接 / MCP 绑定——成员自助；viewer 只读查看）；M79-F：私聊隐藏（无 agent 资源语义）；
+            M79-AA：纯人群聊（无 agent 编制）同口径隐藏——资源绑定服务于 Agent 工具，与 M79-P/S 纯人聊天口径一致 */}
+        {session && session.kind !== 'direct' && !humanOnlyChat && (
           <button
             type="button"
             title="会话资源：连接 / MCP 绑定（团队可用资源与我的个人资源）"
@@ -359,6 +414,37 @@ export function ChatArea(): React.JSX.Element {
           >
             <Plug className="size-3.5" />
             资源
+          </button>
+        )}
+        {/* M79-E：持球徽章（被点名的成员待回复；任何人回复即清除） */}
+        {session && waitingIds.length > 0 && (
+          <span
+            className="flex shrink-0 items-center gap-1 rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[11px] text-amber-700"
+            title="成员已被点名，等待其回复；任何人回复即清除"
+          >
+            <Hourglass className="size-3" />
+            等待 {waitingLabel} 回复
+          </span>
+        )}
+        {/* M79-E/AE：触发策略开关（team 会话；仅属主可切换——治理口径统一） */}
+        {session && session.kind !== 'direct' && session.kind !== 'group' && isOwner && (
+          <button
+            type="button"
+            title={
+              routeMode === 'mention'
+                ? '仅点名唤起：AI 不响应未点名消息——点击恢复自动应答'
+                : 'AI 自动应答：未点名消息交给平台组队——点击切换为仅点名唤起'
+            }
+            className={cn(
+              'flex shrink-0 items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] transition-colors',
+              routeMode === 'mention'
+                ? 'border-amber-500/40 bg-amber-500/10 text-amber-700'
+                : 'text-muted-foreground hover:border-primary/30 hover:text-primary',
+            )}
+            onClick={() => void toggleRouteMode()}
+          >
+            <Bot className="size-3.5" />
+            {routeMode === 'mention' ? '仅点名唤起' : 'AI 自动应答'}
           </button>
         )}
         {/* M52-G：标题栏头像组已移除（纯装饰且与输入条成员条 / 场景席位重复）——成员展示收口到
@@ -585,6 +671,8 @@ export function ChatArea(): React.JSX.Element {
       {waveNodes.length >= 2 && <WaveScrubber nodes={waveNodes} activeIndex={activeWaveIdx} onJump={focusMessage} />}
       <Composer onReady={(fn) => (insertRef.current = fn)} locked={isViewer} />
       <ShareDialog sessionId={session?.id} open={shareOpen} onOpenChange={setShareOpen} />
+      {/* M79-F：群 / 私聊成员弹窗（名单 + 邀请好友 + 群主移出） */}
+      <ChatMembersDialog session={session} open={membersOpen} onOpenChange={setMembersOpen} />
       {/* M57 P3：会话资源（连接 / MCP）；viewer 只读（服务端写闸门 403 的前置提示） */}
       <SessionResourcesDialog
         sessionId={session?.id}

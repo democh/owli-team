@@ -5,7 +5,7 @@
  * 2) 预置渲染：agent 写入节点（by）显示作者徽标；pending 占位节点呼吸 + 进度文案；指向占位的 flow 边能量流动。
  *
  * 说明：媒体任务走 REST 创建（comfyui 指向不可达端口 → 任务快速失败，但「创建落占位 + 广播」链路完整）；
- * 自建媒体连接用后即删（幂等可重跑）；数据目录与 main 链路共用 e2e-main（无媒体连接时自清理）。
+ * 自建媒体连接用后即删（幂等可重跑）；数据目录与 main 链路共用（由 PW_DATA_DIR 决定，缺省 e2e-main；无媒体连接时自清理）。
  */
 import { expect, test, type Page } from '@playwright/test'
 import net from 'node:net'

@@ -3,7 +3,7 @@
  *
  * - 网格：缩略图卡片（图片直显 / 视频取静帧 / 音频音符占位）+ 名称 + 大小 + hover 操作（放入画布 / 下载 / 删除）；
  * - 头部：条目数 + 容量条（用量 / 配额；>80% 琥珀、>95% 玫瑰）+「上传素材」（多选 / 拖拽页面亦可）；
- * - 工具行：搜索（服务端过滤，300ms 防抖）+ 类型筛选（全部 / 图片 / 视频 / 音频）；
+ * - 工具行：搜索（服务端过滤，300ms 防抖）+ 类型筛选（图片 / 视频 / 音频；默认选中第一个「图片」，点选过滤 / 再点取消回全部）；
  * - 预览：点击卡片 → 灯箱（图片 / 视频 / 音频播放；Esc / 点击遮罩关闭）；
  * - 空态：引导上传（跨会话随取随用）；loading：骨架网格。
  */
@@ -21,8 +21,7 @@ function formatBytes(bytes: number): string {
   return `${bytes} B`
 }
 
-const KIND_FILTERS: Array<{ key: 'all' | LibraryItemKind; label: string }> = [
-  { key: 'all', label: '全部' },
+const KIND_FILTERS: Array<{ key: LibraryItemKind; label: string }> = [
   { key: 'image', label: '图片' },
   { key: 'video', label: '视频' },
   { key: 'audio', label: '音频' },
@@ -34,21 +33,23 @@ export function MaterialsConsole(): React.JSX.Element {
   const loading = useLibraryStore((s) => s.loading)
   const uploading = useLibraryStore((s) => s.uploading)
   const [query, setQuery] = React.useState('')
-  const [kind, setKind] = React.useState<'all' | LibraryItemKind>('all')
+  /** 类型筛选：默认选中第一个「图片」（点选过滤 / 再点取消回全部） */
+  const [kind, setKind] = React.useState<'all' | LibraryItemKind>('image')
   const [preview, setPreview] = React.useState<LibraryItem | null>(null)
   const [dragActive, setDragActive] = React.useState(false)
   const fileRef = React.useRef<HTMLInputElement>(null)
 
-  // 初次加载 + 查询 / 筛选变化（300ms 防抖）
+  // 初次加载 + 查询 / 筛选变化（300ms 防抖；默认「图片」首筛随首载一并携带，避免界面筛选项与列表不一致）
   const firstLoad = React.useRef(true)
   React.useEffect(() => {
+    const filter = { query, kind: kind === 'all' ? undefined : kind }
     if (firstLoad.current) {
       firstLoad.current = false
-      void useLibraryStore.getState().load()
+      void useLibraryStore.getState().load(filter)
       return
     }
     const t = window.setTimeout(() => {
-      void useLibraryStore.getState().load({ query, kind: kind === 'all' ? undefined : kind })
+      void useLibraryStore.getState().load(filter)
     }, 300)
     return () => window.clearTimeout(t)
   }, [query, kind])
@@ -71,6 +72,8 @@ export function MaterialsConsole(): React.JSX.Element {
   const ratio = usage?.limitMb ? Math.min(usageMb / usage.limitMb, 1) : 0
   const over80 = ratio >= 0.8 && ratio < 0.95
   const over95 = ratio >= 0.95
+  /** 库内确有素材（总计数口径）：区分「还没有素材」与「当前筛选 / 搜索无命中」两种空态 */
+  const libraryEmpty = (usage?.count ?? 0) === 0
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -127,7 +130,7 @@ export function MaterialsConsole(): React.JSX.Element {
               'rounded-full border px-2 py-0.5 text-[11px] transition-colors',
               kind === f.key ? 'border-primary/60 bg-primary/10 text-foreground' : 'text-muted-foreground hover:bg-accent hover:text-foreground',
             )}
-            onClick={() => setKind(f.key)}
+            onClick={() => setKind(kind === f.key ? 'all' : f.key)}
           >
             {f.label}
           </button>
@@ -166,9 +169,9 @@ export function MaterialsConsole(): React.JSX.Element {
           <div className="flex h-full flex-col items-center justify-center gap-2 text-center">
             <Images className="size-6 text-muted-foreground/40" aria-hidden />
             <p className="text-[12px] text-muted-foreground">
-              {query || kind !== 'all' ? '没有匹配的素材' : '还没有素材：上传的图片 / 视频 / 音频会保存在这里，跨会话随取随用'}
+              {query || !libraryEmpty ? '没有匹配的素材' : '还没有素材：上传的图片 / 视频 / 音频会保存在这里，跨会话随取随用'}
             </p>
-            {!query && kind === 'all' && (
+            {!query && libraryEmpty && (
               <Button size="xs" variant="outline" onClick={() => fileRef.current?.click()}>
                 <Upload className="mr-1 size-3" />
                 上传素材

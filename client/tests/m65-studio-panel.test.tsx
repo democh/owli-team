@@ -106,6 +106,22 @@ describe('M65-B：StudioPanel 组件', () => {
     expect(opts).toEqual(['design/plan-a.scene.json', 'design/plan-b.scene.json'])
   })
 
+  it('M79-AD：打开通道（pendingStudioOpen）→ 挂载后消费——方案加入列表并选中', async () => {
+    h.files = [{ path: 'design/plan-a.scene.json' }]
+    h.containers = []
+    h.ds = { ...h.ds, scene: emptyScene() }
+    render(<StudioPanel />)
+    await waitFor(() => expect(document.querySelector('[data-studio-pick]')).toBeTruthy())
+
+    act(() => useUiStore.getState().setPendingStudioOpen('design/plan-b.scene.json'))
+    await waitFor(() => {
+      const pick = document.querySelector('[data-studio-pick]') as HTMLSelectElement
+      expect([...pick.options].map((o) => o.value)).toContain('design/plan-b.scene.json')
+      expect(pick.value).toBe('design/plan-b.scene.json') // 打开请求即选中
+    })
+    expect(useUiStore.getState().pendingStudioOpen).toBeNull() // 消费后清空
+  })
+
   it('工具切换与家具置入：点击「家具」→ 规格按钮 → update 调用', async () => {
     h.ds = { ...h.ds, scene: emptyScene() }
     render(<StudioPanel />)

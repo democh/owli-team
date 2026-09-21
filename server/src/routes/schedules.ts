@@ -51,7 +51,11 @@ export function createSchedulesRouter(deps: ApiDeps): Router {
     return true
   }
 
-  /** M57：任务守卫（任务 → 所属会话 → 归属）；跨用户一律 404 */
+  /**
+   * M57：任务守卫（任务 → 所属会话 → 归属）；跨用户一律 404。
+   * M79-AF：本路由全部使用方均为写操作（改 / 删 / 立即触发 / 暂停 / 恢复）——
+   * 可读但不可写（viewer）→ 403（与 /sessions 写闸门口径一致）。
+   */
   const guardTask = (req: Request, res: Response): boolean => {
     const task = deps.schedules!.get(req.params.id)
     if (!task) {
@@ -61,6 +65,10 @@ export function createSchedulesRouter(deps: ApiDeps): Router {
     const user = (req as Request & { user?: AuthUser }).user
     if (!deps.access.canAccessSession(user, task.sessionId)) {
       res.status(404).json({ error: '定时任务不存在' })
+      return false
+    }
+    if (!deps.access.canWriteSession(user, task.sessionId)) {
+      res.status(403).json({ error: '当前为只读共享（viewer）：无操作权限' })
       return false
     }
     return true

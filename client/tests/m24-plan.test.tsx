@@ -384,6 +384,22 @@ describe('PlanReviewCard（M24 聊天计划卡）', () => {
     expect(usePlanStore.getState().plans[0].steps[0].ownerAgentId).toBe('pm')
   })
 
+  it('M79-AH：只读共享（viewer）→ 批准 / 驳回 / 保存修改禁用 + 只读提示', async () => {
+    setupChat()
+    // 注入 viewer 角色（多用户只读共享）
+    useSessionStore.setState((s) => ({ sessions: s.sessions.map((x) => ({ ...x, role: 'viewer' as const })) }))
+    const user = userEvent.setup()
+    render(<PlanReviewCard />)
+    expect(screen.getByText(/只读共享（viewer）：无计划操作权限/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '批准并执行' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '驳回' })).toBeDisabled()
+    // 编辑草稿（标题）→ dirty →「保存修改」出现且禁用
+    const titleInput = screen.getByDisplayValue('实现登录模块')
+    await user.clear(titleInput)
+    await user.type(titleInput, '改名草稿')
+    expect(screen.getByRole('button', { name: '保存修改' })).toBeDisabled()
+  })
+
   it('批准（无改动）：POST resolve 且不触发 PUT', async () => {
     setupChat()
     mockApi({

@@ -5,10 +5,10 @@
  * 2) 缩放指示器：100% 常驻 / 步进放大缩小 / 菜单「缩放到 100%」/ ⇧0 复位 / ⇧1 适应视野 / 缩放到选区启用态；
  * 3) 导航手感：滚轮=平移（scale 不变 translate 变）/ H 手型拖拽平移且不框选 / V 回到选择工具。
  *
- * 隔离说明：main 实例数据目录 e2e-main 无媒体连接；本 spec 自建连接用后即删（幂等可重跑）。
+ * 隔离说明：main 实例数据目录（PW_DATA_DIR，缺省 e2e-main）无媒体连接；本 spec 自建连接用后即删（幂等可重跑）。
  */
 import { expect, test, type Page } from '@playwright/test'
-import { createSession, openApp, switchMainTab } from './helpers'
+import { createSession, openApp, robustClick, switchMainTab } from './helpers'
 
 /** 删除全部媒体连接（前置清场 + 自建后清理，保证幂等） */
 async function removeMediaConnections(page: Page): Promise<void> {
@@ -200,7 +200,8 @@ test('缩放指示器与快捷键：百分比常驻 / 步进 / 菜单 / ⇧0·�
   await expect(img).toHaveClass(/selected/)
   await pill.click()
   await expect(page.getByText('缩放到选区').locator('xpath=ancestor::button')).toBeEnabled()
-  await page.getByText('缩放到选区').click()
+  // M79-AG：抗布局抖动点击（长套件下菜单项可能持续 re-render → 稳定性检查饿死；DOM click 兜底）
+  await robustClick(page.getByText('缩放到选区'))
   await expect.poll(async () => parseInt((await pill.textContent()) ?? '0', 10), { timeout: 5_000 }).toBeLessThanOrEqual(100)
 })
 

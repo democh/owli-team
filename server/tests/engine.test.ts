@@ -136,3 +136,57 @@ describe('engine：Mock 全链（集成）', () => {
     expect(() => env.engine.reorderQueue(runId, ['pm'])).toThrow(/运行不存在或已结束/)
   })
 })
+
+describe('M79-Y：指挥台重排广播（触发者外的其他端 / 成员对齐）', () => {
+  it('reorderQueue → notify:queue-updated 到会话主题（带 runId）', async () => {
+    const env = makeEnv()
+    const session = env.sessions.create(['architect', 'pm'], '广播-队列')
+    const msg = appendUserMessage(env, session.id, '@架构师 做方案')
+    const { runId } = env.engine.launch(session.id, msg.id)
+    env.engine.reorderQueue(runId, ['pm', 'architect'])
+    const frame = env.published.find(
+      (x) => x.type === 'notify:queue-updated' && x.sessionId === session.id,
+    )
+    expect(frame, '未找到队列重排广播帧').toBeTruthy()
+    expect((frame!.payload as { queue: string[] }).queue).toEqual(['pm', 'architect'])
+    await waitRunFinished(env.engine, runId, 15_000)
+  })
+})
+
+describe('M79-Z：旁观端流式广播（节流聚合）', () => {
+  it('run 期间广播 notify:message-delta（合并帧），且先于该消息的 turn-end 完整帧', async () => {
+    const env = makeEnv()
+    const session = env.sessions.create(['pm'], '流式-广播')
+    const msg = appendUserMessage(env, session.id, '@费利 给方案')
+    const { runId } = env.engine.launch(session.id, msg.id)
+    await waitRunFinished(env.engine, runId, 15_000)
+
+    const deltaFrames = env.published.filter(
+      (x) => x.type === 'notify:message-delta' && x.sessionId === session.id,
+    )
+    expect(deltaFrames.length).toBeGreaterThan(0)
+    const payload = deltaFrames[0]!.payload as { messageId: string; agentId: string; memberKey: string; delta: string }
+    expect(payload.messageId).toBeTruthy()
+    expect(payload.agentId).toBeTruthy()
+    expect(payload.memberKey).toBeTruthy()
+    expect(payload.delta.length).toBeGreaterThan(0)
+
+    // 顺序保证：同一 messageId 的最后一个 delta 帧必须先于其 turn-end 完整帧（客户端按序覆盖语义）
+    let lastDeltaIdx = -1
+    let turnEndIdx = -1
+    env.published.forEach((x, i) => {
+      if (x.type === 'notify:message-delta' && (x.payload as { messageId?: string }).messageId === payload.messageId) {
+        lastDeltaIdx = i
+      }
+      if (
+        x.type === 'notify:turn-end' &&
+        (x.payload as { message?: { id?: string } }).message?.id === payload.messageId
+      ) {
+        turnEndIdx = i
+      }
+    })
+    expect(turnEndIdx).toBeGreaterThan(-1)
+    expect(lastDeltaIdx).toBeGreaterThan(-1)
+    expect(turnEndIdx).toBeGreaterThan(lastDeltaIdx)
+  })
+})

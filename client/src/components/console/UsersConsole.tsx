@@ -14,6 +14,7 @@ import { Button } from '../ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '../ui/dialog'
 import { Input } from '../ui/input'
 import { FieldRow, TextInput } from './fields'
+import { HumanAvatar } from '../chat/HumanAvatar'
 import { QuotaDialog } from './QuotaDialog'
 
 interface UsersResponse {
@@ -211,7 +212,14 @@ export function UsersConsole(): React.JSX.Element {
                     <tr key={user.id} className="border-t">
                       <td className="px-3 py-2">
                         <div className="flex items-center gap-1.5">
+                          {/* M79-J（§14.9）：列表行头像升级为画像（有则用；缺省 = 首字母色块） */}
+                          <HumanAvatar avatar={user.avatar} name={user.displayName} size={20} />
                           <span className="font-medium">{user.displayName}</span>
+                          {user.headline && (
+                            <span className="rounded-full bg-muted px-1.5 py-px text-[10px] text-muted-foreground">
+                              {user.headline}
+                            </span>
+                          )}
                           {self && <span className="rounded-full border px-1.5 py-px text-[10px] text-muted-foreground">我</span>}
                           {user.mustChangePassword && (
                             <span className="rounded-full border border-amber-500/30 bg-amber-50 px-1.5 py-px text-[10px] text-amber-700">
