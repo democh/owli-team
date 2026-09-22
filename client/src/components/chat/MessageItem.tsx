@@ -431,7 +431,9 @@ function MessageItemInner({ messageId }: { messageId: string }): React.JSX.Eleme
             <span className="typing-caret ml-0.5 inline-block h-3.5 w-[7px] translate-y-[1px] rounded-[1px] bg-primary" />
           )}
 
-          {message.toolCalls && message.toolCalls.length > 0 && <ToolCallsPanel calls={message.toolCalls} />}
+          {message.toolCalls && message.toolCalls.length > 0 && (
+            <ToolCallsPanel calls={message.toolCalls} streaming={streaming} />
+          )}
 
           {message.artifacts && message.artifacts.length > 0 &&
             (isChangeMessage(message) ? (

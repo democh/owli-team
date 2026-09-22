@@ -168,16 +168,27 @@ function GenericToolCard({ call }: { call: ToolCallRecord }): React.JSX.Element 
   )
 }
 
-export function ToolCallsPanel({ calls }: { calls: ToolCallRecord[] }): React.JSX.Element {
+/**
+ * 工具调用面板（面板级折叠）：展开锚点 = 本回合是否仍在进行（streaming），
+ * 而非单个工具的瞬时 running——一个回合内多批工具之间的空档不再「收起 → 再展开」（消除抖动）。
+ * 回合进行中恒展开跟随进度，回合结束自动收起一次为一行摘要；历史消息默认收起。
+ * 用户手动切换过（touched）后尊重其选择，不再自动干预（对齐思考块范式）。
+ */
+export function ToolCallsPanel({
+  calls,
+  streaming,
+}: {
+  calls: ToolCallRecord[]
+  streaming: boolean
+}): React.JSX.Element {
   const anyRunning = calls.some((c) => c.status === 'running')
-  // 执行中自动展开跟随进度，执行完成后自动收起为一行摘要
-  // （对齐思考块范式；用户手动切换过则尊重其选择，不再自动干预）
-  const [open, setOpen] = React.useState(anyRunning)
+  const [open, setOpen] = React.useState(streaming)
   const [touched, setTouched] = React.useState(false)
 
   React.useEffect(() => {
-    if (!touched) setOpen(anyRunning)
-  }, [anyRunning, touched])
+    // streaming 在回合内单调（true 恒 true 至回合结束），据此开合不会抖动
+    if (!touched) setOpen(streaming)
+  }, [streaming, touched])
 
   if (calls.length === 0) return <></>
 
@@ -193,12 +204,12 @@ export function ToolCallsPanel({ calls }: { calls: ToolCallRecord[] }): React.JS
           setOpen((v) => !v)
         }}
       >
-        {open ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />}
+        <ChevronDown className={cn('size-3.5 transition-transform duration-200', open && 'rotate-180')} />
         工具调用 · {calls.length}
         {anyRunning && <Loader2 className="size-3 animate-spin text-primary" />}
       </button>
       {open && (
-        <div className="space-y-1">
+        <div className="animate-fade-in space-y-1">
           {calls.map((call) => (
             <ToolCard key={call.id} call={call} />
           ))}
