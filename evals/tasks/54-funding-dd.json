@@ -1,0 +1,47 @@
+{
+  "id": "funding-dd",
+  "name": "融资资本：融资材料 × 尽调清单 × 估值 × 投资人简报",
+  "participants": [
+    "fundraiser",
+    "dd-analyst",
+    "valuation-modeler",
+    "ir"
+  ],
+  "prompt": "准备一轮融资（财务口径先立住）：@江源 统筹 BP 与材料清单，随后依次接力——尽调分析师出四线尽调清单与红旗分级（关键数字复算）、估值建模师给估值模型口径、IR 准备投资人简报与常见问答；最后由江源收尾汇总融资推进表。",
+  "maxTurns": 7,
+  "assertions": [
+    {
+      "type": "artifact_exists",
+      "path": "docs/融资材料-财务.md"
+    },
+    {
+      "type": "artifact_exists",
+      "path": "docs/尽调清单-财务.md"
+    },
+    {
+      "type": "artifact_exists",
+      "path": "docs/估值模型-财务.md"
+    },
+    {
+      "type": "artifact_exists",
+      "path": "docs/投资人简报-财务.md"
+    },
+    {
+      "type": "handoff_targets",
+      "values": [
+        "dd-analyst"
+      ]
+    },
+    {
+      "type": "turns_lte",
+      "value": 6
+    },
+    {
+      "type": "no_loop"
+    },
+    {
+      "type": "run_end_reason",
+      "value": "completed"
+    }
+  ]
+}
