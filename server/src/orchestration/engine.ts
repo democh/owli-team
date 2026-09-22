@@ -1692,6 +1692,8 @@ export class Engine {
         durationMs: meta.durationMs,
         promptTokens: meta.promptTokens,
         completionTokens: meta.completionTokens,
+        // P2：转交通道观测（tool = 结构化权威通道 / text = @ 解析兜底），供占比统计
+        handoffSource: meta.source,
       },
       waveIndex,
     )
