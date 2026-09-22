@@ -191,6 +191,8 @@ interface DiscoveryState {
 
 /** M79-Z：旁观端流式广播的合并窗口（毫秒；帧量 ~8fps/run，远低于 WS 背压阈值） */
 const STREAM_BROADCAST_MS = 120
+/** M24 加固：计划保障连续补回上限（连续补回且零写进展达此次数 → 停止补回，防「保障」变死循环） */
+const MAX_PLAN_REFILL = 3
 
 interface RunRecord {
   id: string
@@ -250,6 +252,8 @@ interface RunRecord {
   synthesisAdded: boolean
   /** M24：本 Run 内 write_plan 提交计数（规划波协议违规检测） */
   planSubmissions: number
+  /** M24 加固：连续计划补回且无写进展次数（有写动作即清零；达 MAX_PLAN_REFILL 停止补回） */
+  planRefillStreak: number
   /** 审核 H-2：收尾幂等标记（finishRun 只生效一次；正常收尾与异常兜底共用） */
   finished?: boolean
 }
@@ -420,6 +424,7 @@ export class Engine {
       pendingPlanIds: new Set(),
       synthesisAdded: false,
       planSubmissions: 0,
+      planRefillStreak: 0,
     }
     // runLoop 同步消费队列（首个 await 前 shift），返回初始快照避免竞态
     const initialQueue = [...queue]
@@ -501,6 +506,7 @@ export class Engine {
       pendingPlanIds: new Set(),
       synthesisAdded: false,
       planSubmissions: 0,
+      planRefillStreak: 0,
     }
     const initialQueue = [...queue]
     this.runs.set(record.id, record)
@@ -701,6 +707,7 @@ export class Engine {
       pendingPlanIds: new Set(),
       synthesisAdded: false,
       planSubmissions: 0,
+      planRefillStreak: 0,
     }
     // 旧快照标记已恢复（防止重复继续）
     this.deps.runs.update(snapshot.id, { state: 'done', endedAt: nowIso() })
@@ -923,6 +930,7 @@ export class Engine {
       pendingPlanIds: new Set(),
       synthesisAdded: false,
       planSubmissions: 0,
+      planRefillStreak: 0,
     }
     this.runs.set(record.id, record)
     this.sessionRuns.set(sessionId, record.id)
@@ -992,6 +1000,7 @@ export class Engine {
       pendingPlanIds: new Set(),
       synthesisAdded: false,
       planSubmissions: 0,
+      planRefillStreak: 0,
     }
     this.runs.set(record.id, record)
     this.sessionRuns.set(sessionId, record.id)
@@ -1425,6 +1434,8 @@ export class Engine {
       const waveWrites = record.waveWrites
       record.waveWriteCounts.push(waveWrites.count)
       record.waveWrites = newWaveWriteBuffer()
+      // 计划补回防死循环：本波有写进展 → 清零连续补回计数（空转累加在 refillPlanQueue 内）
+      if (waveWrites.count > 0) record.planRefillStreak = 0
       this.reportWriteConflicts(record, waveWrites.byAgent, waveIndex)
       record.waveSignatures.push(waveSignature(wave.members))
       record.waveTexts.push(
@@ -1461,7 +1472,8 @@ export class Engine {
       this.dispatchApprovedPlans(record, waveIndex)
       this.maybeAppendSynthesisWave(record, waveIndex)
       // M24：计划执行保障 —— 队列被交还清空但仍有未完成步骤 → 补回剩余负责人（批准即执行到底）
-      this.refillPlanQueue(record)
+      // 加固：循环 / 停滞抑制的波不补回（抑制裁决优先，否则「保障」会把已打断的循环重新拉起来）
+      if (!merge.loopSuppressed && !merge.stallSuppressed) this.refillPlanQueue(record)
       this.trace(
         record,
         'schedule',
@@ -3230,6 +3242,8 @@ export class Engine {
   /**
    * M24：计划执行保障 —— 队列为空但仍有未完成步骤时，把剩余步骤负责人补回队列。
    * 语义：批准即授权引擎执行完整个计划，成员常规交还不能提前终止（用户可随时 stop）。
+   * 加固：连续补回 MAX_PLAN_REFILL 次仍未产生任何写动作 → 停止补回（保持交还，防死循环）；
+   * 被循环 / 停滞抑制的波由调用方把关不再补回。
    */
   private refillPlanQueue(record: RunRecord): void {
     const { plans } = this.deps
@@ -3245,6 +3259,8 @@ export class Engine {
       }
     }
     if (owners.length === 0) return
+    if (record.planRefillStreak >= MAX_PLAN_REFILL) return
+    record.planRefillStreak++
     record.queue.push(...owners)
     // 继续执行：清除交还标记（避免收尾误发 awaiting-user 通知）
     record.handedToUser = false

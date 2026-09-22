@@ -9,26 +9,68 @@
  *
  * 循环检测基于「波次签名序列」（签名 = 波成员排序拼接，并行波带 +）：
  * - 单人连续 ≥3 波 / 两人交替 ≥4 波（rounds 场景放宽为 ≥6）→ 抑制并交还用户；
+ *   交替按「尾部最长交替段」判定——窗口前沿的异类签名（如开场调度官）不再屏蔽后续交替；
+ * - 多人周期轮转（三 / 四人 A→B→C→A→B→C 连续两轮）且轮转窗口零写动作 → 抑制并交还
+ *   （有写产出的多人迭代协作不误伤；rounds 场景轮流发言即正常形态，不启用）；
  * - 内容级循环（M3/M16）：每波串联文本相邻 3-gram 重复率 > 0.85 连续 4 波 → 强制交还；
  * - 实质进展停滞（M61-D3）：连续两波无任何成功写动作（交付件 / 文件零产出）且文本相似 > 0.9
  *   → 提前抑制（比 4 波内容循环更早、更准：只判「空谈无产出」，有写动作不误伤）。
  */
 
-/** 循环检测：最近 window 个签名中形成「两人交替（≥altThreshold）」或「同一签名反复（≥3）」即判定 */
+/**
+ * 循环检测：尾部序列形成「同一签名连续 ≥3」或「两人交替 ≥ altThreshold」即判定。
+ * 交替段自队尾向前取（最长交替段），不受窗口前沿异类签名污染——
+ * 例如 [lead, a, b, a, b] 立即命中，而非等 lead 滑出窗口后才命中。
+ */
 export function detectLoop(history: string[], window = 6, altThreshold = 4): boolean {
   const recent = history.slice(-window)
   if (recent.length < 3) return false
-  const distinct = new Set(recent)
-  if (distinct.size === 1) return recent.length >= 3
-  if (distinct.size === 2) {
-    let alternating = true
-    for (let i = 1; i < recent.length; i++) {
+  // 同一签名连续 ≥3（尾部连续段）
+  let sameRun = 1
+  for (let i = recent.length - 2; i >= 0; i--) {
+    if (recent[i] === recent[i + 1]) sameRun++
+    else break
+  }
+  if (sameRun >= 3) return true
+  // 两人交替：尾部最长交替段 ≥ 阈值
+  if (recent[recent.length - 1] === recent[recent.length - 2]) return false
+  let alt = 2
+  for (let i = recent.length - 3; i >= 0; i--) {
+    if (recent[i] !== recent[i + 2]) break
+    alt++
+  }
+  return alt >= altThreshold
+}
+
+/**
+ * 多人周期轮转检测：最近恰好两轮完整周期（p=3 需 6 个 / p=4 需 8 个，如 A,B,C,A,B,C）且相邻不重复，
+ * 并要求该窗口内零写动作（waveWriteCounts 与窗口对齐；缺省 / 不足 → 不判定）。
+ * 设计：三人以上轮转本身可能是正常迭代协作（轮流打磨同一交付件）——仅「零产出」佐证才判空转；
+ * 两人交替不适用本函数（由 detectLoop 直接判定）。
+ */
+export function detectRotation(history: string[], waveWriteCounts?: number[], maxCycle = 4): boolean {
+  for (let p = 3; p <= maxCycle; p++) {
+    const need = p * 2
+    if (history.length < need) continue
+    const recent = history.slice(-need)
+    if (new Set(recent).size !== p) continue
+    let cyclic = true
+    for (let i = 1; i < need; i++) {
       if (recent[i] === recent[i - 1]) {
-        alternating = false
+        cyclic = false
         break
       }
     }
-    return alternating && recent.length >= altThreshold
+    if (!cyclic) continue
+    for (let i = p; i < need; i++) {
+      if (recent[i] !== recent[i - p]) {
+        cyclic = false
+        break
+      }
+    }
+    if (!cyclic) continue
+    const writes = waveWriteCounts?.slice(-need)
+    if (writes && writes.length === need && writes.every((c) => c === 0)) return true
   }
   return false
 }
@@ -279,9 +321,16 @@ export function mergeWaveSchedule(input: MergeWaveInput): MergeWaveResult {
   let loopSuppressed = false
   let stallSuppressed = false
   // 循环检测：签名序列 + 拟新增接手将形成 A/B 交替或反复 → 抑制并交还
-  if (acceptedAll.length > 0 && detectLoop([...signatures, ...acceptedAll], 6, rounds ? 6 : 4)) {
-    loopSuppressed = true
-    handedToUser = true
+  if (acceptedAll.length > 0) {
+    const loopHistory = [...signatures, ...acceptedAll]
+    if (detectLoop(loopHistory, 6, rounds ? 6 : 4)) {
+      loopSuppressed = true
+      handedToUser = true
+    } else if (!rounds && detectRotation(loopHistory, input.waveWriteCounts)) {
+      // 多人周期轮转：需「轮转窗口零写动作」佐证（有产出的迭代协作不抑制；rounds 场景轮流发言为正常形态）
+      loopSuppressed = true
+      handedToUser = true
+    }
   }
   // 内容级循环：每波串联文本相邻比较（避免同波正常相似被误判）
   if (!handedToUser && detectContentLoop(waveTexts)) {

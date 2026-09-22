@@ -53,9 +53,24 @@ interface ScriptOptions {
   stepDone?: (meta: ChatRequestMeta) => string
   /** 评审波：产出 submit_review(pass) + 完成步骤 */
   review?: { target: string; doneStep: string }
+  /** 执行波自定义行为（覆盖默认「完成步骤」；refill 加固用例：只交还 / 互相转交） */
+  execute?: (req: ChatRequest) => LlmChunk[]
   /** 其它回合（收口 / 默认执行）的文本 */
   text?: string
 }
+
+const textChunk = (text: string): LlmChunk => ({ type: 'text', text })
+const doneChunk: LlmChunk = { type: 'done' }
+const handoffChunk = (target: string): LlmChunk => ({
+  type: 'tool_calls',
+  calls: [
+    {
+      id: `c_${target}_${Math.random().toString(36).slice(2, 6)}`,
+      name: 'handoff',
+      arguments: JSON.stringify({ target, reason: '测试转交' }),
+    },
+  ],
+})
 
 interface Script {
   /** 全部请求（按调用顺序；断言工具白名单 / meta.mode 用） */
@@ -138,6 +153,10 @@ function installScript(env: Env, opts: ScriptOptions = {}): Script {
 
     // 执行波（派发步骤：引擎动态授权 update_plan_step）
     if (tools.has('update_plan_step')) {
+      if (opts.execute) {
+        for (const chunk of opts.execute(req)) yield chunk
+        return
+      }
       if (!lastTool) {
         const stepId = opts.stepDone ? opts.stepDone(req.meta) : 's1'
         yield {
@@ -285,6 +304,47 @@ describe('M24：引擎计划全流程（挂起 → 批准 → 派发 → 收口�
     env.planReviews.resolve(pending.id, 'approve')
     await waitRunFinished(env.engine, runId)
     expect(env.plans.get(pending.id)?.status).toBe('done')
+  })
+
+  it('计划保障补回有上限：成员反复交还且零写进展 → 最多补回 3 次后交还收束', async () => {
+    const env = makeEnv()
+    const session = env.sessions.create(['pm', 'backend'], 'M24 补回上限')
+    // 执行波永远「交还用户」且不推进步骤：队列每次被清空 → 触发计划保障补回
+    installScript(env, { execute: () => [handoffChunk('user'), doneChunk] })
+    const message = appendUserMessage(env, session.id, '先出计划')
+    const { runId } = env.engine.launch(session.id, message.id, { mode: 'plan' })
+    const [pending] = await waitPending(env, session.id)
+    env.planReviews.resolve(pending.id, 'approve')
+    await waitRunFinished(env.engine, runId)
+
+    // 步骤永不完成 → 保障补回；连续补回 3 次（零写进展）后被拒 → 第 4 波即收束，不再无限补回
+    const schedules = env.events.listByRun(runId).filter((e) => e.type === 'schedule')
+    const handedWaves = schedules.filter((e) => e.payload.handedToUser)
+    expect(agentMessages(env, session.id, 'backend')).toHaveLength(4) // 原始 1 波 + 补回 3 波
+    expect(handedWaves).toHaveLength(4)
+    expect(env.plans.get(pending.id)!.steps[0].status).not.toBe('done')
+  })
+
+  it('循环抑制的波不再被计划保障补回（抑制裁决优先）', async () => {
+    const env = makeEnv()
+    const session = env.sessions.create(['pm', 'backend'], 'M24 抑制优先')
+    // 执行波互相转交（不推进步骤）：pm ↔ backend 尾部交替 4 → 循环抑制
+    installScript(env, {
+      execute: (req) => [handoffChunk(req.meta.agentId === 'backend' ? 'pm' : 'backend'), doneChunk],
+    })
+    const message = appendUserMessage(env, session.id, '先出计划')
+    const { runId } = env.engine.launch(session.id, message.id, { mode: 'plan' })
+    const [pending] = await waitPending(env, session.id)
+    env.planReviews.resolve(pending.id, 'approve')
+    await waitRunFinished(env.engine, runId)
+
+    // 波序：backend → pm（第 2 执行波拟接手 backend 使签名 [pm, backend, pm, backend] 交替达 4）→ 抑制收束
+    // 若计划保障未被抑制拦截，会继续补回 backend 反复空转（回归即失败）
+    expect(agentMessages(env, session.id, 'backend')).toHaveLength(1)
+    const schedules = env.events.listByRun(runId).filter((e) => e.type === 'schedule')
+    expect(schedules[schedules.length - 1].payload.loopSuppressed).toBe(true)
+    expect(schedules[schedules.length - 1].payload.handedToUser).toBe(true)
+    expect(env.plans.get(pending.id)!.steps[0].status).not.toBe('done')
   })
 })
 

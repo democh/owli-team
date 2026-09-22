@@ -3,6 +3,7 @@ import {
   decideHandoff,
   detectContentLoop,
   detectLoop,
+  detectRotation,
   mergeWaveSchedule,
   planWave,
   trigramDice,
@@ -158,6 +159,36 @@ describe('scheduler：波次合并（mergeWaveSchedule）', () => {
     expect(result.handedToUser).toBe(true)
   })
 
+  it('三人周期轮转 + 零写动作 → 抑制并交还（多人空转）；有写产出 / 缺省计数不抑制', () => {
+    // 签名已含本波（designer）+ 拟接手 pm：尾部 6 个构成 [pm, architect, designer] 两轮完整周期
+    const rotation = (waveWriteCounts?: number[]) =>
+      merge({
+        decisions: [decision('designer', ['pm'])],
+        signatures: ['pm', 'architect', 'designer', 'pm', 'architect', 'designer'],
+        waveWriteCounts,
+      })
+    // 零写 → 抑制并交还
+    const stalled = rotation([0, 0, 0, 0, 0, 0])
+    expect(stalled.loopSuppressed).toBe(true)
+    expect(stalled.handedToUser).toBe(true)
+    expect(stalled.queue).toEqual([])
+    // 有写产出 → 视为迭代协作，不抑制
+    expect(rotation([0, 1, 0, 0, 0, 0]).loopSuppressed).toBe(false)
+    // 缺省写计数（无法佐证零产出）→ 不抑制
+    expect(rotation().loopSuppressed).toBe(false)
+  })
+
+  it('rounds 场景：三人轮转不抑制（轮流发言即正常形态）', () => {
+    const result = merge({
+      decisions: [decision('designer', ['pm'])],
+      signatures: ['pm', 'architect', 'designer', 'pm', 'architect', 'designer'],
+      waveWriteCounts: [0, 0, 0, 0, 0, 0],
+      rounds: true,
+    })
+    expect(result.loopSuppressed).toBe(false)
+    expect(result.handedToUser).toBe(false)
+  })
+
   it('handoff 多目标 → 下一波强制并行（fan-out）', () => {
     const result = merge({ decisions: [decision('pm', ['architect', 'qa'])] })
     expect(result.forceNextParallel).toBe(true)
@@ -202,6 +233,23 @@ describe('scheduler：循环检测与签名', () => {
     expect(detectLoop(['a', 'b', 'a', 'b'])).toBe(true) // 长度 4 交替：默认阈值命中
     expect(detectLoop(['a', 'b', 'a', 'b'], 6, 6)).toBe(false) // rounds：4 轮交替不抑制
     expect(detectLoop(['a', 'b', 'a', 'b', 'a', 'b'], 6, 6)).toBe(true)
+  })
+
+  it('detectLoop：尾部交替段不受窗口前沿异类签名污染（不再等其滑出窗口）', () => {
+    // 开场调度官 lead 插在交替之前：尾部 [a, b, a, b] 即命中（旧逻辑需等 lead 滑出窗口）
+    expect(detectLoop(['lead', 'a', 'b', 'a', 'b'])).toBe(true)
+    expect(detectLoop(['lead', 'a', 'b', 'a', 'b'], 6, 6)).toBe(false) // rounds 阈值 6：尾部 4 不够
+    // 三人轮转不误入两人交替（尾部交替段仅 2）
+    expect(detectLoop(['a', 'b', 'c', 'a', 'b', 'c'])).toBe(false)
+  })
+
+  it('detectRotation：三 / 四人两轮周期 + 零写命中；缺写计数 / 有写产出 / 非周期不命中', () => {
+    expect(detectRotation(['a', 'b', 'c', 'a', 'b', 'c'], [0, 0, 0, 0, 0, 0])).toBe(true)
+    expect(detectRotation(['a', 'b', 'c', 'd', 'a', 'b', 'c', 'd'], [0, 0, 0, 0, 0, 0, 0, 0])).toBe(true)
+    expect(detectRotation(['a', 'b', 'c', 'a', 'b', 'c'])).toBe(false) // 缺省写计数：不判定
+    expect(detectRotation(['a', 'b', 'c', 'a', 'b', 'c'], [0, 1, 0, 0, 0, 0])).toBe(false) // 有写产出
+    expect(detectRotation(['a', 'b', 'a', 'b', 'a', 'b'], [0, 0, 0, 0, 0, 0])).toBe(false) // 两人交替
+    expect(detectRotation(['a', 'a', 'b', 'c', 'a', 'b'], [0, 0, 0, 0, 0, 0])).toBe(false) // 相邻重复
   })
 
   it('trigramDice / detectContentLoop：完全相同 = 1；不足 4 波不判定', () => {
