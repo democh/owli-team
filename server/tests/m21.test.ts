@@ -19,7 +19,7 @@ function realLibrary(): PromptLibrary {
 }
 
 describe('M21：OPC 场景与角色资产（真实 agents/ 目录）', () => {
-  it('41 个场景按 order 排序加载，各场景特性正确', () => {
+  it('42 个场景按 order 排序加载，各场景特性正确', () => {
     const lib = realLibrary()
     const groups = lib.groups()
     expect(groups.map((g) => g.id)).toEqual([
@@ -64,6 +64,7 @@ describe('M21：OPC 场景与角色资产（真实 agents/ 目录）', () => {
       'moot-court',
       'business-sim',
       'philosophy',
+      'wellness-mind',
     ])
     const byId = new Map(groups.map((g) => [g.id, g]))
     expect(byId.get('strategy')?.rounds).toBe(true)
@@ -203,12 +204,12 @@ describe('M21：OPC 场景与角色资产（真实 agents/ 目录）', () => {
       expect(byId.get(id)?.stage).toEqual({ layout: 'dock', panel: 'coach' })
     }
     // 全量总账：30 组（29 业务场景 + blank）中 25 组已声明，仅余 stream 四场景未声明（M65-A：+ interior）
-    expect(lib.groups().filter((g) => g.stage)).toHaveLength(36)
+    expect(lib.groups().filter((g) => g.stage)).toHaveLength(37)
   })
 
-  it('165 个角色全量加载：新角色 tools / temperature / handoff 与资产一致', () => {
+  it('169 个角色全量加载：新角色 tools / temperature / handoff 与资产一致', () => {
     const lib = realLibrary()
-    expect(lib.list()).toHaveLength(165)
+    expect(lib.list()).toHaveLength(169)
     // 编制链序：blank 场景（order 最小）居首（general），其次 strategy —— chief → strategist → pricing，场景内非链条目（insight）排后
     expect(
       lib
@@ -543,7 +544,7 @@ function writePresets(s: { agentsDir: string }, yaml: string): void {
 }
 
 describe('M21：快速组队预设（_presets.yaml）', () => {
-  it('真实预设：33 条按 order 排序，成员引用全部存在且 prompt 可预填', () => {
+  it('真实预设：43 条按 order 排序，成员引用全部存在且 prompt 可预填', () => {
     const lib = realLibrary()
     const presets = lib.presets()
     expect(presets.map((p) => p.id)).toEqual([
@@ -580,6 +581,17 @@ describe('M21：快速组队预设（_presets.yaml）', () => {
       'ecommerce-growth',
       'content-monetize',
       'move-in-check',
+      'tarot-quickread',
+      'trpg-oneshot',
+      'paper-sprint',
+      'philosophy-teatime',
+      'relationship-checkup',
+      'home-week',
+      'wealth-checkup',
+      'rights-check',
+      'mock-trial',
+      'sales-sprint',
+      'mind-reset',
     ])
     const makeover = presets.find((p) => p.id === 'home-makeover')
     expect(makeover?.members).toEqual(['interior-designer', 'space-planner', 'visualizer'])
