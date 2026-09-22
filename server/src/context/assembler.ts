@@ -21,6 +21,7 @@ import type { AgentDefinition, ChatMessage, MessageAttachment, Plan, SoulMeta, T
 import type { LlmContentPart, LlmMessageInput } from '../llm/provider.js'
 import { isVisionImage } from '../util/mime.js'
 import { buildSpecInstructionLine, type DeliverableTier } from './deliverable-spec.js'
+import { filterProtocolByScopes } from './protocol-scope.js'
 import { countTokensCalibrated, VISION_TOKENS_PER_IMAGE } from './tokenizer.js'
 
 // ---------- L0-L3：system 提示 ----------
@@ -29,6 +30,11 @@ import { countTokensCalibrated, VISION_TOKENS_PER_IMAGE } from './tokenizer.js'
 export interface SoulSegment {
   meta: SoulMeta
   quirks: string[]
+  body: string
+}
+
+/** 声纹段输入（P1 去 AI 化；store/prompts.ts 的 VoiceDoc 投影）。soul 管人格，voice 管文风 */
+export interface VoiceSegment {
   body: string
 }
 
@@ -61,6 +67,8 @@ export interface SystemPromptInput {
   agentBody: string
   /** 灵魂段（可选：会话覆盖 > 角色默认；无灵魂 = 不注入） */
   soul?: SoulSegment
+  /** 声纹段（P1，可选：voice.md 存在时注入；无 = 行为零差异） */
+  voice?: VoiceSegment
   /** 团队成员（含自己；M77：成员实例投影，兼容 AgentDefinition[]） */
   roster: Array<RosterMember | AgentDefinition>
   /** M77：本回合说话成员键（分身实例标识；缺省 = 经典实例） */
@@ -183,7 +191,7 @@ function buildSoulSection(soul: SoulSegment): string {
 }
 
 export function buildSystemPrompt(input: SystemPromptInput): SystemPromptOutput {
-  const { protocol, groupProtocol, agent, agentBody, preloadedSkills, skillsIndex, workspaceListing, soul } = input
+  const { groupProtocol, agent, agentBody, preloadedSkills, skillsIndex, workspaceListing, soul } = input
   const roster = toRosterMembers(input.roster)
   const rosterLine = roster.map((m) => `${m.label}（${m.key}｜${m.role}）`).join('、')
   // 交接对象：角色 id → 实例（优先经典实例，否则该角色首个实例）
@@ -204,11 +212,19 @@ export function buildSystemPrompt(input: SystemPromptInput): SystemPromptOutput 
   const identityNote = self && self.label !== agent.name ? `\n\n你在本会话的身份标识：${self.label}（${self.key}）——与其他同名分身区分使用。` : ''
 
   // L0：全局协议 +（场景协议）+ 人设 +（灵魂段）——顺序与内容在会话内稳定，命中 prompt cache
+  // P0：全局协议按角色 tools 白名单做 scope 裁剪（无 git_* 工具的角色不注入仓库纪律等）；
+  // 裁剪结果是角色级稳定文本（tools 会话内不变），不破坏前缀缓存
+  const protocol = filterProtocolByScopes(input.protocol, agent.tools)
   const l0 = [
     protocol.trim(),
     (groupProtocol ?? '').trim(),
     `# 你当前的角色\n\n你是 **${agent.name}**（${agent.role}）。${identityNote}\n\n${agentBody.trim()}`,
     soul ? buildSoulSection(soul) : '',
+    // P1：声纹段（文风约定，含正反例；与灵魂并列，职责与协议优先级仍更高）
+    // 探针实测补注（2026-09-22）：必须显式禁止复用示例内容——否则弱模型会把示例句逐字搬进回答
+    input.voice
+      ? `# 你的声纹（文风约定）\n\n（以下示例仅作语气锚点：保持其味道与节奏，禁止复用其内容、情节与具体句子。）\n\n${input.voice.body.trim()}`
+      : '',
   ]
     .filter((s) => s !== '')
     .join('\n\n---\n\n')
@@ -308,6 +324,8 @@ export interface WindowOutput {
   groups: number
   /** 因预算被丢弃的组数（>0 时 system 需提示「部分历史已省略」） */
   droppedGroups: number
+  /** P0 critical 豁免：被裁剪回合中保留为要点摘要的用户消息条数（0 = 无裁剪或无用户消息） */
+  retainedUserMessages: number
   truncated: boolean
 }
 
@@ -397,7 +415,7 @@ export function buildWindow(input: WindowInput): WindowOutput {
       (m.content.trim() !== '' || (m.toolCalls?.length ?? 0) > 0 || (m.attachments?.length ?? 0) > 0),
   )
   if (visible.length === 0) {
-    return { messages: [], tokens: 0, toolTokens: 0, groups: 0, droppedGroups: 0, truncated: false }
+    return { messages: [], tokens: 0, toolTokens: 0, groups: 0, droppedGroups: 0, retainedUserMessages: 0, truncated: false }
   }
 
   // L5：全局统计工具调用，最近 toolDetailKeep 条保留 detail
@@ -438,6 +456,38 @@ export function buildWindow(input: WindowInput): WindowOutput {
     used += cost
   }
 
+  // P0（关键消息豁免，借鉴 owli-code markCritical 思想）：被裁剪回合中的**用户发言**不静默丢弃——
+  // 用户消息承载口径 / 纠正 / 决策，丢掉会导致角色违背早期约束。压缩为「用户发言要点」摘要块
+  // 置于窗口最前（条目数 / 单条长度 / 总量三重限量，不抵消裁剪收益）。
+  let retainedUserMessages = 0
+  let digestMessage: LlmMessageInput | undefined
+  if (droppedGroups > 0) {
+    const entries: string[] = []
+    let digestTokens = 0
+    for (const group of groups.slice(0, droppedGroups)) {
+      for (const item of group) {
+        if (item.message.role !== 'user') continue
+        const line = item.message.content.replace(/\s+/g, ' ').trim()
+        if (!line) continue
+        if (entries.length >= 8) break
+        const clipped = line.length > 160 ? `${line.slice(0, 160)}…` : line
+        const cost = countTokensCalibrated(clipped)
+        if (digestTokens + cost > 600) break
+        entries.push(clipped)
+        digestTokens += cost
+      }
+      if (entries.length >= 8 || digestTokens > 600) break
+    }
+    if (entries.length > 0) {
+      retainedUserMessages = entries.length
+      digestMessage = {
+        role: 'user',
+        content: `（受上下文预算限制，更早 ${droppedGroups} 个回合的原文已省略；以下是其中你的历史发言要点，依然有效：）\n${entries.map((e) => `- ${e}`).join('\n')}`,
+      }
+      used += digestTokens + MESSAGE_OVERHEAD
+    }
+  }
+
   // 最近的组仍超预算 → 组内行级截断（保证最后一个回合尽量完整带回）
   let truncated = false
   if (used > budgetTokens && selected.length > 0) {
@@ -462,6 +512,8 @@ export function buildWindow(input: WindowInput): WindowOutput {
     role: item.message.role === 'user' ? ('user' as const) : ('assistant' as const),
     content: item.text,
   }))
+  // P0：用户发言要点摘要块置顶（critical 豁免的产物，见上方裁剪段）
+  if (digestMessage) windowMessages.unshift(digestMessage)
   let visionTokens = 0
   if (loadImage) {
     let remaining = VISION_MAX_IMAGES
@@ -488,6 +540,7 @@ export function buildWindow(input: WindowInput): WindowOutput {
     toolTokens: flat.reduce((n, item) => n + item.toolTokens, 0),
     groups: selected.length,
     droppedGroups,
+    retainedUserMessages,
     truncated,
   }
 }
@@ -550,6 +603,8 @@ export interface TurnInstructionExtra {
   humans?: Array<{ displayName: string }>
   /** 交付规格声明（用户消息解析；execute 波注入档位提示行） */
   deliverableSpec?: DeliverableTier
+  /** P1：声纹示例（execute 波注入 1 条轮换的语气参考；无声纹示例 = 不注入） */
+  voiceExample?: string
   /** 运行时时刻（HH:mm 行）；缺省取当前时刻 */
   now?: Date
 }
@@ -600,6 +655,10 @@ export function buildTurnInstruction(
     )
     const specLine = buildSpecInstructionLine(extra.deliverableSpec)
     if (specLine) lines.push(specLine)
+    // P1：声纹示例行（语气锚点；每次装配轮换，防过拟合单一例句）
+    if (extra.voiceExample) {
+      lines.push(`- 你的语气参考：${extra.voiceExample}（保持这个味道，不要把示例本身复述出来）。`)
+    }
   }
   if (parallelPeers.length > 0) {
     const peers = parallelPeers.map((id) => labelOf(id)).join('、')

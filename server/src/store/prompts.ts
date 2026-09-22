@@ -141,6 +141,38 @@ export interface SoulDoc {
   body: string
 }
 
+/**
+ * 声纹文档（P1 去 AI 化；agents/<场景>/<角色>/voice.md，可选）。
+ * soul 管人格，voice 管文风：段落优先 / 句式偏好 / 禁用词表 / 正反例。
+ * examples / banned 从正文结构化提取（供回合指令轮换注入与校验）。
+ */
+export interface VoiceDoc {
+  body: string
+  /** 正文中的示例（`> ` 引用行，去引用符） */
+  examples: string[]
+  /** 禁用词表（「禁用词表」行内词，按 / 、，分隔） */
+  banned: string[]
+}
+
+/** 从 voice.md 正文提取声纹结构化字段（容错：缺段 = 空数组） */
+export function parseVoiceDoc(body: string): VoiceDoc {
+  const examples = body
+    .split('\n')
+    .filter((l) => l.trim().startsWith('>'))
+    .map((l) => l.trim().replace(/^>\s*/, '').trim())
+    .filter((l) => l.length > 0)
+  const banned: string[] = []
+  const bannedLine = body.split('\n').find((l) => l.includes('禁用词表'))
+  if (bannedLine) {
+    const rest = bannedLine.split(/禁用词表[：:]/)[1] ?? ''
+    for (const w of rest.split(/[\/、，,；;]/)) {
+      const word = w.trim().replace(/[。\s].*$/, '')
+      if (word) banned.push(word)
+    }
+  }
+  return { body, examples, banned }
+}
+
 export interface PromptLibraryOptions {
   /** 规范位置：agents/<场景>/<agent>/ 包目录 */
   agentsDir: string
@@ -185,6 +217,8 @@ export class PromptLibrary {
   private bodies = new Map<string, string>()
   /** agentId → (soulId → 灵魂文档) */
   private soulDocs = new Map<string, Map<string, SoulDoc>>()
+  /** agentId → 声纹文档（voice.md；P1 去 AI 化，可选） */
+  private voiceDocs = new Map<string, VoiceDoc>()
   /** agentId → avatar.png 绝对路径（自动发现） */
   private avatarPaths = new Map<string, string>()
   private groupList: AgentGroup[] = []
@@ -249,6 +283,12 @@ export class PromptLibrary {
   body(id: string): string {
     this.maybeReload()
     return this.bodies.get(baseAgentId(id)) ?? ''
+  }
+
+  /** 声纹（P1）：voice.md 文档；无文件 = undefined（行为与现状零差异） */
+  voice(id: string): VoiceDoc | undefined {
+    this.maybeReload()
+    return this.voiceDocs.get(baseAgentId(id))
   }
 
   /**
@@ -335,6 +375,7 @@ export class PromptLibrary {
     const agents = new Map<string, AgentDefinition>()
     const bodies = new Map<string, string>()
     const soulDocs = new Map<string, Map<string, SoulDoc>>()
+    const voiceDocs = new Map<string, VoiceDoc>()
     const avatarPaths = new Map<string, string>()
     const groupList: AgentGroup[] = []
     const groupProtocols = new Map<string, string>()
@@ -450,6 +491,18 @@ export class PromptLibrary {
           if (!agent.avatar.image) agent.avatar.image = `/api/agents/${agent.id}/avatar`
         }
 
+        // 声纹（P1 去 AI 化，可选文件 voice.md；解析失败不阻塞加载，告警即可）
+        const voicePath = path.join(agentDir, 'voice.md')
+        if (fs.existsSync(voicePath)) {
+          try {
+            const voiceRaw = fs.readFileSync(voicePath, 'utf8')
+            const voiceBody = voiceRaw.startsWith('---') ? parseFrontMatter(voiceRaw).body : voiceRaw
+            voiceDocs.set(agent.id, parseVoiceDoc(voiceBody))
+          } catch (err) {
+            this.warn(`agents/${groupId}/${agentId}/voice.md 解析失败（已跳过）：${(err as Error).message}`)
+          }
+        }
+
         // 场景默认技能：agent 未显式配置 skills 时生效
         if (agent.skills === undefined && group.defaultSkills.length > 0) {
           agent.skills = [...group.defaultSkills]
@@ -490,6 +543,7 @@ export class PromptLibrary {
     this.agents = agents
     this.bodies = bodies
     this.soulDocs = soulDocs
+    this.voiceDocs = voiceDocs
     this.avatarPaths = avatarPaths
     this.groupProtocols = groupProtocols
     this.presetList = presetList

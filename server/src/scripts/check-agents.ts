@@ -166,6 +166,21 @@ function main(): void {
         console.error(`\n✗ 协议质量门槛未通过（${protoFindings.length} 个场景协议未达标）`)
         process.exit(1)
       }
+      // 声纹报告（P1 去 AI 化；报告模式先行——达标率上来后转 strict 门禁）：
+      // voice.md 存在 + 示例 ≥2 条 + 禁用词表 ≥3 词为达标；无声纹 = 未覆盖（单独统计，不算未达标）
+      let voiceReady = 0
+      const voiceFindings: string[] = []
+      for (const a of agents) {
+        const v = library.voice(a.id)
+        if (!v) continue
+        if (v.examples.length >= 2 && v.banned.length >= 3) voiceReady++
+        else voiceFindings.push(`${a.group}/${a.id}（示例 ${v.examples.length} / 禁用词 ${v.banned.length}）`)
+      }
+      const voiceTotal = voiceReady + voiceFindings.length
+      console.log(`\n◆ 声纹报告（voice.md；示例 ≥2 + 禁用词 ≥3；报告模式）`)
+      console.log(`  覆盖 ${voiceTotal}/${total} 角色｜达标 ${voiceReady}/${voiceTotal}`)
+      for (const f of voiceFindings.slice(0, QUALITY_LIST_MAX)) console.log(`    - ${f}：未达标`)
+      if (voiceFindings.length > QUALITY_LIST_MAX) console.log(`    …（其余 ${voiceFindings.length - QUALITY_LIST_MAX} 个略）`)
     }
   } catch (err) {
     console.error(`✗ agents 解析失败：${(err as Error).message}`)

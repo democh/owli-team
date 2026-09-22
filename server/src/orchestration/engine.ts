@@ -1767,10 +1767,18 @@ export class Engine {
     return labels
   }
 
-  /** 温度解析：「统一温度」开关（设置面板热切换）开启时忽略角色级配置，全部角色使用全局温度 */
+  /**
+   * 温度解析：「统一温度」开关（设置面板热切换）开启时忽略角色级配置，全部角色使用全局温度。
+   * P1 声纹温度加成：角色带声纹（voice.md）或灵魂时 +0.1（上限 0.8）——风格化表达需要发散度；
+   * 用户显式统一温度时不叠加（用户意图优先）。
+   */
   private temperatureOf(agent?: AgentDefinition): number {
     const { cfg } = this.deps
-    return cfg.temperatureOverride ? cfg.temperature : (agent?.temperature ?? cfg.temperature)
+    if (cfg.temperatureOverride) return cfg.temperature
+    const base = agent?.temperature ?? cfg.temperature
+    const hasStyleAsset =
+      !!agent && ((agent.souls?.length ?? 0) > 0 || !!this.deps.prompts.voice(agent.id))
+    return hasStyleAsset ? Math.min(0.8, base + 0.1) : base
   }
 
   /**
@@ -2186,6 +2194,12 @@ export class Engine {
         let truncated = false
         /** 本子轮思考内容：开启思考时随 assistant(tool_calls) 消息回传给 API（硬性要求） */
         let stepReasoning = ''
+        /**
+         * P1 可读性修复：工具子轮文本分段。一个回合可能有多段文本（工具前旁白 → 工具后正文），
+         * 全部累积进同一 message.content；若不做分段，旁白句与正文直接粘连（「我先读一下文件。文件里说……」）。
+         * 本子轮首个 text chunk 到达时，若前面已有工具轮文本且未以空行结尾 → 先补段落分隔（落库 + 流式同步）。
+         */
+        let stepTextStarted = false
         try {
           // M4：韧性包装——错误分类重试（429/5xx/网络类）+ 首 token / 空闲超时分层；
           // 已产出内容后失败不重试（防重复文本），交给「继续生成」路径
@@ -2220,6 +2234,13 @@ export class Engine {
                 reportedSpeaking = true
                 this.publishStatus(record, agentId, 'speaking')
               }
+              // P1：工具轮后的首个文本 chunk 前补段落分隔（防旁白与正文粘连；流式端同步收到分隔符）
+              if (!stepTextStarted && step > 0 && message.content.trim() !== '' && !message.content.endsWith('\n\n')) {
+                const sep = '\n\n'
+                message.content += sep
+                this.emit(record, { type: 'message:delta', messageId: message.id, delta: sep })
+              }
+              stepTextStarted = true
               message.content += chunk.text
               this.emit(record, { type: 'message:delta', messageId: message.id, delta: chunk.text })
               // M79-Z：旁观端流式（节流聚合广播；触发者走 SSE 去重）
@@ -2549,6 +2570,7 @@ export class Engine {
       allowSensitive: cfg.allowSensitive,
       webSearch: cfg.webSearch,
       httpUserAgent: cfg.httpUserAgent,
+      httpUaPoolExtra: cfg.httpUaPoolExtra,
       httpMinIntervalMs: cfg.httpMinIntervalMs,
       httpTimeoutMs: cfg.httpTimeoutMs,
       // M7：审批通道（request_approval 工具 → 挂起等待；随回合信号停止而取消）

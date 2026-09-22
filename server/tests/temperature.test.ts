@@ -3,6 +3,7 @@
  *
  * 验收对照：
  * - 默认关闭：角色级温度优先（agent.temperature ?? cfg.temperature）——165 个角色全量单独配置时全局值不生效；
+ * - P1 声纹温度加成：角色带声纹（voice.md）或灵魂时 +0.1（上限 0.8）；统一温度开启时用户意图优先、不叠加；
  * - 开启后忽略角色配置：全部角色使用全局温度（请求探针断言 engine 实际下发的 req.temperature）；
  * - 运行期热切换（applySettingsToConfig = PUT /api/settings 同一路径）：切换后下一回合即生效、可关回。
  */
@@ -10,6 +11,15 @@ import { describe, expect, it } from 'vitest'
 import type { ChatRequest, LlmChunk } from '../src/llm/provider.js'
 import { applySettingsToConfig } from '../src/settings.js'
 import { appendUserMessage, makeEnv, waitRunFinished } from './helpers.js'
+
+/** P1：声纹加成后的期望温度（带 voice.md 或 souls 的角色 +0.1，封顶 0.8） */
+function expectedTemp(env: ReturnType<typeof makeEnv>, id: string): number {
+  const agent = env.prompts.get(id)!
+  const hasStyle = (agent.souls?.length ?? 0) > 0 || !!env.prompts.voice(id)
+  return hasStyle
+    ? Math.min(0.8, (agent.temperature ?? env.cfg.temperature) + 0.1)
+    : (agent.temperature ?? env.cfg.temperature)
+}
 
 /** 请求探针：记录主回合请求温度（消息 @ 直达，不经 PRS） */
 function probeTemps(env: ReturnType<typeof makeEnv>): Array<number | undefined> {
@@ -32,7 +42,7 @@ async function runOnce(env: ReturnType<typeof makeEnv>, sessionId: string): Prom
 }
 
 describe('统一温度开关（temperatureOverride）', () => {
-  it('默认关闭：角色级温度优先（取 AGENT.md 的 temperature）', async () => {
+  it('默认关闭：角色级温度优先（取 AGENT.md 的 temperature；P1 声纹加成生效）', async () => {
     const env = makeEnv()
     const session = env.sessions.create(['pm'])
     const temps = probeTemps(env)
@@ -41,7 +51,8 @@ describe('统一温度开关（temperatureOverride）', () => {
 
     const roleTemp = env.prompts.get('pm')?.temperature
     expect(roleTemp).toBeTypeOf('number')
-    expect(temps).toEqual([roleTemp])
+    expect(env.prompts.voice('pm')).toBeDefined() // pm 带声纹 → 期望含 +0.1 加成
+    expect(temps).toEqual([expectedTemp(env, 'pm')])
   })
 
   it('开启后忽略角色配置：全部角色使用全局温度', async () => {
@@ -59,10 +70,10 @@ describe('统一温度开关（temperatureOverride）', () => {
     const env = makeEnv()
     const session = env.sessions.create(['pm'])
     const temps = probeTemps(env)
-    const roleTemp = env.prompts.get('pm')?.temperature
+    const boosted = expectedTemp(env, 'pm')
 
     await runOnce(env, session.id)
-    expect(temps[0]).toBe(roleTemp)
+    expect(temps[0]).toBe(boosted)
 
     applySettingsToConfig(env.cfg, { temperatureOverride: true, temperature: 0.9 })
     await runOnce(env, session.id)
@@ -70,6 +81,6 @@ describe('统一温度开关（temperatureOverride）', () => {
 
     applySettingsToConfig(env.cfg, { temperatureOverride: false })
     await runOnce(env, session.id)
-    expect(temps[2]).toBe(roleTemp)
+    expect(temps[2]).toBe(boosted)
   })
 })

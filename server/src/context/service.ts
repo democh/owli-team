@@ -297,6 +297,8 @@ export class ContextService {
       agent,
       agentBody: prompts.body(agent.id),
       soul: soul ?? undefined,
+      // P1：声纹（voice.md；无文件 = undefined 不注入，行为零差异）
+      voice: prompts.voice(agent.id),
       roster,
       selfKey: input.agentId,
       preloadedSkills: preloaded,
@@ -325,6 +327,13 @@ export class ContextService {
         .map((m) => m.content),
     )
 
+    // P1：声纹示例轮换（以会话消息数为种子，同一会话内逐回合轮转，防过拟合单一例句）
+    const voiceExamples = prompts.voice(agent.id)?.examples ?? []
+    const voiceExample =
+      voiceExamples.length > 0
+        ? voiceExamples[sessions.messages(input.sessionId).length % voiceExamples.length]
+        : undefined
+
     const turnInstruction = buildTurnInstruction(
       agent,
       roster,
@@ -337,6 +346,7 @@ export class ContextService {
         handoffs: input.handoffs,
         selfKey: input.agentId,
         deliverableSpec,
+        voiceExample,
         // M79-J（§8.8）：人类交还指令（无人类 → 不注入）
         humans: input.humans?.map((h) => ({ displayName: h.displayName })),
         now,
@@ -429,7 +439,7 @@ export class ContextService {
           : '（未压缩）',
       },
       { key: 'L3', label: '技能 / 工作区 / 运行时', tokens: systemPrompt.layers.l3 },
-      { key: 'L4', label: '对话窗口', tokens: l4Tokens, detail: `${window.groups} 个回合组` },
+      { key: 'L4', label: '对话窗口', tokens: l4Tokens, detail: `${window.groups} 个回合组${window.retainedUserMessages > 0 ? `（早期用户发言保留 ${window.retainedUserMessages} 条）` : ''}` },
       { key: 'L5', label: '工具调用记录', tokens: window.toolTokens },
     ]
 
