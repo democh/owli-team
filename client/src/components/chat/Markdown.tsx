@@ -1,13 +1,13 @@
 /**
  * Markdown 渲染（§10.5 + M8 性能 + 扩展套件）：
- * - remark-gfm + 自写插件：@mention / ::: 容器（分栏·callout·details·kpi·timeline·mail·option·checklist·choice·verdict·pan·meeting·minutes·findings·claim·offer·debate·idea·phase·score·sources·decision·postmortem）/
+ * - remark-gfm + 自写插件：@mention / ::: 容器（分栏·callout·details·process·kpi·timeline·mail·option·checklist·choice·verdict·pan·meeting·minutes·findings·claim·offer·debate·idea·phase·score·sources·decision·postmortem）/
  *   代码块 meta（title+行高亮）；
  * - 代码块 → CodeBlock（shiki + 工具条）；```mermaid → MermaidBlock；```chart → ChartBlock（懒加载）；
  *   ```kline → KlineBlock / ```game → GameBlock（M34 金融投研，同懒加载模式）；
  * - 图片灯箱（img → ZoomableImage）、表格横向滚动包裹（table → MdTable）；
  * - 完成态渲染结果按内容哈希 LRU 缓存（≤200），流式不缓存；
  * - 流式期间代码块/图表一律纯文本（StreamingContext），完成后再高亮/渲染；
- *   轻结构容器（callout/分栏/kpi/timeline/mail/option/verdict/pan/meeting/minutes/findings/claim/offer/debate/idea/phase/score/sources/decision/postmortem）流式期间直接渲染。
+ *   轻结构容器（callout/分栏/kpi/timeline/mail/option/verdict/pan/meeting/minutes/findings/claim/offer/debate/idea/phase/score/sources/decision/postmortem/process）流式期间直接渲染。
  */
 import * as React from 'react'
 import ReactMarkdown from 'react-markdown'
@@ -15,6 +15,7 @@ import remarkGfm from 'remark-gfm'
 import { useAgentStore } from '../../stores/agent-store'
 import { renderCache } from '../../lib/md-cache'
 import { MentionChip } from './MentionChip'
+import { useMessageInfo } from './md-ext/message-context'
 import { CalloutCard } from './md-ext/CalloutCard'
 import { CardsCard } from './md-ext/CardsCard'
 import { ChartBlock } from './md-ext/ChartBlock'
@@ -41,6 +42,7 @@ import { PhaseBar } from './md-ext/PhaseBar'
 import { FiguresCard } from './md-ext/FiguresCard'
 import { PipelineCard } from './md-ext/PipelineCard'
 import { PostmortemCard } from './md-ext/PostmortemCard'
+import { ProcessBlock } from './md-ext/ProcessBlock'
 import { ProgressCard } from './md-ext/ProgressCard'
 import { QaCard } from './md-ext/QaCard'
 import { TracksCard } from './md-ext/TracksCard'
@@ -66,6 +68,8 @@ import { VerdictCard } from './md-ext/VerdictCard'
 import { ZoomableImage } from './md-ext/ZoomableImage'
 
 const USER_TOKENS = new Set(['用户', 'user', '你'])
+/** M79：可展开为具体人的泛称 token（'你' 是第二人称称呼，保持原样不展开） */
+const EXPANDABLE_USER_TOKENS = new Set(['用户', 'user'])
 
 interface MdNode {
   type: string
@@ -74,7 +78,7 @@ interface MdNode {
   data?: Record<string, unknown>
 }
 
-function splitText(value: string, names: Set<string>): MdNode[] {
+function splitText(value: string, names: Set<string>, userLabel: string): MdNode[] {
   const nodes: MdNode[] = []
   const re = /@([\p{L}\p{N}_]+)/gu
   let last = 0
@@ -85,13 +89,18 @@ function splitText(value: string, names: Set<string>): MdNode[] {
     if (!names.has(token) && !USER_TOKENS.has(token)) continue
     matched = true
     if (m.index > last) nodes.push({ type: 'text', value: value.slice(last, m.index) })
+    // M79：@用户 / @user 泛称 → 本条消息有人类定向目标时就地展开为具体人名（无数据回退原 token）
+    const label = userLabel && EXPANDABLE_USER_TOKENS.has(token) ? userLabel : token
     nodes.push({
       type: 'text',
       value: `@${token}`,
       data: {
         hName: 'span',
-        hProperties: { 'data-mention': token },
-        hChildren: [{ type: 'text', value: `@${token}` }],
+        hProperties: {
+          'data-mention': token,
+          ...(label !== token ? { 'data-mention-label': label } : {}),
+        },
+        hChildren: [{ type: 'text', value: `@${label}` }],
       },
     })
     last = m.index + m[0].length
@@ -102,14 +111,15 @@ function splitText(value: string, names: Set<string>): MdNode[] {
 }
 
 /** 最小 remark 插件：文本节点中的已知 @token → <span data-mention> */
-function remarkMentions(options: { names: string[] }): (tree: unknown) => void {
+function remarkMentions(options: { names: string[]; userLabel?: string }): (tree: unknown) => void {
   const names = new Set(options.names)
+  const userLabel = options.userLabel ?? ''
   const walk = (node: MdNode): void => {
     if (!node.children) return
     const out: MdNode[] = []
     for (const child of node.children) {
       if (child.type === 'text' && child.value?.includes('@')) {
-        const parts = splitText(child.value, names)
+        const parts = splitText(child.value, names, userLabel)
         if (parts.length > 0) {
           out.push(...parts)
           continue
@@ -126,6 +136,7 @@ function remarkMentions(options: { names: string[] }): (tree: unknown) => void {
 interface MentionSpanProps {
   node?: unknown
   'data-mention'?: string
+  'data-mention-label'?: string
   className?: string
   children?: React.ReactNode
 }
@@ -133,7 +144,7 @@ interface MentionSpanProps {
 function MentionSpan({ node: _node, ...props }: MentionSpanProps): React.JSX.Element {
   const token = props['data-mention']
   if (!token) return <span {...props} />
-  return <MentionChip token={token} />
+  return <MentionChip token={token} label={props['data-mention-label']} />
 }
 
 interface LinkProps extends React.AnchorHTMLAttributes<HTMLAnchorElement> {
@@ -239,6 +250,9 @@ interface MdDivProps extends React.HTMLAttributes<HTMLDivElement> {
   'data-cards'?: string
   'data-sim'?: string
   'data-postmortem'?: string
+  // M81：过程叙述块（::: process）
+  'data-process'?: string
+  'data-chars'?: string
   'data-pipeline'?: string
   'data-figures'?: string
   'data-risk'?: string
@@ -269,6 +283,15 @@ function attr(value: string | undefined): string {
 }
 
 function MdDiv({ node: _node, children, 'data-callout': callout, 'data-title': title, ...rest }: MdDivProps): React.JSX.Element {
+  // M81：过程叙述块（顶层已上提至消息头部；摘要行 + 折叠交互由 ProcessBlock 承载）
+  if (rest['data-process'] !== undefined) {
+    const n = Number(rest['data-chars'])
+    return (
+      <ProcessBlock title={title} chars={Number.isFinite(n) && n > 0 ? n : undefined}>
+        {children}
+      </ProcessBlock>
+    )
+  }
   if (callout) return <CalloutCard kind={callout} title={title}>{children}</CalloutCard>
   if (rest['data-kpi'] !== undefined) return <KpiGroup title={title}>{children}</KpiGroup>
   if (rest['data-kpi-item'] !== undefined) {
@@ -632,9 +655,12 @@ export interface MarkdownProps {
 
 export function Markdown({ content, className, streaming }: MarkdownProps): React.JSX.Element {
   const agents = useAgentStore((s) => s.agents)
+  const info = useMessageInfo()
   const names = React.useMemo(() => agents.flatMap((a) => [a.id, a.name]), [agents])
+  // M79：@用户 泛称展开源（本条消息人类定向目标展示名；无上下文 = 按原 token 渲染）
+  const userLabel = (info?.humanLabels ?? []).join('、')
   const cacheable = !streaming && content.length <= MD_CACHE_MAX_CHARS
-  const cacheKey = cacheable ? `${names.join(',')}\u0000${content}` : ''
+  const cacheKey = cacheable ? `${names.join(',')}\u0000${userLabel}\u0000${content}` : ''
 
   if (cacheable) {
     const cached = cacheGet(cacheKey)
@@ -646,7 +672,7 @@ export function Markdown({ content, className, streaming }: MarkdownProps): Reac
   const rendered = (
     <StreamingContext.Provider value={streaming === true}>
       <ReactMarkdown
-        remarkPlugins={[remarkGfm, remarkContainers, remarkCodeMeta, [remarkMentions, { names }]]}
+        remarkPlugins={[remarkGfm, remarkContainers, remarkCodeMeta, [remarkMentions, { names, userLabel }]]}
         components={COMPONENTS}
       >
         {content}

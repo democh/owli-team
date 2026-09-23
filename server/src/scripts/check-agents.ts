@@ -7,7 +7,8 @@
  * 专家级质量报告（默认非阻塞，随每次校验输出达标率；`--strict` 或 QUALITY_STRICT=1
  * 时未达标即失败——全量升级完成后切换为门禁）：
  * - 角色：六段骨架齐备（## 职责 / ## 专业判断 / ## 工作方式 / ## 质量与自检 / ## 交付契约 / ## 协作接口）+ 正文 ≥ QUALITY_MIN_CHARS 字符；
- * - 协议（v65 配套）：_protocol.md ≥ PROTOCOL_MIN_LINES 行且含「## 质量红线」「## 典型失败模式」两段（29 份场景协议统一标准）。
+ * - 协议（v65 配套；M81 增补第三段）：_protocol.md ≥ PROTOCOL_MIN_LINES 行且含「## 质量红线」「## 典型失败模式」
+ *   「## 过程叙述约定」三段（40 份场景协议统一标准）。
  */
 import fs from 'node:fs'
 import path from 'node:path'
@@ -27,8 +28,8 @@ const QUALITY_SECTIONS = [
 const QUALITY_MIN_CHARS = 1200
 /** 未达标清单展示上限（超出折叠为计数） */
 const QUALITY_LIST_MAX = 15
-/** 场景协议必备两段（v65 配套：质量红线 + 典型失败模式） */
-const PROTOCOL_SECTIONS = ['## 质量红线', '## 典型失败模式'] as const
+/** 场景协议必备三段（v65 配套：质量红线 + 典型失败模式；M81 增补：过程叙述约定） */
+const PROTOCOL_SECTIONS = ['## 质量红线', '## 典型失败模式', '## 过程叙述约定'] as const
 /** 场景协议行数门槛（29 份协议统一标准 ≥28 行） */
 const PROTOCOL_MIN_LINES = 28
 
@@ -59,7 +60,7 @@ function qualityReport(agentsDir: string, agents: ReturnType<PromptLibrary['list
   return findings
 }
 
-/** 逐场景协议体检（agents 模式）：行数与必备两段（文件缺失按未达标计） */
+/** 逐场景协议体检（agents 模式）：行数与必备三段（文件缺失按未达标计） */
 function protocolReport(
   agentsDir: string,
   groups: ReturnType<PromptLibrary['groups']>,
@@ -70,7 +71,7 @@ function protocolReport(
     try {
       raw = fs.readFileSync(path.join(agentsDir, g.id, '_protocol.md'), 'utf8')
     } catch {
-      // 协议缺失已在结构校验阶段报错，此处按空计（行数 0 + 缺两段）
+      // 协议缺失已在结构校验阶段报错，此处按空计（行数 0 + 缺段）
     }
     const lines = (raw.match(/\n/g) ?? []).length
     const missing = PROTOCOL_SECTIONS.filter((s) => !raw.includes(s))
@@ -143,7 +144,7 @@ function main(): void {
         console.error(`\n✗ 专家级质量门槛未通过（${findings.length} 个角色未达标）`)
         process.exit(1)
       }
-      // 协议质量报告（同 strict 口径）：v65 配套——质量红线 + 典型失败模式两段门禁
+      // 协议质量报告（同 strict 口径）：v65 配套 + M81 增补——质量红线 / 典型失败模式 / 过程叙述约定三段落门禁
       const protoFindings = protocolReport(cfg.agentsDir, groups)
       const protoTotal = groups.length
       console.log(

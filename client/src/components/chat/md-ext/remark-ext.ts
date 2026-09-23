@@ -3,6 +3,8 @@
  * - `::: cols` / `::: col [标题]` 分栏（响应式网格，窄屏自动折叠为单列）；
  * - `::: tip|info|note|success|warning|danger [标题]` 提示块（callout）；
  * - `::: details 标题` 折叠块（原生 details/summary，无 JS 状态、缓存安全）；
+ * - M81：`::: process [标题]` 过程叙述折叠块（语义化过程通道：默认收起 + 字数统计 + 流式跟随；
+ *   顶层块在收尾时上提至消息头部，进入 TurnCard 过程区；嵌套块就地渲染）；
  * - `::: kpi [标题]` 指标卡组（条目 `- 名称 | 值 | 变化 | 目标 | 口径` → data-* 结构化节点；口径列为 M66 新增可缺省列）；
  * - `::: timeline [标题]` 时间轴（条目 `- 日期 | 事项 | 负责人` → data-* 结构化节点）；
  * - `::: mail [主题]` 邮件卡（正文前的 `收件人:/抄送:/主题:` 头部行 → data-* 字段）；
@@ -658,6 +660,19 @@ function makeBuilder(name: string, arg: string): Builder | undefined {
       children: [summary],
     }
   }
+  if (name === 'process') {
+    const title = arg.trim()
+    return {
+      type: 'mdProcess',
+      hName: 'div',
+      hProperties: {
+        className: ['md-process'],
+        'data-process': '',
+        ...(title ? { 'data-title': title } : {}),
+      },
+      ...base,
+    }
+  }
   if ((CALLOUT_KINDS as readonly string[]).includes(name)) {
     const title = arg.trim()
     return {
@@ -1221,6 +1236,12 @@ function finalize(b: Builder): MdNode {
       summary!,
       box('mdDetailsBody', 'div', { className: ['md-details-body'] }, content),
     ])
+  }
+  if (b.type === 'mdProcess') {
+    // M81：过程叙述块——保留 children（摘要行由 React 侧 ProcessBlock 渲染），
+    // 递归统计容器内可见文本长度写入 data-chars（确定性产物 → 渲染缓存安全）
+    const chars = b.children.map(flatText).join('\n').trim().length
+    return box('mdProcess', 'div', { ...b.hProperties, 'data-chars': String(chars) }, b.children)
   }
   if (b.type === 'mdKpi') {
     const children = convertLists(b.children, 'mdKpiItems', 'md-kpi-items', kpiItemNode)
@@ -2106,7 +2127,17 @@ export function remarkContainers(): (tree: unknown) => void {
     flush()
     if (sawMarker) parent.children = out
   }
-  return (tree: unknown) => walk(tree as MdNode)
+  return (tree: unknown) => {
+    const root = tree as MdNode
+    walk(root)
+    // M81：顶层过程块上提至消息头部（进入 TurnCard 过程区；仅顶层，嵌套块就地渲染）
+    if (root.children && root.children.some((c) => c.type === 'mdProcess')) {
+      const procs: MdNode[] = []
+      const rest: MdNode[] = []
+      for (const c of root.children) (c.type === 'mdProcess' ? procs : rest).push(c)
+      root.children = [...procs, ...rest]
+    }
+  }
 }
 
 // ---------- 代码块元信息：```lang title="x" {2,5-7} ----------

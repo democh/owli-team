@@ -8,6 +8,54 @@
 
 ## 变更记录
 
+### v105 — 过程叙述通道与 40 场景协议全量铺设（M81 批 B）
+
+- **动因**：Agent 对话啰嗦治理（设计基线 `docs/turn-card-process-design.md` v2）——content 通道补齐第三类可折叠「过程叙述」，与思考 / 工具调用组成 TurnCard 过程区；渲染端同批落地（`::: process` 容器 + ProcessBlock + 过程区重排 + mock「过程走查」触发块 + E2E `m81-turncard-process`）。
+- **全局契约**：`_protocol.md` `<style_channels>` 三通道 → 四通道（新增「过程叙述（可折叠）」行：收进 `::: process`、≤3 句、放发言末尾、容器内不写 @）；追加两条红线（复述确认仅对新增信息、同一事实不重复；安全合规提示与交付落盘声明禁止折叠）；工具说明句微调（连续第二句起的自述收进容器）。
+- **场景协议（40/40 全量铺设）**：各新增「## 过程叙述约定（界面承接）」段（位于 `## 质量红线` 前，标准 3 条）——A 型 32 场景 = 标准段；B 型 4 场景加「方法性复述豁免」第 4 条（philosophy / metaphysics / moot-court / brainstorm）；C 型 4 场景加「复述去重 + 危机红线置顶」第 4 条（wellness-mind / personal / care / relationship）；tarot 条目 11 改文对齐（过程 `::: details` → `::: process`，`::: details` 保留参考资料类展开）。
+- **角色与声纹（3 改 1 免）**：emotion-companion（「每轮先复述」→「仅对新增信息复述」，AGENT.md 3 处 + voice.md 开口句改写 + 容器示例 1 条）；coach（2 处）；rel-coach（1 处）；socratic-host 免改（场景协议显式豁免，机制先例）。审计依据：161 份 AGENT.md 全量 grep「复述」50 处 / 19 角色，仅 3 角色含逐轮复述型指令；24 份声纹「开口先…」11 处仅 emotion-companion 1 处为叙述型；70 技能复述 22 处均为方法本体（保留）。
+- **门禁**：check:agents `PROTOCOL_SECTIONS` 增第三段「## 过程叙述约定」（报告行「协议 40/40」含三段；CI 常驻 `QUALITY_STRICT=1` 下与铺设同批落地）；`agents/README.md` 容器清单追加 `::: process`、gate 描述改三段。
+- **核验**：check:agents（`QUALITY_STRICT=1`）**161/161 + 协议 40/40 + 声纹 24/24 ✅**；`npm run eval` **56/56 ✅**（mock 基线无回归）；server 全量 **1488 ✅**（context 预算夹具随资产扩容 16k → 17k：实测 16.3k±，夹具注释内登记；M81 批 A 渲染面由 client 测试覆盖）；client 全量 **1367 ✅**；E2E m81 **2/2 ✅**；双端 typecheck 0 错；lint 0 error。
+
+### v104 — 灵魂变体批三：财务 / 投研 / 增长三席（auditor / contrarian / surgeon）
+
+- **产出**：`finance/finance/souls/auditor.md`（数字审计：先口径后数字、差异必追）· `invest/invest-lead/souls/contrarian.md`（逆势验证员：证伪优先、先给失效条件；边界显式保留「不构成买卖指令 / 不预测点位」合规红线）· `marketing/growth/souls/surgeon.md`（增长外科：单点突破、砍无 ROI 动作）；灵魂变体 14 角色 22 条 → **17 角色 25 条**。
+- **核验**：check:agents **161/161 + 协议 40/40 + 声纹 24/24 ✅**（三席位 souls 解析通过）；本批仅新增灵魂资产与文档行，无角色文案变更（mock 面具零影响）。
+
+### v103 — 灵魂变体批二：研究 / 学习 / 行政三席（first-mover / socratic / precise）
+
+- **动因**：跨空间双人格续批（v102 机制延续）——覆盖研究、学习、行政三条高频工作流，同步扩大「空间默认灵魂」档案卡的可选面。
+- **产出**：`research/lead/souls/first-mover.md`（破题急先锋：三假设先发后收）· `learning/tutor/souls/socratic.md`（苏格拉底教练：只问不答、答案由学员说出口）· `ops/assistant/souls/precise.md`（精准秘书：15 分钟颗粒度 + 行动项三要素）；灵魂变体 11 角色 19 条 → **14 角色 22 条**。
+- **核验**：check:agents **161/161 + 协议 40/40 + 声纹 24/24 ✅**（三席位 souls 解析通过）；本批仅新增灵魂资产与文档行，无角色文案变更（mock 面具零影响）。
+
+### v102 — 灵魂变体补齐：跨空间双人格批次（coach / life-admin / pm）
+
+- **动因**：work-life 专项「双灵魂资产补齐」首批——为高频跨空间角色补第二人格，使「空间默认灵魂」（`spaces.soulOverrides` 档案卡）有足量可选面。
+- **产出**：`personal/coach/souls/action.md`（行动督导：目标—行动—结果）· `personal/life-admin/souls/minimalist.md`（极简管家：七天临期清单 + 归档思维）· `development/pm/souls/driver.md`（推进督工：结论先行、日期钉死、反含糊）；灵魂变体 8 角色 16 条 → **11 角色 19 条**。
+- **核验**：check:agents **161/161 + 协议 40/40 + 声纹 24/24 ✅**（三席位 souls 解析通过）；本批仅新增灵魂资产与文档行，无角色文案变更（mock 面具零影响）。
+
+### v101 — 仪式订阅资产声明：tarot / wellness-mind / personal 三场景 ritual 模板
+
+- **动因**：「工作生活一体」P4-A 仪式订阅（ADR 0215）需场景侧声明模板——`_group.yaml` 新增 `ritual` 块（title / cron / opener / description）。
+- **产出**：tarot「每日塔罗」（每晚 22:00）· wellness-mind「每日正念」（每天 08:30）· personal「每周复盘」（周日 20:00）；`PromptLibrary.validate()` 增 ritual 校验（cron 合法性 + members 跨引用，随 check:agents 生效）。
+- **核验**：check:agents **161/161 + 协议 40/40 + 声纹 24/24 ✅**（40 场景含 ritual 声明解析通过）；本批仅新增声明块与校验，无角色文案变更（mock 面具零影响）。
+
+### v100 — 头像补齐：v99 新增四席 512×512 落盘
+
+- **动因**：v99 新增 funding/dd-analyst（卫衡）与 wellness-mind 三席（听澜 / 安屿 / 知澄）未配头像（check:agents 以头像为可选资产不拦截，角色列表回退渐变图标）。
+- **产出**：四席头像按 §19 生成规格（纯白底 #ffffff · 风格化 3D 卡通成人比例约 1:4 · 半身像居中 · 哑光质感 · 场景主题色元素；防幼态：成熟面部结构 / NOT chibi；眼睛具白巩膜 + 虹膜细节）生成并 512×512 落盘——`agents/funding/dd-analyst/avatar.png`、`agents/wellness-mind/{emotion-companion,mindfulness-guide,psycho-educator}/avatar.png`；design.md §19.1/§19.2/§19.3 同步（设定表按成品观测补录四行；图片资产计数 40 场景共 160 张；business-sim 三行随场景下线移除）。
+- **核验**：check:agents **161/161 + 协议 40/40 + 声纹 24/24 ✅**（四席 avatar:✓）；eval（mock 确定性）**56/56 ✅**；本批仅新增图片资产与文档行，无角色文案变更（mock 面具零影响）。
+
+### v99 — 场景体系调优：新增心理支持与尽调分析师、下线辩论场与商业沙盘、事实核查收编议题主持
+
+- **动因**：全量盘点（40 场景 / 165 角色）后发现三类问题——心理情绪支持为最大空白（relationship / care 均明确排除诊疗）；funding 缺投资人视角的一级市场尽调；对抗推演域同质化（debate / business-sim 与 negotiation / moot-court / society 重叠）、society/fact-checker 与 research/verifier 职能重复。
+- **新增**：`wellness-mind/` 心理支持场景（emotion-companion 听澜 / mindfulness-guide 安屿 / psycho-educator 知澄；协议含危机红线零容忍、非治疗定位、倾听先于建议；串行陪跑链路）；`funding/dd-analyst` 卫衡（四线尽调 / 红旗分级 / 证据三级标注，接入 fundraiser → dd-analyst → ir 链路，fundraiser handoff 同步）。
+- **下线**：`debate/` 整场景（4 角色）与 `business-sim/` 整场景（3 角色）；`society/fact-checker`（尚真）。mock.ts 四件套镜像、`交锋走查`（RULING）与 `回合走查`（SIM）触发块、e2e AGENT_NAME 同步移除；预设 `classic-debate` 删除。
+- **society 收编**：事实核查职责并入 moderator（齐观）——协议分工改为「主持先行核查事实基线 → 立场 / 政策伦理并行 → 收口」，观察报告新增事实基线章；齐观补挂 `source-verification` 与 web 检索工具；stakeholder / policy-advisor / philosophy 引用改写；预设 `issue-roundtable` 改 3 人链路。
+- **配套补强**：组队预设 33 → 43（塔罗三张快解 / 跑团快速开团 / 论文冲刺 / 哲学茶席 / 关系体检 / 家庭一周安排 / 财务体检 / 维权路径评估 / 模拟庭审 / 销售冲刺 / 情绪安顿）；灵魂变体 +6（general 干练·温暖 / 观照 学院派·直觉派 / 马骁 魔鬼教官·温和陪练）；声纹 +3（听澜 / 观照 / 观复；于清声纹沿用 P1 首批）；health 场景补挂孤儿技能 `health-metrics`；README 数字同步（40 场景 / 161 角色 / 59 评测任务）。
+- **评测**：eval 任务 39 → 59（健康 / 家庭 / 财富 / 个人 / 学习 / 旅行 / 情感 / 个人法务 / 运营 / 塔罗 / 跑团 / 哲学 / 自媒体 / 电商 / 融资尽调 / 写作 / 模拟法庭 / 心理支持 / 财务法务 / 销售 / 学术全覆盖；23-society 重写为三人链路；21-debate 删除）；eval（mock 确定性）**56/56 ✅** 基线已刷新；mock 镜像覆盖 5/5 ✅；`check:agents` **161/161 + 协议 40/40 + 声纹 24/24 ✅**；typecheck（server + client + e2e）0 错；E2E 受影响 spec（m43-pk 谈判保留 + m52-stage 圆桌 3 席 / arena 改谈判桌）**24/24 ✅**。
+- 相关文档：**ADR 0212** / design.md **§118** / `docs/adr/README.md` 索引。
+
 ### v98 — 塔罗亲手抽牌台：复现三元组工具扩展与抽牌口径协议同步（M78）
 
 - **动因**：M69 后塔罗抽牌为 AI 单方行为（用户只能看 `::: cards` 卡），与「塔罗研习」的参与感相背（用户诉求：亲手随机选牌 + 完整专业牌面）。本批补齐抽牌台（六阶段仪式：静心 → 洗牌 → 切牌 → 亲手选牌 → 逐张翻牌 → 成阵），并扩展工具复现口径。

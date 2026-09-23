@@ -197,7 +197,7 @@ export function ToolCallsPanel({
       <button
         type="button"
         className={cn(
-          'flex items-center gap-1 text-[11.5px] font-medium text-muted-foreground transition-colors hover:text-foreground',
+          'process-row flex items-center gap-1 text-[11.5px] font-medium text-muted-foreground transition-colors hover:text-foreground',
         )}
         onClick={() => {
           setTouched(true)

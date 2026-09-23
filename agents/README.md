@@ -91,7 +91,7 @@ temperature: 0.6              # 可选；设置面板「统一温度」开启时
 三层加载：**常驻索引**（全部技能的 name + description 注入系统提示 `<available_skills>`，任何角色可按需 `load_skill` 加载正文）→ **预载**（front-matter `skills: [...]`，正文直接进系统提示 L3 层，可裁剪）→ **场景兜底**（`_group.yaml` 的 `defaultSkills`，仅当 agent 未显式配置 skills 时生效）。
 
 - 技能为单文件 `skills/<name>/SKILL.md`：front-matter（`name` 必须等于目录名 / `description` 必填含触发场景 / `tags`）+ 中文正文 60–150 行；库按 mtime 热更新，`npm run check:skills` 校验（附行数质量报告；**CI 已启用 `SKILL_STRICT=1` 强制门禁**）；
-- 只引用本仓真实工具与 Markdown 容器（`::: kpi / timeline / mail / option / cols / details`、`chart` / `mermaid`）；角色缺该工具时以「如可用」降级并给替代路径；
+- 只引用本仓真实工具与 Markdown 容器（`::: kpi / timeline / mail / option / cols / details / process`、`chart` / `mermaid`）；角色缺该工具时以「如可用」降级并给替代路径；
 - 外部来源（Anthropic 官方 / 社区职能库 / Vercel 界面指南等）统一改写为「本仓工具可执行」的方法论，规范见 ADR 45；安装批新增 8 项外部来源（paper-search / avoid-ai-writing / superpowers / claude-code-owasp / naming / en-zh-translation-polish / claude-persona / Claude-Ally-Health），来源登记见 [design.md §109](../design.md)。
 
 70 技能按 17 组归类：研发工程（api-design / code-review / debugging / test-plan / webapp-testing / release-engineering / system-design / mcp-server-building / incident-response / test-driven-development / secure-coding）、产品与设计（prd-authoring / visual-design / design-system / interaction-motion / ui-review / frontend-design / react-performance / brand-system / game-design / interior-design / 3d-visualization）、数据与演示（nl2sql / data-visualization / spreadsheet-modeling / deck-authoring）、研究与验证（deep-research / source-verification / red-team / academic-writing / literature-search / user-persona）、风暴与元技能（brainstorm-facilitation / skill-authoring）、营销增长（content-marketing / seo-optimizer / sales-outreach / brand-naming）、客户服务（customer-success / support-desk）、财务法务（financial-modeling / contract-review / formal-document）、投资研究（technical-analysis / fundamental-analysis / investment-strategy / market-news-analysis / game-theory-trading）、运营人事（process-improvement / recruiting / procurement）、战略管理（business-review / strategic-planning）、写作沟通（comms-writing / doc-coauthoring / natural-writing / translation-quality / report-authoring）、谈判与辩论（negotiation / debate）、 命理占星（chinese-metaphysics / western-astrology / fengshui）、场景玩法（trpg-hosting / tarot-reading / philosophy-dialogue）、经营创作（ecommerce-operations / creator-economy）、生活沟通（relationship-communication / health-metrics）；academic-writing 并入「研究与验证」组。
@@ -119,9 +119,8 @@ temperature: 0.6              # 可选；设置面板「统一温度」开启时
 | wealth | wealth（financial-modeling / spreadsheet-modeling） |
 | home | chef · home · pet · parenting（按需 `load_skill`） |
 | personal | coach · life-admin（按需 `load_skill`） |
-| debate | judge（debate / formal-document）· affirmative（debate）· negative（debate / red-team）· evidence（source-verification） |
 | negotiation | negotiator · counterpart · tactician（negotiation） |
-| society | moderator（formal-document）· fact-checker（source-verification）· stakeholder（deep-research）· policy-advisor（formal-document） |
+| society | moderator（formal-document · source-verification）· stakeholder（deep-research）· policy-advisor（formal-document） |
 | gamedesign | game-designer（game-design / doc-coauthoring）· balance-designer（game-design / spreadsheet-modeling）· narrative-designer（game-design / doc-coauthoring）· playtester（game-design / test-plan） |
 | writing | storyline（doc-coauthoring / deep-research）· author（comms-writing / doc-coauthoring）· editor（comms-writing / formal-document / natural-writing）· publisher（formal-document / deck-authoring） |
 | career | career-advisor（strategic-planning / deep-research）· resume-coach（comms-writing / doc-coauthoring）· interview-coach（recruiting / comms-writing）· comp-advisor（negotiation / spreadsheet-modeling） |
@@ -138,7 +137,6 @@ temperature: 0.6              # 可选；设置面板「统一温度」开启时
 | trpg | gm-host · npc-player · rule-keeper（trpg-hosting）· scenario-writer（trpg-hosting / doc-coauthoring） |
 | tarot | tarot-reader · symbol-narrator（tarot-reading）· tarot-historian（tarot-reading / source-verification） |
 | moot-court | plaintiff-counsel · defense-counsel · presiding-judge（debate / formal-document） |
-| business-sim | sim-host（strategic-planning / financial-modeling）· market-referee（game-theory-trading / financial-modeling）· review-coach（strategic-planning / business-review） |
 | philosophy | socratic-host · thought-experimenter · ethics-moderator（philosophy-dialogue） |
 
 ## 交付件命名规范
@@ -225,7 +223,7 @@ presets:
 
 | 命令 | 用途 |
 | --- | --- |
-| `npm run check:agents` | 校验目录结构 / `_group.yaml` / id 唯一 / handoff / 灵魂引用 / `_presets.yaml`（成员存在 / id 唯一；CI 常驻，并打印预设清单）；附双质量报告：**专家级六段骨架 + 正文 ≥1200 字符**（角色）与**协议 ≥28 行 + 质量红线 / 典型失败模式两段**（场景）；**CI 已启用 `QUALITY_STRICT=1` 强制门禁**——未达标即失败；本地默认报告模式，`--strict` / `QUALITY_STRICT=1` 可手动切门禁 |
+| `npm run check:agents` | 校验目录结构 / `_group.yaml` / id 唯一 / handoff / 灵魂引用 / `_presets.yaml`（成员存在 / id 唯一；CI 常驻，并打印预设清单）；附双质量报告：**专家级六段骨架 + 正文 ≥1200 字符**（角色）与**协议 ≥28 行 + 质量红线 / 典型失败模式 / 过程叙述约定三段**（场景）；**CI 已启用 `QUALITY_STRICT=1` 强制门禁**——未达标即失败；本地默认报告模式，`--strict` / `QUALITY_STRICT=1` 可手动切门禁 |
 | `npm run migrate:agents` | 从旧 `prompts/` 平铺目录幂等迁移（`--prune` 清理源文件） |
 | `AGENTS_DIR` / `PROMPTS_DIR` | 资产目录 env；`agents/` 缺失而 `prompts/` 存在时自动按旧逻辑回退加载并告警 |
 | `PARALLEL_MAX` | 并行波次单波人数上限（默认 3；=1 关闭并行） |

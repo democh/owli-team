@@ -232,18 +232,6 @@ const SCRIPTS: Record<string, RoleScript> = {
     `庭审五阶段走完，争点归纳后双方围绕争点交锋，${topicName(ctx)}的判决主文已落裁决卡。`,
     `事实认定、法律适用与说理在 \`${ctx.artifactPath}\`；每方主要主张均已逐项回应。`,
   ],
-  'sim-host': (ctx) => [
-    `${topicName(ctx)}开局规则声明齐全：起点资源、结算口径、终局条件先定后不改。`,
-    `本回合结算现金连续性校验通过；决策选项与后果预览、对账记录在 \`${ctx.artifactPath}\`。`,
-  ],
-  'market-referee': (ctx) => [
-    `三路反馈出齐：需求弹性、竞对反应、外部事件都挂了规则与参数。`,
-    `${topicName(ctx)}的反馈区间给了三档（最好 / 基准 / 最差）——依据说明在 \`${ctx.artifactPath}\`，不暗箱不情绪化。`,
-  ],
-  'review-coach': (ctx) => [
-    `${topicName(ctx)}关键决策审计做了四环（信息→假设→决策→结果），运气与实力分开记账。`,
-    `反事实推演与可迁移教训清单在 \`${ctx.artifactPath}\`；每条教训都标了迁移条件。`,
-  ],
   'socratic-host': (ctx) => [
     `${topicName(ctx)}的追问走了一轮：定义给了、反例试了、修正做了一版。`,
     `分歧点定位到「前提层」而非笼统三观，论证评估与未决问题在 \`${ctx.artifactPath}\`；不塞标准答案。`,
@@ -553,6 +541,27 @@ const SCRIPTS: Record<string, RoleScript> = {
     `三家高优先级投资人已拟好问候语与话题钩子，建议融资节奏放在下周三之前启动。`,
     `简报与对话备忘在 \`${ctx.artifactPath}\`。`,
   ],
+  // M-new：心理支持（倾听先于建议；危机红线置顶；非治疗定位）+ 尽调分析师
+  'emotion-companion': (ctx) => [
+    `先接住再说：关于${topicName(ctx)}，我听到的是两层——表层的烦躁，和底层对失控的担忧；这个理解对吗？`,
+    `当下可做的一件小事：10 分钟内出门走一圈或把此刻写下来，做不到也没关系。不求解决，只求松动。`,
+    `陪谈纪要在 \`${ctx.artifactPath}\`；本内容为非心理治疗的情绪陪伴，若出现伤害自己的念头，请立即联系专业危机渠道。`,
+  ],
+  'mindfulness-guide': (ctx) => [
+    `选了 3 分钟呼吸练习开场（情绪激烈时先着陆后内观）：${topicName(ctx)}的单次脚本含停顿标记，今晚就能做。`,
+    `一周安排按隔天节奏排（每天 ≤10 分钟，锚在午休后与睡前）；独自执行版步骤卡已附——没有引导也能练。`,
+    `练习方案在 \`${ctx.artifactPath}\`；暂停信号写清了：出现不适加重就停下来，可以找 @听澜 或寻求专业帮助。`,
+  ],
+  'psycho-educator': (ctx) => [
+    `${topicName(ctx)}的概念按三层讲清：定义（教科书口径，附来源与时效）→ 常见误解 → 自助边界（可执行标准）。`,
+    `求助渠道按分级给：情绪困扰找心理咨询，功能持续受损看心理 / 精神科门诊，危机情况打危机热线。`,
+    `科普卡在 \`${ctx.artifactPath}\`；不做对号入座式判断——如果你怀疑自己符合，请咨询专业人士。`,
+  ],
+  'dd-analyst': (ctx) => [
+    `${topicName(ctx)}的四线尽调清单已建（业务 / 财务 / 团队 / 法务），关键指标用 \`calc\` 复算：增长率与基数口径自洽，毛利率需补成本拆分。`,
+    `红旗三枚分级：重大——获客成本连续两季口径漂移（整改：统一口径并留审计轨迹）；提示——核心供应商集中度 62%。`,
+    `尽调清单与问询预演表在 \`${ctx.artifactPath}\`；每项回答标了证据强度，三级薄弱项建议进数据室前补齐。`,
+  ],
   // ---- M34：投研场景（多路独立分析 → 主管收口）----
   'invest-lead': (ctx) => [
     `议题拆好了：围绕${topicName(ctx)}的问题清单已按路派发，各路独立产出后我统一收口。`,
@@ -728,50 +737,6 @@ const SCRIPTS: Record<string, RoleScript> = {
     `进展：按需直接用了工具（检索 / 计算 / 数据处理 / 文件读写），结论与依据分开写，未核实项不混入结论。`,
     `产出在 \`${ctx.artifactPath}\`，要点如上；要继续深挖哪一块直接说。`,
   ],
-  // M51-A：辩论场（正反交锋 + 证据官 + 裁判裁决）；M43：接入 claim / findings / verdict 容器
-  judge: (ctx) => [
-    `开场定规矩：议题「${topicName(ctx)}」按 3 轮进行（用户可改），裁决口径先公开——证据等级 > 逻辑强度 > 回应质量，说得流畅不加分。`,
-    `轮间小结：正方立论已挂证据与置信度，反方质疑集中在假设与样本口径上；「缺陷 1 / 缺陷 3」已由证据官回补（已响应），「缺陷 2」机制证据仍缺，记为存活攻击点。`,
-    '',
-    '::: verdict 正方 辩论裁决（3 轮制）',
-    '- 置信度 | 中高',
-    '- 核心依据 | 正方证据等级占优（官方 2 / 权威媒体 3）且完成 2 项修补；反方结构性质疑成立但不构成压垮',
-    '- 翻盘条件 | 反方补足机制证据且样本口径复核出现实质负面 → 裁决收窄或翻转',
-    ':::',
-    '',
-    `裁决与复盘在 \`${ctx.artifactPath}\`（含胜负 / 置信度 / 核心依据 / 翻盘条件）；本裁决为基于给定证据的推演，非终局事实判断。`,
-  ],
-  affirmative: (ctx) => [
-    `正方立论（第 1 轮）：围绕${topicName(ctx)}给三条论点，每条挂证据与置信度——核心证据来自公开数据与官方口径，推理链已写明，无证据的部分明确标了「假设」。`,
-    '',
-    '::: claim 正方核心主张：净收益为正，且风险可被流程对冲',
-    `细节：围绕${topicName(ctx)}，效率与信任收益大于协作成本，关键在流程成熟度而非地点。`,
-    '- 效率论据 | 官方报告：生产率持平或提升（置信度高）',
-    '- 成本论据 | 权威媒体：通勤与办公刚性成本显著下降（置信度中）',
-    '- 风险论据 | 学术：管理成熟度提升可对冲协作损耗（置信度中）',
-    ':::',
-    '',
-    `回应反方：对方质疑集中在样本口径上，我补充了同一来源的时间序列复核，结论方向不变；对方「成本被低估」一点部分成立，已收窄我方表述。`,
-    `立论稿与证据引用在 \`${ctx.artifactPath}\`（含各轮回应与修正轨迹）。`,
-  ],
-  negative: (ctx) => [
-    `反方立论（第 1 轮）：${topicName(ctx)}的正方主张我复述一遍再回应——最有力的是数据趋势，但样本区间只覆盖上升期，属选择性口径。`,
-    '',
-    '::: findings 反方挑刺：正方立论的三处薄弱环节',
-    '- 缺陷 1 | 样本区间只覆盖上升期，属选择性口径 | 补充跨周期样本，或收窄「普遍成立」表述',
-    '- 缺陷 2 | 把相关性当因果 | 给出机制证据，或明确标注「相关性结论」',
-    '- 缺陷 3 | 成本项未计入隐性协作开销 | 在结论中补隐性成本项与敏感性分析',
-    ':::',
-    '',
-    `攻击三条：假设（可推广性未被验证）、推理（相关性当因果）、证据（单一来源、时效不足）；两条有反例支撑，一条已收窄撤回。`,
-    `反方立论与攻击点清单在 \`${ctx.artifactPath}\`（含撤回与修正记录）。`,
-  ],
-  evidence: (ctx) => [
-    `证据清单按双方请求分流：${topicName(ctx)}相关已入库证据 8 条（官方 3 / 权威媒体 3 / 待核实 2），双方共用，来源四要素齐备。`,
-    `缺口清单 2 条：正方「长期成本曲线」无公开数据、反方「替代方案失败率」仅有传闻级来源；均标注「未核实，不得当论据」。`,
-    `按编号逐条回补反方挑出的漏洞：「缺陷 1」跨周期样本已补充 2 个来源（1 条官方待核）、「缺陷 3」隐性协作成本给出了测算口径；「缺陷 2」机制证据仍缺，维持存活标记。`,
-    `证据表与缺口清单在 \`${ctx.artifactPath}\`；中立声明：不含结论建议。`,
-  ],
   // M51-A：谈判桌（己方 / 对手 / 教练）；M43：接入 offer / verdict 容器
   negotiator: (ctx) => [
     `先把三桩立住：围绕${topicName(ctx)}给出目标 / 底线 / BATNA，首锚按行情依据出价（不做无依据虚锚），让步阶梯设计为幅度递减、每步绑换取条件。`,
@@ -816,11 +781,6 @@ const SCRIPTS: Record<string, RoleScript> = {
     `开场定议题「${topicName(ctx)}」：边界与研讨问题先立住（不讨论的部分已排除），按 3 轮组织——事实核查与立场梳理并行展开、政策伦理视角随后补位。`,
     `本轮收束：关键说法已送核查、各方立场开始成图；事实与立场在影响面口径上尚未对齐，记入待核项——每轮给一句话「看清了什么、还差什么」。`,
     `观察报告收口在 \`${ctx.artifactPath}\`（含共识与分歧 + 政策伦理章）；本报告为基于现有事实与立场的梳理，非价值裁判。`,
-  ],
-  'fact-checker': (ctx) => [
-    `事实基线先给核查表：围绕${topicName(ctx)}的关键说法逐条过，来源 / 日期 / 等级 / 核验状态齐备；不能核实的明确标「待核实」，不硬凑结论。`,
-    `不确定性标注：2 条关键数字口径受限（样本区间偏窄），已附置信度与限制条件；影响结论权重最大的存疑项单独提请补核。`,
-    `核查表与存疑清单在 \`${ctx.artifactPath}\`；只报核查结果，不解读立场。`,
   ],
   stakeholder: (ctx) => [
     `立场图谱先画地图：围绕${topicName(ctx)}列全利益相关方（含间接相关方与沉默方），逐方给「主张 + 核心关切 + 约束条件」，推演与事实分开标注。`,
@@ -1182,29 +1142,9 @@ const DECISION_BLOCKS: Record<string, string[]> = {
 
 /**
  * M63（批一）：对抗 · 博弈 · 分析域触发块（E2E 固定剧本，同 M38 先例）——
- * 「交锋走查」（轮次判定 + 带证据等级的 claim）/「报价走查」（三桩字段 + 让步理由）/「四路走查」（四路观点 + 走子块）。
+ * 「报价走查」（三桩字段 + 让步理由）/「四路走查」（四路观点 + 走子块）。
  * 触发词取全仓唯一串；块内不写 @。
  */
-const RULING_TRIGGER = '交锋走查'
-const RULING_BLOCKS: Record<string, string[]> = {
-  judge: [
-    '',
-    '::: ruling 正方 第 1 轮小结',
-    '- 亮点 | 正方量化了成本口径；反方给出两条反例',
-    '- 未决点 | 规模化后的边际成本是否成立',
-    ':::',
-    '',
-  ],
-  affirmative: [
-    '',
-    '::: claim 正方补充主张：流程对冲可把风险压到可接受区间',
-    '细节：先把对冲到位的证据链讲清楚',
-    '- 论据 | 官方白皮书给出的行业成本区间',
-    ':::',
-    '',
-  ],
-}
-
 const OFFER_FIELDS_TRIGGER = '报价走查'
 const OFFER_FIELDS_BLOCKS: Record<string, string[]> = {
   negotiator: [
@@ -1248,17 +1188,6 @@ const CARDS_BLOCKS: Record<string, string[]> = {
     '- 过去 | 死神 | 逆位 | 结束 · 转化 · 重生',
     '- 现在 | 命运之轮 | 正位 | 转机 · 周期 · 时机',
     '- 未来 | 星星 | 正位 | 希望 · 疗愈 · 指引',
-    ':::',
-    '',
-  ],
-}
-
-const SIM_TRIGGER = '回合走查'
-const SIM_BLOCKS: Record<string, string[]> = {
-  'sim-host': [
-    '',
-    '::: sim 第 2 回合',
-    '- 决策 | 降价 5% 换量 | 反馈 | 需求 +12% 但毛利承压 | 指标 | 营收 ↑3% · 现金 ↓2% · 市占 ↑1%',
     ':::',
     '',
   ],
@@ -1404,6 +1333,22 @@ const POSTMORTEM_BLOCKS: Record<string, string[]> = {
     '归因：连接池配置未随扩容同步（证据：ss 连接数打满 + 变更记录）',
     '- 改进项 | 连接池参数纳入变更检查单 | 马克斯 · 9-30',
     '- 改进项 | 扩容时自动校验连接池上限 | 奥托 · 10-15',
+    ':::',
+    '',
+  ],
+}
+
+/**
+ * M81：过程叙述走查（E2E 固定剧本）——消息含触发词时，指定角色追加 `::: process` 过程块
+ * （TurnCard 过程区：顶层上提 / 完成态默认收起 / 点击展开）。触发词取全仓唯一串；块内不写 @。
+ */
+const PROCESS_TRIGGER = '过程走查'
+const PROCESS_BLOCKS: Record<string, string[]> = {
+  'emotion-companion': [
+    '',
+    '::: process 过程记录',
+    '- 先按用户原话复述，不追加解释；线索只来自用户说过的话。',
+    '- 下一步方案等用户补完时间线再给。',
     ':::',
     '',
   ],
@@ -2371,33 +2316,6 @@ export function artifactFor(
           ['主文与说理', ['::: ruling 判决主文（模拟）', '每方主要主张逐项回应；模拟声明在页首尾']],
         ]),
       }
-    case 'sim-host':
-      return {
-        path: `docs/沙盘局记-${t}.md`,
-        content: doc(`${t}沙盘局记`, [
-          ['规则声明', [`${t}沙盘起点 / 口径 / 终局条件（版本化）`, '口径先定后不改']],
-          ['回合记录', ['每回合：决策 → 反馈引用 → 结算（sim 卡）', '现金连续性对账零不平']],
-          ['指标演化', ['营收 / 成本 / 现金 / 市占逐回合表', '终局状态与遗留问题']],
-        ]),
-      }
-    case 'market-referee':
-      return {
-        path: `docs/市场推演-${t}.md`,
-        content: doc(`${t}市场推演`, [
-          ['反馈规则表', [`${t}弹性参数 / 竞争触发 / 事件表（含版本）`, '规则表开局公开']],
-          ['三路反馈', ['需求 / 竞争 / 外部冲击逐回合记录', '每条挂规则与参数（事实 / 理由 / 影响）']],
-          ['公正记录', ['事件触发日志含前置条件与征兆', '标准前后一致，不情绪化加码']],
-        ]),
-      }
-    case 'review-coach':
-      return {
-        path: `docs/沙盘复盘-${t}.md`,
-        content: doc(`${t}沙盘复盘`, [
-          ['关键决策', [`${t}关键决策 ≤8 条：预期 / 实际 / 差异`, '过程与结果分离，运气单独记账']],
-          ['反事实推演', ['2–3 条关键决策的反事实路径（含量化）', '转折点定位']],
-          ['教训与建议', ['可迁移教训：沙盘 → 现实 → 怎么用', '每条标迁移条件；下一局变量建议']],
-        ]),
-      }
     case 'socratic-host':
       return {
         path: `docs/哲思笔记-${t}.md`,
@@ -3023,6 +2941,44 @@ export function artifactFor(
           ['对话备忘', ['融资节奏建议下周三前启动']],
         ]),
       }
+    // ---- M-new：心理支持 + 尽调（路径与 AGENT.md 交付契约一致）----
+    case 'emotion-companion':
+      return {
+        path: `docs/陪谈纪要-${t}.md`,
+        content: doc(`${t}陪谈纪要`, [
+          ['情绪复述', [`关于${t}：表层烦躁，底层是对失控的担忧（待用户确认）`]],
+          ['来源线索', ['线索均来自用户原话；自述假设已标注']],
+          ['当下小事', ['10 分钟内可完成：出门走一圈或写下此刻感受']],
+          ['求助渠道', ['非心理治疗声明；危机提示如触发则置顶']],
+        ]),
+      }
+    case 'mindfulness-guide':
+      return {
+        path: `docs/正念练习-${t}.md`,
+        content: doc(`${t}正念练习`, [
+          ['单次脚本', ['3 分钟呼吸练习：步骤 + 停顿标记，今晚可做']],
+          ['一周安排', ['隔天节奏，每天 ≤10 分钟，锚在午休后与睡前']],
+          ['独自执行版', ['步骤卡可脱离会话执行；暂停信号与求助路径明确']],
+        ]),
+      }
+    case 'psycho-educator':
+      return {
+        path: `docs/心理科普-${t}.md`,
+        content: doc(`${t}心理科普`, [
+          ['概念定义', [`${t}：教科书口径 + 权威来源与时效`]],
+          ['常见误解', ['流行误解逐条澄清，营销号测试不作依据']],
+          ['自助边界与渠道', ['可调 / 必转的可执行标准；渠道分级清单']],
+        ]),
+      }
+    case 'dd-analyst':
+      return {
+        path: `docs/尽调清单-${t}.md`,
+        content: doc(`${t}尽调清单`, [
+          ['四线清单', ['业务 / 财务 / 团队 / 法务：问题 + 材料 + 核查方法']],
+          ['红旗信号', ['重大：获客成本口径漂移（整改路径已附）', '提示：供应商集中度 62%']],
+          ['问询预演', ['高频提问 × 回答 × 证据强度三级标注', '材料缺口与数据室清单对应']],
+        ]),
+      }
     // ---- M34：投研场景（路径与 AGENT.md 交付契约一致）----
     case 'invest-lead':
       return {
@@ -3575,67 +3531,6 @@ export function artifactFor(
           ['待确认', ['需要你补充或确认的口径，以及可选的后续动作']],
         ]),
       }
-    // M51-A：辩论场（路径与各角色 AGENT.md 交付契约一致）
-    case 'affirmative':
-      return {
-        path: `docs/正方立论-${t}.md`,
-        content: doc(`${t}正方立论`, [
-          ['立场与论点链', [`主张：${t}方向成立且可执行；三条论点各附推理链与置信度`]],
-          [
-            '各轮立论与回应',
-            ['第 1 轮：立论并挂证据；第 2-3 轮：回应反方质疑，收窄 1 条表述', '每轮独立成段并标注轮次'],
-          ],
-          ['证据引用表', ['编号 · 事实 · 来源 · 等级 · 置信度 五列；无证据项已标注「假设」']],
-          ['自评修正轨迹', ['被证伪处撤回 / 收窄记录与理由；最薄弱环节已主动标出']],
-        ]),
-      }
-    case 'negative':
-      return {
-        path: `docs/反方立论-${t}.md`,
-        content: doc(`${t}反方立论`, [
-          ['反方立场与论点链', [`先复述正方最强版本，再列出依赖的关键假设；攻击线：假设 / 推理 / 证据`]],
-          [
-            '各轮立论与回应',
-            ['第 1 轮：质疑与反例；第 2-3 轮：回应正方补充，1 条撤回 1 条收窄', '抓大放小，不逐条缠斗'],
-          ],
-          ['攻击点清单', ['假设 · 推理 · 证据三类，各含反例与可观察结果']],
-          ['撤回与修正记录', ['撤回理由与保留的有效攻击；不转移话题、不硬撑']],
-        ]),
-      }
-    case 'evidence':
-      return {
-        path: `docs/证据清单-${t}.md`,
-        content: doc(`${t}证据清单`, [
-          [
-            '双方共用证据表',
-            [
-              '编号 · 事实 · 来源 · 日期 · 等级 · 核验状态 · 支撑方 七列',
-              '同一条证据对双方均有效；不按提出方裁剪',
-            ],
-          ],
-          [
-            '证据缺口清单',
-            ['未找到 / 存疑项列明「哪方哪个主张缺证据」', '缺口项在裁决中标注「待核实，不计胜势」'],
-          ],
-          ['检索策略与限制', ['检索路径与失败记录如实列明；不编造来源']],
-        ]),
-      }
-    case 'judge':
-      return {
-        path: `docs/辩论裁决-${t}.md`,
-        content: doc(`${t}辩论裁决`, [
-          ['议题与轮数', [`议题「${t}」默认 3 轮；裁决口径：证据等级 > 逻辑强度 > 回应质量`]],
-          ['交锋记录（分轮）', ['逐轮记录谁回应了谁的哪条论点、论点存活情况', '每轮末一句局势小结']],
-          [
-            '裁决卡',
-            ['胜负 / 置信度 / 核心依据 / 翻盘条件（新证据出现会逆转结论）', '无证据支撑的主张不计入胜负理由'],
-          ],
-          [
-            '复盘点评',
-            ['双方亮点与可改进处；最大证据缺口与补强建议', '模拟声明：基于给定证据的推演，非终局事实判断'],
-          ],
-        ]),
-      }
     // M51-A：谈判桌（路径与各角色 AGENT.md 交付契约一致）
     case 'negotiator':
       return {
@@ -3688,19 +3583,6 @@ export function artifactFor(
           ],
           ['共识与分歧（初稿）', ['各方一致点与分歧点列表化记录；分歧不强行抹平', '收口前待政策伦理章补位']],
           ['模拟声明', ['本报告为基于现有事实与立场的梳理，非价值裁判']],
-        ]),
-      }
-    case 'fact-checker':
-      return {
-        path: `docs/事实基线-${t}.md`,
-        content: doc(`${t}事实基线`, [
-          [
-            '逐条核查表',
-            ['说法 · 来源 · 日期 · 等级 · 核验状态 · 结论 六列', '结论置顶（成立 / 存疑 / 不成立 / 待核实）'],
-          ],
-          ['关键数字与口径', ['数据口径与时间范围注明；统计数字经 calc 复核']],
-          ['存疑与不确定项', ['未核实项写明「还差什么信息才能核实」；不硬凑结论']],
-          ['辟谣更正记录', ['原说法 + 更正依据 + 正确表述（如有）；不凭印象断言「谣言」']],
         ]),
       }
     case 'stakeholder':
@@ -4160,9 +4042,6 @@ const DISPLAY_NAMES: Record<string, string> = {
   'plaintiff-counsel': '申言',
   'defense-counsel': '析辩',
   'presiding-judge': '端衡',
-  'sim-host': '掌局',
-  'market-referee': '市衡',
-  'review-coach': '温故',
   'socratic-host': '叩问',
   'thought-experimenter': '设境',
   'ethics-moderator': '议善',
@@ -4215,6 +4094,11 @@ const DISPLAY_NAMES: Record<string, string> = {
   supply: '何舟',
   fundraiser: '江源',
   ir: '何洛',
+  'dd-analyst': '卫衡',
+  // M-new：心理支持
+  'emotion-companion': '听澜',
+  'mindfulness-guide': '安屿',
+  'psycho-educator': '知澄',
   // v14：全域扩展（生活 6 场景 + 职能角色）
   fitness: '马骁',
   nutrition: '陶然',
@@ -4260,17 +4144,12 @@ const DISPLAY_NAMES: Record<string, string> = {
   sre: '江屿',
   // M50：空场景（通用助手）
   general: '通用助手',
-  // M51-A：辩论场 / 谈判桌
-  affirmative: '立言',
-  negative: '砺锋',
-  evidence: '昭实',
-  judge: '明断',
+  // M51-A：谈判桌
   negotiator: '谭成',
   counterpart: '祁弈',
   tactician: '苏纵',
   // M51-B：议题圆桌
   moderator: '齐观',
-  'fact-checker': '尚真',
   stakeholder: '方衡',
   'policy-advisor': '允中',
   // M51-C：游戏工坊 / 创作工作室 / 职业发展
@@ -4664,12 +4543,10 @@ export class MockProvider implements LlmProvider {
       ...(!isNudge && userText.includes(IDEA_TRIGGER) ? (IDEA_BLOCKS[baseId] ?? []) : []),
       ...(!isNudge && userText.includes(SOURCES_TRIGGER) ? (SOURCES_BLOCKS[baseId] ?? []) : []),
       ...(!isNudge && userText.includes(DECISION_TRIGGER) ? (DECISION_BLOCKS[baseId] ?? []) : []),
-      ...(!isNudge && userText.includes(RULING_TRIGGER) ? (RULING_BLOCKS[baseId] ?? []) : []),
       ...(!isNudge && userText.includes(OFFER_FIELDS_TRIGGER) ? (OFFER_FIELDS_BLOCKS[baseId] ?? []) : []),
       ...(!isNudge && userText.includes(VIEW_TRIGGER) ? (VIEW_BLOCKS[baseId] ?? []) : []),
       ...(!isNudge && userText.includes(ROLL_TRIGGER) ? (ROLL_BLOCKS[baseId] ?? []) : []),
       ...(!isNudge && userText.includes(CARDS_TRIGGER) ? (CARDS_BLOCKS[baseId] ?? []) : []),
-      ...(!isNudge && userText.includes(SIM_TRIGGER) ? (SIM_BLOCKS[baseId] ?? []) : []),
       ...(!isNudge && userText.includes(KPI_TRIGGER) ? (KPI_BLOCKS[baseId] ?? []) : []),
       ...(!isNudge && userText.includes(INCIDENT_TRIGGER) ? (INCIDENT_BLOCKS[baseId] ?? []) : []),
       ...(!isNudge && userText.includes(STANCE_TRIGGER) ? (STANCE_BLOCKS[baseId] ?? []) : []),
@@ -4691,6 +4568,7 @@ export class MockProvider implements LlmProvider {
       ...(!isNudge && userText.includes(LUOPAN_TRIGGER) ? (LUOPAN_BLOCKS[baseId] ?? []) : []),
       ...(!isNudge && userText.includes(SURVEY_TRIGGER) ? (SURVEY_BLOCKS[baseId] ?? []) : []),
       ...(!isNudge && userText.includes(ZERI_TRIGGER) ? (ZERI_BLOCKS[baseId] ?? []) : []),
+      ...(!isNudge && userText.includes(PROCESS_TRIGGER) ? (PROCESS_BLOCKS[baseId] ?? []) : []),
     ]
 
     // M42：例会链路（§71）——主持人开场声明 / 收尾纪要；非主持人推进议题；收尾回交主持人
@@ -4808,9 +4686,6 @@ export class MockProvider implements LlmProvider {
       'plaintiff-counsel': ['presiding-judge'],
       'defense-counsel': ['presiding-judge'],
       'presiding-judge': ['plaintiff-counsel', 'defense-counsel'],
-      'sim-host': ['market-referee', 'review-coach'],
-      'market-referee': ['sim-host'],
-      'review-coach': ['sim-host'],
       'socratic-host': ['thought-experimenter', 'ethics-moderator'],
       'thought-experimenter': ['socratic-host', 'ethics-moderator'],
       'ethics-moderator': ['socratic-host'],
@@ -4861,8 +4736,13 @@ export class MockProvider implements LlmProvider {
       assistant: ['ops', 'recruiter'],
       recruiter: ['ops', 'legal'],
       supply: ['ops', 'finance'],
-      fundraiser: ['ir', 'finance', 'legal'],
+      fundraiser: ['dd-analyst', 'ir', 'finance', 'legal'],
       ir: ['fundraiser', 'finance'],
+      'dd-analyst': ['fundraiser', 'valuation-modeler', 'legal'],
+      // M-new：心理支持（串行陪跑：陪谈 → 练习 → 科普）
+      'emotion-companion': ['mindfulness-guide', 'psycho-educator'],
+      'mindfulness-guide': ['emotion-companion', 'psycho-educator'],
+      'psycho-educator': ['emotion-companion', 'mindfulness-guide'],
       // v14：全域扩展（生活 6 场景 + 职能角色；与 AGENT.md handoff 保持一致）
       fitness: ['nutrition', 'wellness'],
       nutrition: ['fitness', 'chef'],
@@ -4905,19 +4785,13 @@ export class MockProvider implements LlmProvider {
       quant: ['invest-lead', 'analyst-ta'],
       // v16：SRE 场景（与 AGENT.md handoff 保持一致）
       sre: ['devops', 'backend', 'qa'],
-      // M51-A：辩论场 / 谈判桌（与 AGENT.md handoff 保持一致）
-      affirmative: ['negative', 'scout'],
-      negative: ['affirmative', 'scout'],
-      evidence: ['affirmative', 'negative'],
-      // M51-B：judge 回填 society.moderator（议题转研讨，B 批落地）
-      judge: ['affirmative', 'evidence', 'moderator'],
+      // M51-A：谈判桌（与 AGENT.md handoff 保持一致）
       negotiator: ['legal', 'finance'],
       counterpart: ['negotiator'],
       // M51-C：tactician 回填 career.comp-advisor（谈薪彩排，C 批落地）
       tactician: ['negotiator', 'comp-advisor'],
       // M51-B：议题圆桌（与 AGENT.md handoff 保持一致）
-      moderator: ['fact-checker', 'stakeholder', 'policy-advisor'],
-      'fact-checker': ['stakeholder', 'moderator'],
+      moderator: ['stakeholder', 'policy-advisor'],
       stakeholder: ['policy-advisor', 'moderator'],
       'policy-advisor': ['moderator'],
       // M51-C：游戏工坊 / 创作工作室 / 职业发展（与 AGENT.md handoff 保持一致）

@@ -435,7 +435,9 @@ describe('M2：端到端验收（30 回合）', () => {
     // secure-coding / brand-naming / translation-quality / user-persona / health-metrics）→ 15k 夹具（实测 14.2k±）
     // 报告专业化批：全局协议新增 <deliverable_spec> 段（+18 行）+ report-authoring 技能索引（70 技能）
     // → 16k 夹具（实测 15.0k±）
-    const env = makeEnv({ contextBudgetTokens: 16000, keepRecentTurns: 1 })
+    // M81：过程叙述通道（全局协议第四通道 + 40 场景协议「过程叙述约定」段）系统层再增重
+    // → 17k 夹具（实测 16.3k±）
+    const env = makeEnv({ contextBudgetTokens: 17000, keepRecentTurns: 1 })
     const session = env.sessions.create(['pm'])
     // 第 1 回合的核心约束 → 写入 L1 记忆（永不裁剪层）
     env.memory.upsert(session.id, 'constraint', '错误码必须复用现有 40001 规范', 'agent:pm')
@@ -461,7 +463,7 @@ describe('M2：端到端验收（30 回合）', () => {
     })
     expect(prepared.system).toContain('错误码必须复用现有 40001 规范')
     // 4) 估算 token 稳定在预算内
-    expect(prepared.estimatedTokens).toBeLessThanOrEqual(16000)
+    expect(prepared.estimatedTokens).toBeLessThanOrEqual(17000)
     // 5) 无 tool 角色孤儿消息（历史工具调用随所属 agent 消息渲染）
     expect(prepared.messages.every((m) => m.role !== 'tool')).toBe(true)
     // 6) 上下文快照可用（API 数据源）

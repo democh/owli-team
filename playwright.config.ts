@@ -140,7 +140,7 @@ export default defineConfig({
   projects: [
     {
       name: 'main',
-      testMatch: /(relay|interject|stop|right-panel|reload|artifact-(diff|preview)|m12-interactions|m14-responsive|markdown-ext|m16-.*|m21-.*|m22-.*|m24-.*|m25-.*|m26-.*|m27-.*|m28-.*|m31-.*|m33-.*|m34-.*|m37-.*|m38-.*|m39-.*|m40-.*|m41-.*|m42-.*|m43-.*|m44-.*|m45-.*|m48-.*|m50-.*|m52-.*|m54-.*|m63-.*|m65-.*|m66-.*|m69-.*|m77-.*|m78-.*|console-scenes)\.spec\.ts/,
+      testMatch: /(relay|interject|stop|right-panel|reload|artifact-(diff|preview)|m12-interactions|m14-responsive|markdown-ext|m16-.*|m21-.*|m22-.*|m24-.*|m25-.*|m26-.*|m27-.*|m28-.*|m31-.*|m33-.*|m34-.*|m37-.*|m38-.*|m39-.*|m40-.*|m41-.*|m42-.*|m43-.*|m44-.*|m45-.*|m48-.*|m50-.*|m52-.*|m54-.*|m63-.*|m65-.*|m66-.*|m69-.*|m77-.*|m78-.*|m81-.*|console-scenes)\.spec\.ts/,
       use: { baseURL: `http://127.0.0.1:${MAIN_PORT}` },
     },
     {
@@ -151,8 +151,9 @@ export default defineConfig({
     {
       // M57：多用户（独立实例，含首启向导 / 隔离断言）
       // M79：社交协作（好友 / 私聊 / 群聊 / 邀请实时化 / 多端未读同步）
+      // M80：表情回应 / 已读回执（双人互挂与对等隐身）
       name: 'auth',
-      testMatch: /(m57-auth|m79-social|m79-realtime)\.spec\.ts/,
+      testMatch: /(m57-auth|m79-social|m79-realtime|m80-.*)\.spec\.ts/,
       use: { baseURL: `http://127.0.0.1:${AUTH_PORT}` },
     },
   ],

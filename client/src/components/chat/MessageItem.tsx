@@ -14,7 +14,7 @@ import { useAgentStore } from '../../stores/agent-store'
 import { useAuthStore } from '../../stores/auth-store'
 import { usePlanStore } from '../../stores/plan-store'
 import { useRunStore } from '../../stores/run-store'
-import { useSessionStore } from '../../stores/session-store'
+import { useSessionStore, useCurrentSession } from '../../stores/session-store'
 import { useUiStore } from '../../stores/ui-store'
 import { useThrottledValue } from '../../lib/hooks'
 import { calcExpressionOf } from '../../lib/calc-badge'
@@ -33,6 +33,8 @@ import { ToolCallsPanel } from './ToolCard'
 import { MessageContext, type MdMessageInfo } from './md-ext/message-context'
 import { ReviewVerdictBadge, ReviewVerdictCard } from './ReviewVerdictCard'
 import { HandoffBar, SystemMessage } from './SystemEvent'
+import { ReactionChips, ReactionPickerButton } from './MessageReactions'
+import { ReadReceiptBadge } from './ReadReceipt'
 
 /** 流式消息渲染节流间隔（与数据层 40ms delta 合并职责分离） */
 const STREAM_THROTTLE_MS = 150
@@ -105,7 +107,7 @@ function ReasoningBlock({ text, phase }: { text: string; phase: 'thinking' | 'do
           setOpen((v) => !v)
         }}
         title={open ? '收起思考过程' : '展开思考过程'}
-        className="flex items-center gap-1.5 text-[11.5px] text-muted-foreground transition-colors hover:text-foreground"
+        className="process-row flex items-center gap-1.5 text-[11.5px] text-muted-foreground transition-colors hover:text-foreground"
       >
         <Brain className="size-3.5 text-primary/60" />
         {phase === 'thinking' ? (
@@ -141,18 +143,39 @@ function MessageItemInner({ messageId }: { messageId: string }): React.JSX.Eleme
   const agents = useAgentStore((s) => s.agents)
   const groups = useAgentStore((s) => s.groups)
   // M77：成员实例标签（同角多魂 = `名字·灵魂名`；经典/单实例 = 名字）
-  const session = useSessionStore((s) => s.sessions.find((x) => x.id === s.currentId))
+  const session = useCurrentSession()
   const flashed = useUiStore((s) => s.focusRequest?.id === messageId)
   // M57 P2：共享会话人类署名（他人昵称表 + 本人 id；兼容模式 humanNames 为空 → 仍为「你」）
   const myUserId = useAuthStore((s) => s.user?.id)
+  // M80-B：表情回应入口（需账号体系 + 非 viewer；兼容模式 / 只读共享隐藏，服务端 403 兜底）
+  const canReact = !!myUserId && session?.role !== 'viewer'
+  // M80-C：已读徽章只落在「本人最后一条人类消息」上（iMessage/钉钉同口径，历史消息不渲染；
+  // 注意：扫描范围限本人发言——对方后续发言不应使己方最新一条的徽章消失）
+  const isMyLastHuman = useSessionStore((s) => {
+    if (!myUserId || !message || message.role !== 'user' || message.userId !== myUserId) return false
+    for (let i = s.order.length - 1; i >= 0; i--) {
+      const m = s.byId.get(s.order[i])
+      if (m && m.role === 'user' && m.userId === myUserId) return m.id === messageId
+    }
+    return false
+  })
   const humanNames = useSessionStore((s) => s.humanNames)
   // M79-B：人类画像表（头像 / 头衔；优先于 humanNames 渲染）
   const humanProfiles = useSessionStore((s) => s.humanProfiles)
 
   // M37：消息级上下文（checklist / choice 容器需要 messageId 落交互态、sessionId 隔离存储键）
+  // M79：附人类定向目标展示名——正文 @用户 / @user 泛称 chip 就地展开为具体人（M79-AA 同源：humanMentions）
+  const humanLabels = React.useMemo(() => {
+    const ids = message?.humanMentions ?? []
+    return ids.map((id) => humanProfiles[id]?.name ?? humanNames[id]).filter((x): x is string => !!x)
+  }, [message?.humanMentions, humanProfiles, humanNames])
   const mdContext = React.useMemo<MdMessageInfo>(
-    () => ({ messageId: message?.id ?? '', sessionId: message?.sessionId ?? '' }),
-    [message?.id, message?.sessionId],
+    () => ({
+      messageId: message?.id ?? '',
+      sessionId: message?.sessionId ?? '',
+      ...(humanLabels.length > 0 ? { humanLabels } : {}),
+    }),
+    [message?.id, message?.sessionId, humanLabels],
   )
 
   const streaming = message?.status === 'streaming'
@@ -332,10 +355,15 @@ function MessageItemInner({ messageId }: { messageId: string }): React.JSX.Eleme
               <span>{formatClock(message.createdAt)}</span>
               <span className="font-medium text-foreground">{senderName}</span>
               <span className="flex items-center opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100 max-md:opacity-100">
+                <ReactionPickerButton message={message} disabled={!canReact} />
                 <MessageActions messageId={message.id} />
               </span>
             </div>
             {bubble}
+            <div className="flex items-center justify-end gap-1.5">
+              {isMyLastHuman && <ReadReceiptBadge message={message} />}
+              <ReactionChips message={message} />
+            </div>
           </div>
         </div>
       )
@@ -359,10 +387,12 @@ function MessageItemInner({ messageId }: { messageId: string }): React.JSX.Eleme
             <span className="text-[10.5px]">·</span>
             <span>{formatClock(message.createdAt)}</span>
             <span className="ml-auto flex items-center opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100 max-md:opacity-100">
+              <ReactionPickerButton message={message} disabled={!canReact} />
               <MessageActions messageId={message.id} />
             </span>
           </div>
           {bubble}
+          <ReactionChips message={message} />
         </div>
       </div>
     )
@@ -398,6 +428,7 @@ function MessageItemInner({ messageId }: { messageId: string }): React.JSX.Eleme
           {message.status === 'stopped' && <Badge variant="warning">已停止</Badge>}
           {message.status === 'error' && <Badge variant="destructive">出错</Badge>}
           <span className="ml-auto flex items-center opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100 max-md:opacity-100">
+            <ReactionPickerButton message={message} disabled={!canReact} />
             <MessageActions messageId={message.id} />
           </span>
         </div>
@@ -418,8 +449,11 @@ function MessageItemInner({ messageId }: { messageId: string }): React.JSX.Eleme
             />
           )}
           {streaming && <span className="turn-progress" aria-hidden />}
+          {/* 过程区（M81）：思考 → 工具 → 过程（::: process 顶层块上提至 markdown 头部）固定序；正文唯一主角 */}
           {reasoning && <ReasoningBlock text={reasoning} phase={streaming && !content ? 'thinking' : 'done'} />}
-          {review ? <ReviewVerdictCard review={review} /> : null}
+          {message.toolCalls && message.toolCalls.length > 0 && (
+            <ToolCallsPanel calls={message.toolCalls} streaming={streaming} />
+          )}
           {content ? (
             <MessageContext.Provider value={mdContext}>
               <Markdown content={content} streaming={streaming} />
@@ -431,9 +465,8 @@ function MessageItemInner({ messageId }: { messageId: string }): React.JSX.Eleme
             <span className="typing-caret ml-0.5 inline-block h-3.5 w-[7px] translate-y-[1px] rounded-[1px] bg-primary" />
           )}
 
-          {message.toolCalls && message.toolCalls.length > 0 && (
-            <ToolCallsPanel calls={message.toolCalls} streaming={streaming} />
-          )}
+          {/* M81：评审卡后移至正文之后（结论件归位；抬头已有评审徽章，语义不丢） */}
+          {review ? <ReviewVerdictCard review={review} /> : null}
 
           {message.artifacts && message.artifacts.length > 0 &&
             (isChangeMessage(message) ? (
@@ -443,6 +476,7 @@ function MessageItemInner({ messageId }: { messageId: string }): React.JSX.Eleme
             ))}
         </div>
 
+        <ReactionChips message={message} />
         <HandoffBar message={message} />
       </div>
     </div>

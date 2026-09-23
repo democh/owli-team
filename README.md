@@ -1,6 +1,6 @@
 # Owli Team
 
-本地运行的多角色 AI 协作应用：18 大场景（研发 / 商业战略 / 深度研究 / 投资研究 / 市场增长 / 销售客户 / 财务法务 / 运营行政 / 融资资本 等，覆盖工作与生活）共 73 位角色，在同一会话中自由混搭、共享上下文，通过 `@某角色` 或结构化 `handoff` 工具自主转交、形成接力链，全程流式输出。
+本地运行的多角色 AI 协作应用：40 大场景（研发 / 商业战略 / 深度研究 / 投资研究 / 市场增长 / 销售客户 / 财务法务 / 运营行政 / 融资资本 / 学术论文 / 心理支持 / 玄学文化 / 生活消费 等，覆盖工作与生活）共 161 位角色，在同一会话中自由混搭、共享上下文，通过 `@某角色` 或结构化 `handoff` 工具自主转交、形成接力链，全程流式输出。
 
 系统按「专业级」路线完成十项能力建设：**会不失忆**（五层上下文装配 + 滚动摘要压缩）、**能真干活**（Project 层 + git worktree 隔离 + 文件与 Git 工具集 + HITL 审批）、**可控可证**（会话级 Run 互斥与插话、Run/Task/Trace 落库、指标与评测闭环）。
 
@@ -11,6 +11,8 @@
 OPC 业务扩展（M21）：9 场景 34 角色全职能虚拟公司、业务工具（calc / date_calc / csv_analyze / template_fill）、业务 Markdown 卡（KPI / 时间轴 / 邮件 / 方案）与快速组队预设——详见 [design.md](design.md) §31–§34。
 
 协作范式与任务指挥（M24）：与角色正交的规划 / 执行 / 评审三范式（显式 opt-in，默认零差异）、计划提交挂起与批准 / 驳回修订 v2、派发执行与步骤进度收口、任务面板 2.0（计划板 / 按成员分组 / 「规划先行」）——详见 [design.md](design.md) §40–§41。
+
+消息密度治理（M81）：过程叙述折叠通道（`::: process`，40 场景协议全量铺设 + 源头降噪协议）与 TurnCard 过程区（思考 → 工具 → 过程 → 正文，过程默认收起、正文唯一主角）——详见 [design.md](design.md) §122。
 
 **环境要求**：Node.js 22.5+（推荐 24，持久化依赖内置 `node:sqlite`）；系统 `git`（仅 repo / worktree 模式需要）。
 
@@ -35,8 +37,8 @@ npm run dev             # 同起 server(8787) + client(5173)
 | `npm start` | 单端口生产托管（默认 8787，含 API + 前端静态资源） |
 | `npm run test` | 全量测试（server + client vitest） |
 | `npm run typecheck` / `npm run lint` | 类型检查 / ESLint |
-| `npm run eval` | mock 基线评测（32 个 golden 任务 + 回归门禁，非零退出码即回归；`--tasks=` 过滤 / `--update-baseline` 刷新基线 / `--judge` 走真实模型） |
-| `npm run e2e` | Playwright E2E（mock 模式，36 条主链路） |
+| `npm run eval` | mock 基线评测（64 个任务：56 个 golden 任务 + 8 个真实模式探针 + 回归门禁，非零退出码即回归；`--tasks=` 过滤 / `--update-baseline` 刷新基线 / `--judge` 走真实模型 / `--real` 跑探针任务） |
+| `npm run e2e` | Playwright E2E（mock 模式；63 个 spec / 145 条用例，含 approval / auth 多用户实例） |
 | `npm run check:agents` / `npm run check:skills` | 校验 Agent 包（目录 / `_group.yaml` / 灵魂 / 协议 / 六段骨架 + 正文 ≥1200 字符质量报告）与技能文档（front-matter + 正文 ≥60 行质量报告）；**CI 已启用 strict 门禁**（`QUALITY_STRICT` / `SKILL_STRICT`） |
 | `npm run migrate:agents` | 幂等迁移旧资产：`prompts/*.md` + 头像 → `agents/` 单包目录（`--prune` 清理旧文件） |
 | `npm run migrate:json` | 旧 `data/sessions/*.json` 一次性导入 SQLite |
@@ -63,30 +65,17 @@ docker compose up -d --build
 
 ```
 ├── shared/          协议单一事实源（Session / ChatMessage / RunEvent / NotifyEvent / Artifact…）
-├── agents/          Agent 资产包（单目录自包含，18 场景 73 角色；每角色 = AGENT.md + 可选 souls/ 灵魂变体 + avatar.png）
+├── agents/          Agent 资产包（单目录自包含，40 场景 161 角色；每角色 = AGENT.md + 可选 souls/ 灵魂变体 + avatar.png）
 │   ├── README.md    新增角色操作手册（建目录 → 写 AGENT.md → 可选 souls/ 与 avatar.png → check:agents）
 │   ├── _protocol.md 全局协作协议（分层协议第一层，场景协议追加其后）
 │   ├── _presets.yaml 快速组队预设（跨场景编制模板；缺失时 UI 自动隐藏）
 │   ├── strategy/    商业战略（chief / strategist / pricing / insight + 场景协议）
 │   ├── development/ 研发团队（pm / architect / designer / frontend / backend / qa / devops 等 13 角色 + 场景协议）
-│   ├── sre/         站点可靠性（sre + 场景协议）
-│   ├── brainstorm/  头脑风暴（facilitator / ideator / challenger / refiner + 场景协议）
 │   ├── research/    深度研究（lead / scout / analyst / verifier + 场景协议）
-│   ├── marketing/   市场增长（growth / content / seo / brand / ads / social / video / pr / influencer / localizer，场景并行）
-│   ├── sales/       销售客户（bd / sales / success / support）
-│   ├── finance/     财务法务（finance / tax / legal / compliance / ip + 场景协议）
 │   ├── invest/      投资研究（invest-lead / analyst-fa / analyst-ta / analyst-news / quant + 场景协议）
-│   ├── bi/          商业智能（bi + 场景协议）
-│   ├── ops/         运营行政（ops / assistant / recruiter / supply / hr / trainer）
-│   ├── funding/     融资资本（fundraiser / ir）
-│   ├── health/      健康生活（fitness / nutrition / wellness）
-│   ├── learning/    学习成长（tutor / language / reading）
-│   ├── travel/      出行旅行（travel）
-│   ├── wealth/      财富管理（wealth）
-│   ├── home/        家庭生活（chef / home / parenting / pet）
-│   └── personal/    个人管理（coach / life-admin）
-├── skills/          技能库 46 个（12 组：研发 / 设计 / 数据 / 研究 / 营销 / 客服 / 财务法务 / 投资研究 / 运营 / 战略等；业务角色显式预载，生活场景角色按需加载，见 agents/README.md「技能库与预载」）
-├── design.md        架构设计总纲（含 76 条 ADR 索引）
+│   ├── …            其余 36 个场景（电商 / 自媒体 / 学术 / 谈判 / 模拟法庭 / 游戏 / 跑团 / 心理支持 / 玄学 / 生活 等）同构组织，完整名录见 http://localhost:5173/#/agents
+├── skills/          技能库 70 个（研发 / 设计 / 数据 / 研究 / 营销 / 客服 / 财务法务 / 投资研究 / 运营 / 战略 / 玄学 / 生活等分组；业务角色显式预载，生活场景角色按需加载，见 agents/README.md「技能库与预载」）
+├── design.md        架构设计总纲（ADR 全量索引见 docs/adr/README.md）
 ├── docs/            api.md（接口表）· operations.md（运维与配置）· adr/（决策记录）
 ├── server/          Express + ws
 │   └── src/
@@ -110,7 +99,7 @@ docker compose up -d --build
 ## 核心机制
 
 - **接力与编排**：`@某角色` 或 `handoff(target, reason, expected_output)` 工具转交（`target` 支持多目标 ≤4 = fan-out 并行意图）；同会话永远只有一个活跃 Run，运行中再发消息 = 插话（回合边界注入）；循环检测（波次签名序列 + 3-gram 内容级）自动收尾交还用户。
-- **场景与 Agent 包**：19 大场景（智能协作 / 商业战略 / 研发团队 / 站点可靠性 / 头脑风暴 / 深度研究 / 市场增长 / 销售客户 / 财务法务 / 投资研究 / 商业智能 / 运营行政 / 融资资本 / 健康生活 / 学习成长 / 出行旅行 / 财富管理 / 家庭生活 / 个人管理）；`agents/<场景>/<角色>/` 单目录自包含（AGENT.md 人设 + 可选 souls/ 灵魂变体 + avatar.png 自动发现）；协议分层 = 全局协议 + 场景协议（追加语义）+ 人设 + 灵魂段；新增角色只需建目录并跑 `check:agents`，无需改代码。
+- **场景与 Agent 包**：40 大场景（研发团队 / 站点可靠性 / 商业战略 / 深度研究 / 市场增长 / 销售客户 / 财务法务 / 运营行政 / 融资资本 / 商业智能 / 电商经营 / 自媒体工作室 / 头脑风暴 / 学术论文 / 谈判桌 / 模拟法庭 / 议题圆桌 / 游戏工坊 / 跑团工坊 / 投资研究 / 健康生活 / 心理支持 / 学习成长 / 出行旅行 / 财富管理 / 家庭生活 / 置业安家 / 家装设计工作室 / 家庭照护 / 职业发展 / 个人管理 / 情感关系 / 个人法务 / 传统数术 / 星象占星 / 塔罗研习 / 堪舆阳宅 / 哲学茶室 / 创作工作室 等）；`agents/<场景>/<角色>/` 单目录自包含（AGENT.md 人设 + 可选 souls/ 灵魂变体 + avatar.png 自动发现）；协议分层 = 全局协议 + 场景协议（追加语义）+ 人设 + 灵魂段；新增角色只需建目录并跑 `check:agents`，无需改代码。
 - **灵魂变体**：同一角色可挂多套人格与表达风格（如卢娜的「狂野 / 禅意 / 考据派」），创建会话时可选、运行中可一键切换（落 system 事件条）；无 souls/ 的角色行为与现状完全一致，职责、事实与协议优先级永远高于灵魂。
 - **同角多魂（分身同台）**：同一角色的不同人格可**同时以多个成员实例入编**（如 卢娜·狂野 + 卢娜·禅意 同台）——组队台按「参与性格」勾选入编（首人格走经典成员键、其余为分身键 `agentId~soulId`）；`@名字` 召集该角色全部在场实例、`@名字·灵魂名` 点名单个分身；多实例在场时发布/展示统一为 `名字·灵魂名`（单实例零变化）；分身可随时换装（键替换）或移除。
 - **动态成员**：运行中可邀请 / 移出成员；变更落 `role:'system'` 消息（渲染为成员事件条，不进 LLM 窗口）；加人从下一回合即时生效，当前发言 / 波内进行中的成员拒绝移出。

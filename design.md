@@ -617,7 +617,7 @@ http.Server ──▶ WsHub（单例，挂载 /ws）
 
 ### 19.1 设计目标
 
-- **一眼辨人（v2 强化）**：全部业务角色配备专属卡通形象照（v2 批 74 张起、后续批次逐批增补；M69 批 46 张 2026-09-19 落盘——见 §19.3 表尾；`interior` 三角色暂缺、回退渐变占位），靠「年龄 + 性别 + 脸型 + 发色发型 + 眼镜 / 胡须 + 肤色 + 职业道具」七维设定逐一区分（设定表见 §19.3），而非仅靠配色；统一纯白背景，可无缝嵌入任意底色容器；
+- **一眼辨人（v2 强化）**：全部业务角色配备专属卡通形象照（v2 批 74 张起、后续批次逐批增补；M69 批 46 张 2026-09-19 落盘、v99 批四席 2026-09-23 补生成——均见 §19.3 表尾注；`blank/general` 有意回退渐变占位），靠「年龄 + 性别 + 脸型 + 发色发型 + 眼镜 / 胡须 + 肤色 + 职业道具」七维设定逐一区分（设定表见 §19.3），而非仅靠配色；统一纯白背景，可无缝嵌入任意底色容器；
 - **卡通化（v2）**：风格化 3D 卡通（动画电影式渲染）——成人比例（约 1:4 头身，非 Q 版 / 幼态）、五官圆润简化、眼神略夸张、哑光黏土质感、色彩明快；头部占画面高度约 55%，保障 16–96px 小尺寸下的可辨识性；
 - **成年团队感**：成年比例半身像，统一构图与柔和棚拍光，人物好看且专业；
 - **面孔与命名一致**：西式命名角色（Felix / Ada / Iris / Leo / Max / Nova / Otto…）为欧美面孔，中文命名角色为东亚面孔；肤色、年龄带（24–52 岁）与发色错开；
@@ -746,9 +746,6 @@ agent 包内 avatar.png 自动发现 ──> avatar.image = /api/agents/<id>/ava
 | moot-court · plaintiff-counsel | 申言 · 原告代理 | 36 · 东亚男 · 锐利进取 | 短背头 + 无框眼镜 | 深蓝律师袍式西装 | 起诉状卷宗 |
 | moot-court · defense-counsel | 析辩 · 被告代理 | 39 · 东亚女 · 沉着机敏 | 低盘发 + 珍珠耳钉 | 炭灰西装裙 | 质证清单 |
 | moot-court · presiding-judge | 端衡 · 审判长 | 48 · 东亚男 · 威严公正 | 花白短发 + 浓眉 | 黑色法袍 | 法槌 |
-| business-sim · sim-host | 掌局 · 推演主持 | 34 · 东亚男 · 精干操盘 | 黑色短发 | 深蓝商务衬衫 + 领带夹 | 沙盘小城市模型 |
-| business-sim · market-referee | 市衡 · 市场裁判 | 37 · 东亚女 · 冷静中立 | 齐肩直发 + 细框眼镜 | 砖红西装 | 行情屏平板 |
-| business-sim · review-coach | 温故 · 复盘教练 | 42 · 东亚男 · 长者智慧 | 灰发 + 温和皱纹 | 驼色开衫 | 翻开的复盘笔记 |
 | philosophy · socratic-host | 叩问 · 追问主持 | 45 · 东亚男 · 智者诘问 | 银灰卷发 | 深绿粗针织衫 | 茶杯（双手端） |
 | philosophy · thought-experimenter | 设境 · 思想实验 | 32 · 东亚女 · 诡思灵动 | 不对称短发 | 石板蓝衬衫 | 水晶球小摆件 |
 | philosophy · ethics-moderator | 议善 · 伦理研讨 | 38 · 东亚女 · 端庄理性 | 低马尾 + 丝巾 | 米白西装 | 小天平 |
@@ -764,12 +761,16 @@ agent 包内 avatar.png 自动发现 ──> avatar.image = /api/agents/<id>/ava
 | sre · chaos-officer | 试雷 · 混沌演练官 | 33 · 东亚男 · 冒险气质 | 蓬乱黑发 | 防护马甲 | 故障指示灯 + 扳手 |
 | personal · habit-coach | 立习 · 习惯教练 | 30 · 东亚女 · 清朗亲和 | 利落马尾 | 湖蓝卫衣 | 打卡日历卡 |
 | ops · license-keeper | 执证 · 证照管家 | 45 · 东亚男 · 老成持重 | 银发整齐 | 深蓝工装夹克 | 证照文件袋 + 印章 |
+| funding · dd-analyst | 卫衡 · 尽调分析师 | 42 · 东亚男 · 锐利审慎 | 墨黑侧分短发（两鬓微霜）+ 细框矩形眼镜 | 深棕三件套 + 条纹衬衫 | 放大镜 + 尽调文件夹 |
+| wellness-mind · emotion-companion | 听澜 · 情绪陪谈师 | 33 · 东亚女 · 温和沉静 | 低扎中长发 | 青绿针织开衫 + 米白内搭 | 双手捧茶杯 |
+| wellness-mind · mindfulness-guide | 安屿 · 正念引导师 | 30 · 东亚女 · 安定柔和 | 黑色低发髻 | 墨绿棉麻衬衫 | 小盆绿植 |
+| wellness-mind · psycho-educator | 知澄 · 心理科普员 | 36 · 东亚男 · 温和知性 | 整洁短发 + 细框眼镜 | 深蓝开衫 + 浅蓝衬衫 | 翻阅的厚书 + 彩色便签 |
 
-> 注（2026-09-19 M69 头像批）：上述 46 行按成品观测回溯补录（统一风格前缀 v3：半写实 3D 卡通 / 成人比例约 1:4.5 / 纯白背景 / 哑光质感；同批生成 512×512 落盘）；M51 批 40 角色与 interior 批的形象以成品为准（未入表）。
+> 注（2026-09-19 M69 头像批）：上述 46 行按成品观测回溯补录（统一风格前缀 v3：半写实 3D 卡通 / 成人比例约 1:4.5 / 纯白背景 / 哑光质感；同批生成 512×512 落盘）；M51 批 40 角色与 interior 批的形象以成品为准（未入表）。2026-09-23 补：v99 新增四席（funding/dd-analyst 与 wellness-mind 三席）按成品观测补录于表尾；business-sim 三行随场景下线移除。
 
 用户（人类主角）不设头像：界面中不渲染用户形象（消息流、交接条、接力视图均不出现用户头像）。
 
-图片资产位于各 Agent 包内（`agents/<场景>/<id>/avatar.png`，19 场景共 74 张，经 `GET /api/agents/:id/avatar` 直出）；旧版头像备份于 `data/avatar-backup-2026-09-17/`（本仓无 Git，替换不可逆，清理前先确认范围）。生成规格：纯白背景（#ffffff）· 半身像居中（头部占画面高约 55%）· 柔和棚拍光 · 风格化 3D 卡通（成人比例约 1:4 / 五官圆润简化 / 哑光黏土质感），1024px 生成后压缩至 512px 落盘；缺失 / 加载失败回退渐变 + 图标（不影响功能）。
+图片资产位于各 Agent 包内（`agents/<场景>/<id>/avatar.png`，40 场景共 160 张，经 `GET /api/agents/:id/avatar` 直出）；旧版头像备份于 `data/avatar-backup-2026-09-17/`（本仓无 Git，替换不可逆，清理前先确认范围）。生成规格：纯白背景（#ffffff）· 半身像居中（头部占画面高约 55%）· 柔和棚拍光 · 风格化 3D 卡通（成人比例约 1:4 / 五官圆润简化 / 哑光黏土质感），1024px 生成后压缩至 512px 落盘；缺失 / 加载失败回退渐变 + 图标（不影响功能）。
 
 ### 19.4 状态与角标
 
@@ -4452,4 +4453,88 @@ agent 此前对「现在」零感知：system 提示不含日期 / 时区 / 运�
 - 展示：runtime 计入 L3（`snapshot` label 更新为「技能 / 工作区 / 运行时」）；
 - 验证：server `tests/runtime-context.test.ts` 8 例（日期 / 星期 / 时区断言、**同日不同时刻字节级一致**（缓存友好性守护）、跨天变化、system 尾段位置（在花名册之后且不含时刻）、三范式时刻行、`prepareTurn` 跨角色 / 跨场景集成 + L3 label）；server 全量回归 **116 文件 / 1407 例 ✅** + typecheck 0 错。
 
-- 镜像面：ADR 0202 + `docs/adr/README.md` 索引、根 README「上下文工程」行、本页。
+- 镜像面：ADR 0202 + `docs/adr/README.md` 索引、根 README「上下文工程」行、本页 。
+
+## 116. 表情体系与已读回执（M80）——表情选择器 · 消息回应 · 已读对外展示
+
+消息侧此前无任何表情能力，群聊表态只能发整句；「对方看没看」在 M79 被刻意搁置（隐私争议）。本批补齐三件：表情选择器（Unicode 原生内置库）、消息表情回应（reactions）、已读 / 未读对外展示（显式 opt-out + 对等双向）。决策与被否决方案见 ADR 0206–0208；专项设计（交互详设 / 数据契约 / 风险登记）见 `docs/emoji-and-readreceipt-design.md`。
+
+- 表情选择器（`shared/src/emoji-data.ts` + `client/src/components/chat/EmojiPicker.tsx`）：Unicode 原生 + 系统字体（零 CDN / 零图片资产；无短代码双轨——Markdown 管线零改动）；内置 348 字符（常用 48 直达网格 + 8 分类）+ 中英 / 拼音关键词内存索引（`searchEmoji`）+ localStorage 最近 24 槽；Composer 工具条入口（与 @ 面板 popover 单例互斥）；`isEmojiLike` 共享形态校验（库内直通；库外按码点白名单 ≤6 码点——肤色变体放行）；肤色变体 v1 不做（数据结构预留）；
+- 消息表情回应（迁移 v28 `message_reactions` 三列联合主键）：`PUT/DELETE /api/sessions/:id/messages/:messageId/reactions`（写级成员；viewer `403`；兼容模式拒绝；幂等 toggle；同消息同用户 ≤8 种软限 `429`）；消息投影 `reactions`（count / userIds / mine 按请求者）+ `notify:reaction` 全量替换帧（mine 由客户端按 userIds 本地推导）；纯人类元数据——不进 LLM 上下文、不触发 Run、不计未读；气泡悬停「表情回应」（快捷 6 连 + 「更多」compact 面板）+ 聚合条（自己挂过高亮，悬停示回应者）；
+- 已读对外展示（翻案 M79 §2.5；水位推导零新表）：只对「本人最后一条人类消息」渲染——私聊二态「已读 / 未读」、群聊 / 团队「N/M 人已读」+ 悬停名单（agent / viewer / 停用与关闭者不计入）；`showReadReceipts` 默认开，关闭 = **对等双向不可见**（不投影 / 不广播 + 请求者空投影 + 客户端门双保险；admin 无豁免；本人多端同步不受影响）；会话主题 `notify:read-receipt` + `GET /sessions/:id` `memberReads` 首帧投影；
+- 验证：server `tests/m80-reactions.test.ts` 4 例（reactions 全链 + 广播帧 / 非法与软限 / 关闭者不投影不广播 / **请求者关闭 → 空投影（对等双向）**）；client `tests/m80-emoji.test.ts` 3 例（数据集结构 / 搜索 / 形态校验）；E2E auth 项目 `m80-reactions` / `m80-readreceipt`（双人互挂实时聚合 + 私聊已读与关开关隐身）。
+
+- 镜像面：ADR 0206–0208 + `docs/adr/README.md` 索引、`docs/api.md` §3/§4/§17/§24、`docs/operations.md` §9、`docs/emoji-and-readreceipt-design.md`（头部落位注记）、本页。
+
+## 117. 空间（Space）——工作生活一体第一批（P1–P3）
+
+会话列表平铺无分组、记忆无域隔离、灵魂与场景无绑定——「工作生活一体」专项（`docs/work-life-fusion-design.md`）的 P1–P3 落地：空间一级 IA + 记忆域隔离 + 空间默认灵魂。决策与被否决方案见 ADR 0209–0211。
+
+- P1 空间基座（迁移 v27）：`spaces` 表 + `sessions.space_id`（FK 置空）；内置三空间「我的 / 工作 / 生活」（`ensureBuiltins` 启动幂等校正）；缺省 / `'default'` 不落字段——存量零迁移零差异；`PATCH /sessions/:id { spaceId }` 与改名同口径（多用户仅属主）+ `notify:session-meta` 广播；fork 继承；`/api/spaces` CRUD（内置不可删，删除后关联会话回「我的」+ `sessionsDetached`）；左栏空间切换器（图标 chips）+ 会话列表 / Alt+1..9 / 启动自动选中按空间过滤；`space-store` localStorage 持久（`owli.currentSpace`）；CreateSessionDialog 随行提交（default 不随行）；
+- P2 记忆域隔离（迁移 v29）：`memory.space_id` 写入按来源会话推导（无来源 = 跨域共享 NULL）；召回谓词 = 同空间 ∪ 跨域共享（L1.5 注入与记忆面板同口径；`spaceId=shared` 仅跨域）；唯一索引升级 `idx_memory_unique_scoped_v2`（唯一性维度并入空间域）；记忆面板空间 Tab + 「按空间隔离」明示文案；
+- P3 空间默认灵魂（迁移 v30）：`spaces.soul_overrides`（agentId → soulId）；`applySpaceSoulDefaults` 在会话创建 / 成员入编两处解析——仅经典成员键（分身键跳过）、显式选择永远优先、无绑定零差异；运行期换装 / 分身同台零变化；
+- P4 起手：`_group.yaml` `ritual` front-matter schema（prompts.ts；订阅 → schedule 与时间线首页属后续批次）；
+- 验证：server `tests/spaces.test.ts` 6 例（内置落种幂等 / 自建 CRUD 与排序 / 内置不可删 / 会话归属零差异与 `setSpace` 往返 / `soulOverrides` 读写 / `applySpaceSoulDefaults` 合并语义）+ `tests/memory-space.test.ts` 4 例（写入分域 / 无来源跨域 / query 过滤 / 召回过滤）；`m25-store` 索引断言对齐 v2；
+- 边界：空间为个人级视图层实体（多用户模式暂全实例共享，用户级隔离留待后续批次）；通知策略 / 时间线 / 融合闭环 / 商业化分层属 P4–P6 后续批次。
+
+- 镜像面：ADR 0209–0211 + `docs/adr/README.md` 索引、`docs/api.md` §3/§5/§25、`docs/work-life-fusion-design.md`（头部落位注记）、本页。
+
+## 118. 场景体系调优——心理支持新增 · 对抗推演域收敛 · 事实核查收编（v99）
+
+全量盘点（40 场景 / 165 角色）后收敛场景体系的三类问题：心理情绪支持为最大空白（relationship / care 均明确排除诊疗）；对抗推演域同质化（debate / business-sim 与 negotiation / moot-court / society 重叠）；society/fact-checker 与 research/verifier 职能重复。本批「两增两减一收编」收口后为 **40 场景 / 161 角色**。
+
+- 新增 `wellness-mind/` 心理支持场景（emotion-companion 听澜 / mindfulness-guide 安屿 / psycho-educator 知澄）：**非治疗定位 + 危机红线零容忍**（危机信号不交接给任何人、直接对用户响应并给出专业渠道）、倾听先于建议；协议含质量红线与典型失败模式；串行陪跑链路（陪谈 → 练习 → 科普）+ dock/coach 形态；
+- 新增 `funding/dd-analyst` 卫衡（投资人视角一级市场尽调：业务 / 财务 / 团队 / 法务四线清单 + 红旗分级 + 证据三级标注），接入 fundraiser → dd-analyst → ir 链路（`fundraiser` handoff 同步）；
+- 下线 `debate/`（4 角色）与 `business-sim/`（3 角色）整场景；`society/fact-checker` 收编并入 moderator（齐观）——协议分工改「主持先行核查事实基线 → 立场 / 政策伦理并行 → 收口」，观察报告新增事实基线章，齐观补挂 `source-verification` 与 web 检索工具；预设 `classic-debate` 删除、`issue-roundtable` 改 3 人链路；
+- 配套补强：组队预设 33 → 43（塔罗三张快解 / 跑团快速开团 / 论文冲刺 / 哲学茶席 / 关系体检 / 家庭一周安排 / 财务体检 / 维权路径评估 / 模拟庭审 / 销售冲刺 / 情绪安顿）；灵魂变体 +6（general 干练·温暖 / 观照 学院派·直觉派 / 马骁 魔鬼教官·温和陪练）；声纹 +3（听澜 / 观照 / 观复；于清声纹沿用 P1 首批）；health 场景补挂 `health-metrics` 技能；
+- 验证：check:agents **161/161 + 协议 40/40 + 声纹 24/24 ✅**；mock 镜像覆盖 5/5 ✅；eval（mock 确定性）**56/56 ✅**；受影响 E2E（m43-pk 谈判保留 + m52-stage 圆桌 3 席 / arena 改谈判桌）**24/24 ✅**；
+
+- 镜像面：`agents/CHANGELOG.md` v99、`agents/README.md` 统计、根 README 场景枚举、`e2e/helpers.ts` AGENT_NAME、`server/src/llm/mock.ts` 资产面具（四件套）、`evals/tasks/40–60`（+20 任务）、ADR **0212** + `docs/adr/README.md` 索引、本页。
+
+## 119. 连接与联网加固批——UA 池 · Cookie 分桶 · SSH 指纹 · DB worker 化
+
+M57 多用户与长期运行暴露的横切加固：联网反爬（UA 池可配刷新 / Cookie 按用户分桶 / 预热统一）、凭据与副作用安全（SSH 主机指纹 opt-in / 浏览器口令脱敏 / 写类工具不自动重试）、DB 连接器稳定性（worker 线程化 + 语句级超时 + 只读行数下推）。决策与被否决方案见 ADR 0213–0214。
+
+- 联网反爬：内置 UA 池刷新（Chrome 151 / Safari 26）；`HTTP_UA_POOL` 追加 UA（前置合并 + host 散列；`effectivePool` 单测）；Cookie 罐按 `cookieKey`（触发者）分桶——多用户同站点不串号；web_search 预热统一走反爬层 Cookie 罐（删除手工拼接双套机制；按「引擎+用户」30 分钟节流）；
+- 凭据与副作用：SSH `hostFingerprint`（`SHA256:<base64>` / 64 位 hex → hostVerifier，opt-in 反 MITM）+ 连接表单「主机指纹」字段；浏览器 fill 命中 password 输入时步骤时间轴落库 `***`；registry 失败重试仅限只读工具（写类不重试——避免「已生效但响应失败」的重复副作用）；浏览器会话关闭清理截图目录；
+- DB 连接器（连接中心 SQLite）：每连接 = 独立 worker 线程（慢查询不再冻结事件循环）；语句级超时 = terminate worker + `isBroken` 句柄自愈重建；只读行数下推 `wrapSelectWithLimit`（`LIMIT maxRows+1`；EXPLAIN / PRAGMA / 多语句不包裹）；
+- 验证：`anti-bot.test.ts`（effectivePool / cookieKey 分桶）、`m23.test.ts`（指纹解析与 hostVerifier）、`tools.test.ts`（写类不重试 / 只读重试 1 次）、`m22.test.ts`（wrapSelectWithLimit）+ 全量回归；
+- 镜像面：`.env.example`（`HTTP_UA_POOL`）、`docs/operations.md` §4.5、ADR 0213–0214 + `docs/adr/README.md` 索引、本页。
+
+## 120. 仪式订阅（P4-A）——场景 ritual 声明 · 一键订阅 · 到点建会话并注入 opener
+
+「工作生活一体」专项 P4 首批：场景包以 `_group.yaml` 声明 `ritual`（title / cron / opener / members?），用户一键订阅后由调度到点自动开一场新会话并注入 opener（「每天 22:00 塔罗」「周日 20:00 复盘」从人工操作变为常驻能力）。决策与被否决方案见 ADR 0215。
+
+- 订阅存储（迁移 v31 `ritual_subscriptions`）：不扩 scheduled_tasks（其语义 = 会话内任务，按会话鉴权）；触发时才物化会话；按 `user_id` 隔离（兼容模式 'local'）；同场景订阅幂等、上限 10 个/用户；
+- 服务端独裁：请求体只收 `sceneId` / `spaceId`；title / cron / opener / members 从声明与场景 chain 解析并快照落库（members 缺省 = chain；空编制走 PRS 零选择开场）；
+- 执行：ScheduleService.tick 同轮 `fireRitual`——到期 → 建会话（标题 `${title} · MM-DD`）+ 落 opener 用户消息 → `engine.launch` 进入协作运行 → 结算推进 next + `last_session_id` 留痕；补跑窗口（超 `scheduleCatchupMs` 只推进不引爆）与失败 `last_error` 留痕同 M35；
+- API 与入口：`GET/POST/DELETE /api/rituals`（本人资源；跨用户 404；未装配 503）；新建会话对话框场景卡「订阅 / 已订阅」toggle（仅声明 ritual 的场景渲染）；
+- 资产：3 场景声明 ritual——tarot「每日塔罗 · 每晚 22:00」/ wellness-mind「每日正念 · 每天 08:30」/ personal「每周复盘 · 周日 20:00」；`PromptLibrary.validate()` 校验 cron 合法性 + members 跨引用；
+- 验证：server `tests/ritual-subscriptions.test.ts` 7 例（订阅校验 / 幂等 / 上限 / 归属隔离 / 到期触发 / 补跑窗口 / 未到期不触发）；client `tests/m-ritual-subscribe.test.tsx` 2 例（订阅退订 toggle / 未声明不渲染）；
+- 边界与续批（2026-09-23 二批补充）：**订阅编辑（暂停 / 恢复 / 改 cron）· 通知空间化分级（生活空间晚间静默，仅入箱不打扰）· 今日时间线卡 v1（左栏顶部：问候 / 下一场仪式 / 快捷入口）· 全局提升（P5 前置：`POST /memories/:id/elevate` + 审计 `memory.elevate`）· 空间管理（新建 / 删除自建）已实施**；**三批（2026-09-23）：系统仪式（morning-brief「晨间安排」工作日 08:00 · daily-review「每日复盘」工作日 21:00，`ritualId` 命名空间与场景键独立；灵魂变体 v102–v104 九席补齐跨空间双人格）· 空间档案卡（默认灵魂 `soulOverrides` 编辑）· 今日安排聚合（`GET /api/schedules/upcoming` + 卡片展示）· 活跃 Run 聚合（`/api/runs/active`）· 自建空间用户级隔离（迁移 v32 `owner_id`，写操作归属校验）已实施**；今日时间线完整版（晨间日程 / 天气）属后续批次。
+
+- 镜像面：ADR 0215 + `docs/adr/README.md` 索引、`docs/api.md` §26、agents/CHANGELOG v101、`docs/work-life-fusion-design.md` 头部（实施落位/待办）、本页。
+
+## 121. Agent Studio——AI 生成 Agent / Skill 草稿（生成与落盘分离）
+
+「新建 Agent」全链路补全：控制台（M26）已有手填创建 / 编辑 / 校验 / 热生效，本批补上 **AI 按描述生成**——一句话 → 六段合规草稿 → 预填编辑器 → 既有创建链路落盘（Skill 同构：诉求 → 手册 → 直接创建进编辑器）。详细设计见 `docs/agent-studio-design.md`，决策与被否决方案见 ADR 0216。
+
+- 服务端 `AssetGenerator`（`server/src/assets/generator.ts`）：上下文注入（场景清单含成员链 + 技能名单）→ 提示词（六段骨架 + 严格 JSON 契约 + 轻量 json_schema）→ `resilientStream` 一次性调用（与摘要压缩同范式）→ `extractJson` 解析 → 后校验（六段 / 每段 ≥60 字 / 正文 ≥900 字 / id 规则 / id·name 冲突 / handoff·skills 越界过滤）→ issues 回注重试 ≤3 轮（终轮带 issues 返回不阻断）；
+- API：`POST /api/console/generate/agent | skill`（草稿**仅内存**、不落盘；`ApiDeps.assetGen` 未装配 503）；落盘复用既有 `createAgent` / `createSkill`（校验 / 409 / `notify:assets-changed` 单点收口）；
+- 客户端：AgentConsole 页头「AI 生成」（描述 → 结果区含轮次与 issues → 「填入新建向导」step2 全字段预填）；SkillConsole 新建对话框「AI 生成并创建」（诉求 → 直接创建并进编辑器）；
+- 验证：server `tests/asset-generator.test.ts` 7 例（一次通过 / 坏 JSON 回注重试 / 六段缺失 issues / id 冲突与引用越界 / 全败抛错 / Skill 正常与重名短正文）；client `tests/m26-console.test.tsx` 扩展 2 例（生成 → 预填向导 / 生成 → 直接创建 POST 断言）；
+- 边界（v2 候选）：AI 生图头像、生成角色自动 eval 自评、整套生成（新场景 + 角色 + 技能包）、生成历史 / 多候选对比。
+
+- 镜像面：ADR 0216 + `docs/adr/README.md` 索引、`docs/agent-studio-design.md`、`docs/api.md`（console 区两行）、本页。
+
+## 122. 过程叙述通道与 TurnCard 过程区（M81）——`::: process` 容器 · 过程区三段式 · 40 场景全量铺设
+
+用户实测「Agent 对话太啰嗦」（陪谈类场景）：content 通道混装过程叙述（动作预告 / 记录与检索说明 / 进度自述 / 方法论旁白），既有折叠只覆盖 reasoning 与 toolCalls。本批补齐第三类可折叠通道（`::: process`），并把「源头降噪」全量铺设到 40 场景 / 161 角色。详细设计见 `docs/turn-card-process-design.md`，决策与被否决方案见 ADR 0217。
+
+- 渲染层（批 A，纯前端 + mock 一条）：`remark-ext.ts` 新增 process 容器（builder / finalize 写入 data-chars 字数 / **顶层上提**至消息头部；嵌套块就地渲染；未闭合 fail-safe 展开回正文）；新组件 `md-ext/ProcessBlock.tsx`（流式展开 / 回合结束折叠一次 / touched 优先，与 ReasoningBlock、ToolCallsPanel 同构）；TurnCard 重排为「思考 → 工具 → 过程 → 正文 → 评审卡 → 交付件」（工具行上移、评审卡后移两处位置调整）；`.md-process` / `.md-process-*` / `process-row` 共享类样式；
+- 协议层（批 B，全量）：`_protocol.md` `<style_channels>` 三通道 → 四通道（过程收进容器 ≤3 句 / 放发言末尾 / 容器内不写 @；复述确认仅对新增信息；安全合规提示与交付声明禁止折叠）；**40 份场景协议**统一在 `## 质量红线` 前铺设「## 过程叙述约定（界面承接）」段——A 型 32 标准段 / B 型 4 方法性复述豁免（philosophy / metaphysics / moot-court / brainstorm）/ C 型 4 复述去重 + 危机红线（wellness-mind / personal / care / relationship）；tarot 条目 11 对齐 `::: process`；角色 **3 改 1 免**（emotion-companion / coach / rel-coach；socratic-host 场景豁免）+ emotion-companion 声纹改写；
+- 门禁与测试：check:agents `PROTOCOL_SECTIONS` 增第三段「## 过程叙述约定」（CI strict 同批落地；此后新场景自动强制）；mock「过程走查」触发块（emotion-companion）；E2E `m81-turncard-process.spec.ts` 2 例（默认收起 + 展开 / 上提顺序）；client `tests/md-process.test.tsx` 13 例（解析 6 + 交互 6 + 顺序 1）；
+- 核验（2026-09-23 收口）：check:agents（`QUALITY_STRICT=1`）161/161 + 协议 40/40 + 声纹 24/24 · eval 56/56 · server 1488 · client 1367 · E2E m81 2/2 · 双端 typecheck 0 错 · lint 0 error；context 预算夹具 16k → 17k（实测 16.3k±）；
+- 被否决：前端启发式识别 / 独立消息字段 / 字符串二次扫描器 / 单行聚合总行 / 复用 details（详见 ADR 0217）。
+
+- 镜像面：ADR 0217 + `docs/adr/README.md` 索引、`docs/turn-card-process-design.md`（专项设计，状态已回写）、`agents/CHANGELOG.md` v105、E2E `m81-turncard-process.spec.ts`、本页。

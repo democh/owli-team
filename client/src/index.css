@@ -1006,6 +1006,20 @@
   margin-bottom: 0;
 }
 
+/* 过程叙述折叠块（::: process，M81）：TurnCard 过程区第三件——摘要行（process-row 共享类）+ 折叠体 */
+.md-process {
+  margin: 0 0 0.5rem;
+}
+.md-process-summary {
+  cursor: pointer;
+}
+.md-process-body > :first-child {
+  margin-top: 0;
+}
+.md-process-body > :last-child {
+  margin-bottom: 0;
+}
+
 /* KPI 指标卡组（::: kpi）：响应式卡片网格 + 涨跌色 + 目标进度条 */
 .md-kpi {
   margin: 0.625rem 0;
