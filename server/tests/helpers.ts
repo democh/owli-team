@@ -67,6 +67,8 @@ export function makeEnv(overrides: Partial<AppConfig> = {}) {
   cfg.dbFile = path.join(cfg.dataDir, 'app.db')
   // M6：worktree 目录必须隔离到临时 data（绝不指向真实仓库的 data/worktrees）
   cfg.worktreeDir = path.join(cfg.dataDir, 'worktrees')
+  // M82：运行期设置文件同样隔离（防 PUT /api/settings 类用例污染仓库真实 data/settings.json）
+  cfg.settingsFile = path.join(cfg.dataDir, 'settings.json')
   cfg.logLevel = 'silent'
   const prompts = new PromptLibrary({ agentsDir: cfg.agentsDir, promptsDir: cfg.promptsDir, onWarn: () => {} })
   const skills = new SkillLibrary(cfg.skillsDir)

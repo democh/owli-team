@@ -134,6 +134,13 @@
 | `HTTP_UA_POOL` | 空 | 追加 UA 池（每行一个；与内置池合并后按站点散列选择；用于刷新内置池未跟上的新浏览器版本） |
 | `HTTP_MIN_INTERVAL_MS` | `1200` | 同域名最小请求间隔（反爬限速；`0` = 不限速） |
 | `HTTP_TIMEOUT_MS` | `15000` | 单次联网请求超时（毫秒） |
+| `EGRESS_MODE` | `direct` | M82 全局出口形态：`direct`（直连，零影响）/ `proxy`（经出口代理）；代理目标与凭据推荐在「连接管理 → 出口代理」（SecretVault 加密），并在「设置 → 联网与出网」选择与启用 |
+| `EGRESS_CONNECTION_ID` | 空 | 出口连接 id（`kind=proxy`；settings 面板保存值优先） |
+| `EGRESS_PROXY_URL` | 空 | env 后备出口（`http(s)://user:pass@host:port` / `socks5://…`；仅当未选连接时生效；凭据仅存 env，建议改用连接中心） |
+| `EGRESS_CHANNELS` | 空（内置 `search,finance,browser`） | 跟随出口的通道（逗号分隔：`search/finance/browser/mcp/llm`）；未列出通道恒直连（模型与嵌入默认不跟随，防本地/国内端点被代理） |
+| `EGRESS_NO_PROXY` | 内置回环 + 内网段 | 直连旁路（域后缀 / IP / IPv4 CIDR，逗号分隔）；回环（localhost/127.x/::1）无论如何恒直连 |
+| `EGRESS_FALLBACK` | `direct` | 出口不可用时：`direct` = 回退直连并在结果标注（可用性优先）/ `fail` = 严格失败（合规优先，不泄漏真实 IP；llm/mcp 通道恒严格） |
+| `EGRESS_PROBE_URL` | `https://myip.ipip.net` | 出口探测地址（连接卡片「测试」= 经该出口请求此地址并回显出口 IP / 延迟；空 = 不可探测） |
 | `ARTIFACT_MAX_BYTES` | `524288` | 交付件文本内联上限（超出引导下载） |
 
 ### 4.6 审批（HITL）
@@ -351,6 +358,11 @@ npm run e2e:reset -- e2e-r0 e2e-r1       # 清理指定 slug（严格校验 e2e-
 | 数据迁移异常 | 查 `schema_migrations` 表推进状态与启动日志（迁移失败会阻止启动，避免半迁移状态） |
 | 召回不生效（L1.5 无注入） | 确认「设置 → 向量记忆」已选连接或配了 `EMBEDDING_*`；新记忆有约 2s 队列补账延迟；`MEMORY_RECALL_ENABLED=false` 时关闭；`GET /api/memories/stats` 看 backend / pending / failed |
 | 嵌入连接测试失败 / 凭据不可解密 | 检查端点可达与模型名；`data/.connection-key` 丢失或更换后既有凭据不可解密，需在连接中心重新录入 Key |
+| 联网检索 / 抓取结果标注「（出口代理不可用，已直连）」 | 出口不可达（连不上 / 407 鉴权失败 / 超时）：查「设置 → 联网与出网」出口状态与最近错误；连续 2 次失败会进入 60s 降级冷却（冷却期间直连），到期自动重试代理 |
+| 结果标注「（出口代理降级中，已直连）」 | 出口处于降级冷却；修复代理后可在连接卡片点「测试」或保存设置立即复位状态 |
+| 工具报「出口请求失败：…（严格模式）」 | `EGRESS_FALLBACK=fail`（或 llm/mcp 通道恒严格）：按设计不回退直连；修复出口或改回 `direct` 回退策略 |
+| 配了出口但结果无出口标注 | 该请求命中直连旁路（回环 / 内网 / `EGRESS_NO_PROXY`）或通道未启用：在「联网与出网」勾选对应通道 |
+| 本地服务（Ollama / ComfyUI）被代理打挂 | 回环恒直连（localhost / 127.x / ::1），若走内网地址请保留默认内网旁路段；确认未自定义 `EGRESS_NO_PROXY` 覆盖默认值 |
 
 ## 9. 社交协作（M79）运维要点
 

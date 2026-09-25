@@ -180,9 +180,9 @@ export function sourceLine(input: { source: string; asOf: string; cache?: string
 
 // ---------------------------------------------------------------- 消息块模板
 
-/** kline 消息块模板（模型复制到回复；src 为会话工作区相对路径） */
-export function klineBlockTemplate(title: string, src: string, indicators: string[]): string {
-  const body = JSON.stringify({ src, indicators })
+/** kline 消息块模板（模型复制到回复；src 为会话工作区相对路径；extra 注入 render / 分析等可选载荷） */
+export function klineBlockTemplate(title: string, src: string, indicators: string[], extra?: Record<string, unknown>): string {
+  const body = JSON.stringify({ src, indicators, ...(extra ?? {}) })
   return ['```kline title="' + title + '"', body, '```'].join('\n')
 }
 

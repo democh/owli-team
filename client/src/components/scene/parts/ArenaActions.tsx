@@ -9,7 +9,7 @@ import * as React from 'react'
 import { cn } from '../../../lib/utils'
 import { TEMPLATES } from '../../../lib/pk'
 
-type ActionKey = 'extra' | 'stop' | 'lean-left' | 'lean-right' | 'lean-draw'
+type ActionKey = 'extra' | 'swap' | 'stop' | 'lean-left' | 'lean-right' | 'lean-draw'
 
 export function ArenaActions({
   leftLabel,
@@ -43,6 +43,12 @@ export function ArenaActions({
       label: '加一轮',
       title: '要求双方再交锋一轮',
       text: () => TEMPLATES.extraRound(center, point),
+    },
+    {
+      key: 'swap',
+      label: '互换立场',
+      title: '两队全员对调重赛至少一轮（检验同证据异结论）',
+      text: () => TEMPLATES.swapSides(center),
     },
     {
       key: 'stop',

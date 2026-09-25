@@ -120,7 +120,7 @@ export function ArtifactFeedView(): React.JSX.Element {
               title="引用到输入框"
               onClick={() => {
                 useUiStore.getState().insertToComposer(`@file:${artifact.path} `)
-                toast('已引用到输入框')
+                toast.success('已引用到输入框')
               }}
             >
               <Quote className="size-3.5" />

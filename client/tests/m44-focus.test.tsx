@@ -14,14 +14,12 @@ import type * as React from 'react'
 import type { AgentDefinition, AgentGroup, ChatMessage } from '@multi-agent/shared'
 import { ChangeCard, isChangeMessage } from '../src/components/chat/ChangeCard'
 import { CloseoutCard } from '../src/components/chat/CloseoutCard'
-import { FocusBar } from '../src/components/chat/FocusBar'
 import { MessageActions } from '../src/components/chat/MessageActions'
 import { SceneContext, type SceneCtx } from '../src/components/scene/context'
 import { TooltipProvider } from '../src/components/ui/tooltip'
 import {
   closureOf,
   commentDraft,
-  loadPinnedPath,
   loadSignoffs,
   opinionsOf,
   pickFocusPath,
@@ -273,88 +271,6 @@ describe('ChangeCard（AF-2 / AF-4）', () => {
     ])
     const { container } = render(wrap(<ChangeCard message={useSessionStore.getState().byId.get('a1')!} />))
     expect(container.querySelector('[data-change-response]')).toBeNull()
-  })
-})
-
-// ---------- 锚定条（AF-1） ----------
-
-describe('FocusBar（AF-1）', () => {
-  function seedWithArtifact(versions: Array<{ version: number; authorAgentId?: string }>): void {
-    seed([
-      msg({
-        id: 'a1',
-        role: 'agent',
-        agentId: 'pm',
-        content: '交付需求文档',
-        artifacts: [DOC],
-        toolCalls: [{ id: 'c1', name: 'write_file', args: { path: DOC }, status: 'ok', startedAt: T0 }],
-      }),
-      msg({ id: 'u1', role: 'user', content: '对《需求文档-登录.md》的意见：补充回滚', mentions: ['pm'] }),
-    ])
-    stubApi({ [DOC]: versions })
-  }
-
-  it('药丸读数：核心交付名 + vN + 未闭环计数；悬浮展开版本线与未闭环列表', async () => {
-    seedWithArtifact([
-      { version: 3, authorAgentId: 'pm' },
-      { version: 2, authorAgentId: 'pm' },
-      { version: 1, authorAgentId: 'devops' },
-    ])
-    const { container } = render(wrap(<FocusBar />))
-    const bar = container.querySelector('[data-focus-bar]')!
-    expect(bar.getAttribute('data-focus-bar')).toBe(DOC)
-    expect(bar.textContent).toContain('需求文档-登录.md')
-    await waitFor(() => {
-      expect(container.querySelector('[data-focus-version="3"]')?.textContent).toBe('v3')
-    })
-    expect(container.querySelector('[data-focus-open-count]')?.getAttribute('data-focus-open-count')).toBe('1')
-
-    fireEvent.mouseEnter(container.querySelector('[data-focus-hover]')!)
-    const panel = container.querySelector('[data-focus-panel]')!
-    expect(panel.textContent).toContain('版本线')
-    expect(panel.textContent).toContain('v3')
-    expect(panel.textContent).toContain('v1')
-    expect(panel.textContent).toContain('未闭环意见 · 1')
-
-    // 标记已满意 → 未闭环归零
-    fireEvent.click(panel.querySelector('[data-focus-satisfy]')!)
-    await waitFor(() => {
-      expect(container.querySelector('[data-focus-open-count]')?.getAttribute('data-focus-open-count')).toBe('0')
-    })
-  })
-
-  it('钉选切换：多件时候选列表；点击钉选写入 localStorage；再点取消', async () => {
-    seed([
-      msg({ id: 'a1', role: 'agent', agentId: 'pm', content: '两份产出', artifacts: [DOC, CODE] }),
-    ])
-    stubApi({ [DOC]: [{ version: 1 }], [CODE]: [{ version: 1 }] })
-    const { container } = render(wrap(<FocusBar />))
-    fireEvent.mouseEnter(container.querySelector('[data-focus-hover]')!)
-    const pick = container.querySelector(`[data-focus-pick="${CODE}"]`)!
-    fireEvent.click(pick)
-    expect(loadPinnedPath('sa')).toBe(CODE)
-    await waitFor(() => {
-      expect(container.querySelector('[data-focus-bar]')?.getAttribute('data-focus-bar')).toBe(CODE)
-    })
-    fireEvent.click(container.querySelector('[data-focus-pick="取消不适用"]') ?? container.querySelector('[data-focus-action="unpin"]')!)
-    expect(loadPinnedPath('sa')).toBeUndefined()
-  })
-
-  it('无交付件 / 纯列表模式 / 窄屏 → 不渲染', () => {
-    seed([msg({ id: 'u1', role: 'user', content: '还没有交付件' })])
-    const none = render(wrap(<FocusBar />))
-    expect(none.container.querySelector('[data-focus-bar]')).toBeNull()
-    none.unmount()
-
-    seed([msg({ id: 'a1', role: 'agent', agentId: 'pm', content: '交付', artifacts: [DOC] })])
-    useSceneStore.setState({ listMode: true })
-    const list = render(wrap(<FocusBar />))
-    expect(list.container.querySelector('[data-focus-bar]')).toBeNull()
-    list.unmount()
-
-    useSceneStore.setState({ listMode: false })
-    const narrow = render(wrap(<FocusBar />, makeCtx({ group: GROUPS[0], narrow: true })))
-    expect(narrow.container.querySelector('[data-focus-bar]')).toBeNull()
   })
 })
 

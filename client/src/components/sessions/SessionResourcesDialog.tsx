@@ -55,7 +55,7 @@ export function SessionResourcesDialog({
     setBusy(key)
     try {
       await fn()
-      toast(done)
+      toast.success(done)
     } catch (err) {
       toast.error((err as Error).message)
     } finally {

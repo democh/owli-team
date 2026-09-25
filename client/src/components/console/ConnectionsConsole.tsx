@@ -20,6 +20,7 @@ import {
   Loader2,
   Lock,
   MonitorSmartphone,
+  Network,
   Pencil,
   Play,
   Plus,
@@ -57,6 +58,8 @@ const KIND_META: Record<ConnectionKind, { label: string; icon: React.ReactNode; 
   media: { label: '媒体生成', icon: <Clapperboard className="size-3.5" />, hint: '已迁至设置' },
   // 多 Provider：模型服务在「设置 → 模型与生成 → 模型服务」维护（本视图不呈现 / 不创建）
   llm: { label: '模型服务', icon: <Server className="size-3.5" />, hint: '已迁至设置' },
+  // M82：出口代理（联网出口；在「设置 → 联网与出网」启用并选择）
+  proxy: { label: '出口代理', icon: <Network className="size-3.5" />, hint: 'host:port' },
 }
 
 /** 可创建的连接类型（M56：媒体生成迁入「设置」；多 Provider：模型服务同迁「设置」） */
@@ -102,6 +105,10 @@ interface FormState {
   dim: string
   batchSize: string
   timeoutMs: string
+  /** M82 出口代理：形态（http/socks5）/ 代理协议 / 连接级旁路（逗号分隔） */
+  proxyMode: 'http' | 'socks5'
+  proxyScheme: 'http' | 'https'
+  proxyBypass: string
 }
 
 const EMPTY_FORM: FormState = {
@@ -133,6 +140,9 @@ const EMPTY_FORM: FormState = {
   dim: '',
   batchSize: '',
   timeoutMs: '',
+  proxyMode: 'http',
+  proxyScheme: 'http',
+  proxyBypass: '',
 }
 
 function formOf(connection?: ConnectionDefinition): FormState {
@@ -166,6 +176,9 @@ function formOf(connection?: ConnectionDefinition): FormState {
     dim: c.dim !== undefined ? String(c.dim) : '',
     batchSize: c.batchSize !== undefined ? String(c.batchSize) : '',
     timeoutMs: c.timeoutMs !== undefined ? String(c.timeoutMs) : '',
+    proxyMode: c.mode === 'socks5' ? 'socks5' : 'http',
+    proxyScheme: c.scheme === 'https' ? 'https' : 'http',
+    proxyBypass: Array.isArray(c.bypass) ? (c.bypass as string[]).join(', ') : '',
     // password / privateKey / passphrase / apiKey 凭据永不回显（加密存储），留空 = 不修改
   }
 }
@@ -221,6 +234,24 @@ function payloadOf(kind: ConnectionKind, form: FormState): { config: Record<stri
     if (form.batchSize.trim()) config.batchSize = Number(form.batchSize)
     if (form.timeoutMs.trim()) config.timeoutMs = Number(form.timeoutMs)
     return { config, secret: form.apiKey ? { apiKey: form.apiKey } : undefined }
+  }
+  // M82：出口代理（HTTP(S) / SOCKS5；SSH 隧道 P1）。凭据可选，留空 = 不修改
+  if (kind === 'proxy') {
+    const config: Record<string, unknown> = {
+      mode: form.proxyMode,
+      host: form.host.trim() || '127.0.0.1',
+      port: form.port.trim() ? Number(form.port) : form.proxyMode === 'socks5' ? 1080 : 8080,
+    }
+    if (form.proxyMode === 'http') config.scheme = form.proxyScheme
+    const bypass = form.proxyBypass
+      .split(/[,\n]/)
+      .map((s) => s.trim())
+      .filter(Boolean)
+    if (bypass.length > 0) config.bypass = bypass
+    const secret: Record<string, unknown> = {}
+    if (form.username.trim()) secret.username = form.username.trim()
+    if (form.password) secret.password = form.password
+    return { config, secret: Object.keys(secret).length > 0 ? secret : undefined }
   }
   return { config: {} }
 }
@@ -438,6 +469,81 @@ function ConnectionForm({
             onChange={(e) => patch({ path: e.target.value })}
           />
         </Field>
+      )}
+
+      {kind === 'proxy' && (
+        <>
+          <Field label="出口形态" hint="（SSH 隧道 P1 提供）">
+            <select
+              className="h-7 w-full rounded-md border border-input bg-card px-2 text-[12px]"
+              value={form.proxyMode}
+              onChange={(e) => patch({ proxyMode: e.target.value as FormState['proxyMode'] })}
+            >
+              <option value="http">HTTP(S) 代理</option>
+              <option value="socks5">SOCKS5 代理（远端 DNS）</option>
+            </select>
+          </Field>
+          {form.proxyMode === 'http' && (
+            <Field label="代理协议" hint="（https = 到代理本身走 TLS）">
+              <select
+                className="h-7 w-full rounded-md border border-input bg-card px-2 text-[12px]"
+                value={form.proxyScheme}
+                onChange={(e) => patch({ proxyScheme: e.target.value as FormState['proxyScheme'] })}
+              >
+                <option value="http">http</option>
+                <option value="https">https</option>
+              </select>
+            </Field>
+          )}
+          <div className="grid grid-cols-3 gap-1.5">
+            <div className="col-span-2">
+              <Field label="代理地址">
+                <Input
+                  className="h-7 font-mono text-[12px]"
+                  value={form.host}
+                  placeholder="proxy.example.com 或 127.0.0.1"
+                  onChange={(e) => patch({ host: e.target.value })}
+                />
+              </Field>
+            </div>
+            <Field label="端口">
+              <Input
+                className="h-7 text-[12px]"
+                value={form.port}
+                placeholder={form.proxyMode === 'socks5' ? '1080' : '8080'}
+                onChange={(e) => patch({ port: e.target.value })}
+              />
+            </Field>
+          </div>
+          <Field label="用户名" hint="（可选）">
+            <Input
+              className="h-7 text-[12px]"
+              value={form.username}
+              placeholder="user"
+              onChange={(e) => patch({ username: e.target.value })}
+            />
+          </Field>
+          <Field label="密码" hint={initial?.secretSet ? '（留空 = 不修改）' : '（可选）'}>
+            <Input
+              className="h-7 text-[12px]"
+              type="password"
+              autoComplete="new-password"
+              value={form.password}
+              onChange={(e) => patch({ password: e.target.value })}
+            />
+          </Field>
+          <Field label="连接级旁路" hint="（可选；域后缀 / IP / CIDR，逗号分隔，与全局旁路合并）">
+            <Input
+              className="h-7 font-mono text-[11.5px]"
+              value={form.proxyBypass}
+              placeholder="*.corp.example.com"
+              onChange={(e) => patch({ proxyBypass: e.target.value })}
+            />
+          </Field>
+          <p className="text-[10.5px] leading-4 text-muted-foreground">
+            建好后在「设置 → 联网与出网」选择此连接并勾选跟随通道；代理凭据加密存储、永不回显
+          </p>
+        </>
       )}
 
       {kind === 'chrome' && (
@@ -764,6 +870,11 @@ function ConnectionCard({
           </span>
         ) : connection.kind === 'sqlite' ? (
           <span className="max-w-full truncate font-mono">{String(connection.config.path ?? '')}</span>
+        ) : connection.kind === 'proxy' ? (
+          <span className="max-w-full truncate font-mono">
+            {String(connection.config.mode ?? 'http') === 'socks5' ? 'socks5' : String(connection.config.scheme ?? 'http')}://
+            {String(connection.config.host ?? '')}:{String(connection.config.port ?? '')}
+          </span>
         ) : connection.kind === 'chrome' ? (
           <span className="font-mono">
             {String(connection.config.backend ?? 'local')}
@@ -803,6 +914,8 @@ function ConnectionCard({
             title="在「数据库」工作台打开"
             onClick={() => {
               useDatabaseStore.getState().select(connection.id)
+              // M85 修复：控制台是独立 appView——需先回主区，否则 expandWorkspace 只切 mainTab 看不到效果
+              useUiStore.getState().setAppView('workspace')
               useUiStore.getState().expandWorkspace('database')
             }}
           >
@@ -817,6 +930,8 @@ function ConnectionCard({
             disabled={busy}
             title="打开 SSH 终端（新会话）"
             onClick={() => {
+              // M85 修复：同上——先回主区再展开终端工作台
+              useUiStore.getState().setAppView('workspace')
               useUiStore.getState().expandWorkspace('terminal')
               void useTerminalStore.getState().open(connection)
             }}
@@ -825,7 +940,7 @@ function ConnectionCard({
             终端
           </Button>
         )}
-        {hasSession && connection.kind !== 'embedding' && connection.kind !== 'media' && (
+        {hasSession && connection.kind !== 'embedding' && connection.kind !== 'media' && connection.kind !== 'proxy' && (
           <Button size="xs" variant={bound ? 'secondary' : 'outline'} disabled={busy} title={bound ? '解绑：该会话将不可用此连接' : '绑定到当前会话（Agent 工具可见）'} onClick={() => void toggleBind()}>
             {bound ? <Unlink className="size-3" /> : <Link2 className="size-3" />}
             {bound ? '解绑' : '绑定'}

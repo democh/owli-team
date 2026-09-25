@@ -1,0 +1,25 @@
+id: bullbear
+name: 多空对决场
+description: 标的对抗研判：多方与空方两支专家队立论 / 举证 / 质证 / 结辩，裁决长终局判定；图表与统计全程可视
+icon: scale
+theme: ["#dc2626", "#059669"]
+objective: 产出有理有据的多空裁决书；不做涨跌预测、不给买卖指令、不构成投资建议
+chain: [judge, bull-lead, bear-lead, bull-quant, bear-quant]
+rounds: true
+parallel: false
+order: 63
+guide: 说说要辩的标的（1–5 个）与周期
+agenda:
+  - label: 标准对决
+    prompt: 围绕下面的标的组织一场多空对决（默认 3 轮：双方立论 → 量化举证 → 交叉质证 → 裁决长逐轮判定，终局出裁决书）：
+  - label: 相对强弱对决
+    prompt: 用相对强弱模式对决以下标的组（多方做多 <A>、空方做空 <B>，断言相对收益方向；举证用统计检验与图表）：
+  - label: 单轮快辩
+    prompt: 只辩一轮：多空各一次立论 + 一次质证，裁决长给阶段性结论与不确定性清单：
+stage:
+  layout: arena
+  seats:
+    left: [bull-lead, bull-quant]
+    right: [bear-lead, bear-quant]
+    center: [judge]
+  parts: [round-track, scoreboard, cross-fire, claim-tree, verdicts]

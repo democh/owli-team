@@ -1,7 +1,8 @@
 /**
  * 审批卡（M8）：渲染本 Run 的 request_approval —— 命令原文 / 文件 diff / 批准 / 拒绝 / 自定义反馈。
  * 数据源：run-store.approvals（SSE approval:requested|resolved + 重附着 GET /runs/:id/approvals）。
- * 挂载：ChatArea 底部（Composer 上方），仅渲染当前会话的挂起项 + 结论行。
+ * 挂载：ChatArea 底部（Composer 上方），仅渲染当前会话的挂起项——
+ * 已决条不再以结论行常驻（2026-09-25 产品决策：空间治理；历史由消息流承接，零占位）。
  * M12：首张挂起卡支持快捷键 —— ⌘/Ctrl+Enter 批准（反馈框打开时提交反馈）、⌘/Ctrl+Backspace 拒绝；
  * capture 阶段拦截，避免同时触发 Composer 的 Enter 发送。
  */
@@ -12,16 +13,9 @@ import type { ApprovalRequest } from '@multi-agent/shared'
 import { useAgentStore } from '../../stores/agent-store'
 import { useRunStore } from '../../stores/run-store'
 import { useSessionStore } from '../../stores/session-store'
-import { cn } from '../../lib/utils'
 import { Button } from '../ui/button'
 import { Badge } from '../ui/badge'
 import { AgentAvatar } from '../agents/AgentAvatar'
-
-const DECISION_TEXT: Record<string, string> = {
-  approve: '已批准',
-  reject: '已拒绝',
-  custom: '已附反馈',
-}
 
 function PendingCard({
   approval,
@@ -180,18 +174,6 @@ function PendingCard({
   )
 }
 
-function ResolvedRow({ approval }: { approval: ApprovalRequest }): React.JSX.Element {
-  const ok = approval.status === 'approved'
-  return (
-    <div className="mx-4 mb-2 flex items-center gap-2 rounded-lg border bg-card/70 px-3 py-1.5 text-[11.5px] text-muted-foreground">
-      {ok ? <Check className="size-3.5 text-emerald-600" /> : <X className="size-3.5 text-rose-500" />}
-      <span className="font-medium text-foreground">{approval.action}</span>
-      <span>{DECISION_TEXT[approval.decision ?? ''] ?? DECISION_TEXT[approval.status] ?? approval.status}</span>
-      {approval.feedback && <span className="min-w-0 truncate">· {approval.feedback}</span>}
-    </div>
-  )
-}
-
 export function ApprovalPanel(): React.JSX.Element | null {
   const currentId = useSessionStore((s) => s.currentId)
   const approvals = useRunStore((s) => s.approvals)
@@ -199,17 +181,15 @@ export function ApprovalPanel(): React.JSX.Element | null {
   const role = useSessionStore((s) => s.current?.role)
   const readOnly = role === 'viewer'
   const mine = approvals.filter((a) => a.sessionId === currentId)
-  if (!currentId || mine.length === 0) return null
-
+  if (!currentId) return null
   const pending = mine.filter((a) => a.status === 'pending')
-  const resolved = mine.filter((a) => a.status !== 'pending').slice(-2)
-
+  // 无挂起项 → 整体不渲染（已决条不常驻；零占位）
+  if (pending.length === 0) return null
   return (
-    <div className={cn('shrink-0 pt-2', pending.length === 0 && 'pt-0')}>
+    <div className="shrink-0 pt-2">
       {pending.map((a, i) => (
         <PendingCard key={a.id} approval={a} hotkey={i === 0} readOnly={readOnly} />
       ))}
-      {pending.length === 0 && resolved.map((a) => <ResolvedRow key={a.id} approval={a} />)}
     </div>
   )
 }

@@ -94,7 +94,7 @@ function ScheduleCard({ task }: { task: ScheduledTask }): React.JSX.Element {
     setBusy('run')
     try {
       const res = await trigger(task.id)
-      if (res.runId) toast('已触发协作运行')
+      if (res.runId) toast.success('已触发协作运行')
       else if (res.skipped === 'busy') toast('会话正忙，本次已跳过')
     } catch (err) {
       toast.error((err as Error).message)
@@ -108,7 +108,7 @@ function ScheduleCard({ task }: { task: ScheduledTask }): React.JSX.Element {
     setBusy('toggle')
     try {
       await setEnabled(task.id, !task.enabled)
-      toast(task.enabled ? '已暂停定时任务' : '已恢复定时任务')
+      toast.success(task.enabled ? '已暂停定时任务' : '已恢复定时任务')
     } catch (err) {
       toast.error((err as Error).message)
     } finally {
@@ -122,7 +122,7 @@ function ScheduleCard({ task }: { task: ScheduledTask }): React.JSX.Element {
     setBusy('remove')
     try {
       await remove(task.id)
-      toast('已删除定时任务')
+      toast.success('已删除定时任务')
     } catch (err) {
       toast.error((err as Error).message)
     } finally {
@@ -279,7 +279,7 @@ function CreateForm({ members, onClose }: { members: AgentDefinition[]; onClose:
         targetAgentId: kind === 'run' ? targetAgentId : undefined,
         spec,
       })
-      toast('已创建定时任务')
+      toast.success('已创建定时任务')
       onClose()
     } catch (err) {
       toast.error((err as Error).message)

@@ -5,29 +5,37 @@
  * 双边成本：单边费率 + 单边滑点（买入按开盘×(1+滑点)，卖出按开盘×(1−滑点)，买卖各扣一次费率）；
  * 区间结束仍持仓 → 按最后收盘价强制平仓（notes 注明，回撤/收益含该摩擦）。
  * 指标口径复用 indicator.ts（与 fin_indicator / 报告口径一致）。
+ *
+ * M83：`template='dsl'` 通道 —— 信号来源切换为 DSL 共享信号层（finance/dsl/exec.generateDslSignals），
+ * 执行模型 / 成本 / 绩效指标完全复用；DSL 与模板策略在同一把尺下对比（口径唯一）。
  */
 import { computeIndicator, sma } from './indicator.js'
+import { DslExprError } from './dsl/expr.js'
+import { generateDslSignals } from './dsl/exec.js'
+import { parseDsl } from './dsl/spec.js'
 import { formatCnDate, parseCnDate } from './period.js'
 import type { KlineBar } from './types.js'
 
-export type BacktestTemplate = 'ma-cross' | 'rsi-reversal' | 'macd-cross' | 'boll-breakout' | 'buy-hold'
+export type BacktestTemplate = 'ma-cross' | 'rsi-reversal' | 'macd-cross' | 'boll-breakout' | 'buy-hold' | 'dsl'
 
-/** 模板清单（tuple 常量：zod 枚举 / 工具参数 schema 直接复用） */
+/** 模板清单（tuple 常量：zod 枚举 / 工具参数 schema 直接复用；'dsl' 需配套 dsl 源码） */
 export const BACKTEST_TEMPLATES = [
   'ma-cross',
   'rsi-reversal',
   'macd-cross',
   'boll-breakout',
   'buy-hold',
+  'dsl',
 ] as const satisfies readonly BacktestTemplate[]
 
-/** 模板默认参数（工具说明与结果回显共用） */
+/** 模板默认参数（工具说明与结果回显共用；dsl 无模板参数） */
 export const BACKTEST_DEFAULT_PARAMS: Record<BacktestTemplate, Record<string, number>> = {
   'ma-cross': { fast: 5, slow: 20 },
   'rsi-reversal': { period: 14, oversold: 30, overbought: 70 },
   'macd-cross': { fast: 12, slow: 26, signal: 9 },
   'boll-breakout': { period: 20, mult: 2 },
   'buy-hold': {},
+  dsl: {},
 }
 
 /** 默认单边费率 %（佣金 + 印花税综合近似）与单边滑点 % */
@@ -37,6 +45,10 @@ export const DEFAULT_SLIPPAGE = 0.02
 export interface BacktestStrategy {
   template: BacktestTemplate
   params?: Record<string, number>
+  /** template='dsl' 时的策略源码（YAML；lint 不过则回测失败） */
+  dsl?: string
+  /** DSL inputs 覆盖（仅限策略已声明键） */
+  dslInputs?: Record<string, number | string | boolean>
 }
 
 export interface BacktestOptions {
@@ -140,6 +152,29 @@ function generateSignals(bars: KlineBar[], strategy: BacktestStrategy): { signal
   switch (strategy.template) {
     case 'buy-hold': {
       if (bars.length > 1) signals.push({ index: 0, side: 'buy' })
+      return { signals, params: merged }
+    }
+    case 'dsl': {
+      if (!strategy.dsl) throw new BacktestError("template='dsl' 需提供 dsl 源码（YAML）")
+      const parsed = parseDsl(strategy.dsl)
+      if (!parsed.ok) {
+        const first = parsed.findings.find((f) => f.level === 'error')
+        throw new BacktestError(
+          `DSL 校验未通过：${first ? `${first.message}${first.path ? `（${first.path}）` : ''}` : '未知错误'}`,
+        )
+      }
+      try {
+        const hits = generateDslSignals(bars, parsed.spec, {
+          symbol: '',
+          period: 'day',
+          adjust: 'qfq',
+          ...(strategy.dslInputs ? { inputs: strategy.dslInputs } : {}),
+        })
+        for (const hit of hits) signals.push({ index: hit.index, side: hit.side })
+      } catch (err) {
+        if (err instanceof DslExprError) throw new BacktestError(`DSL 执行失败：${err.message}`)
+        throw err
+      }
       return { signals, params: merged }
     }
     case 'ma-cross': {
@@ -374,6 +409,7 @@ export function runBacktest(barsInput: KlineBar[], strategy: BacktestStrategy, o
     `成本口径：单边费率 ${feeRate}% + 单边滑点 ${slippage}%（买卖各计一次）`,
     `年化口径：按自然日 ${Math.round(days)} 天折算；夏普按日频 ×√252（无风险利率 0）`,
   ]
+  if (strategy.template === 'dsl') notes.push('信号源：DSL 策略（规则化边沿触发，口径与 fin_strategy 一致）')
   if (forcedNote) notes.push(forcedNote)
   if (closed.length === 0) notes.push('区间内无完整交易（信号未触发，可放宽参数或扩大区间）')
 

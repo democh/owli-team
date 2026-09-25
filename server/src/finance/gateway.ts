@@ -18,6 +18,7 @@
  * 反爬联动：同一来源连续失败 ≥2 次进入 5 分钟冷却，路由自动跳过（防止风控升级），成功后清零。
  */
 import type { AppDb } from '../store/db.js'
+import { AntiBotError } from '../tools/http.js'
 import { probePython } from './bridge/probe.js'
 import { runBridge } from './bridge/runner.js'
 import { ageFresh, createFinanceCache, CALENDAR_TTL_MS, SCREEN_BASE_TTL_MS, SYMBOL_MASTER_TTL_MS } from './cache.js'
@@ -194,6 +195,12 @@ export interface FinanceGateway {
   symbolMaster(opts?: { source?: SourcePref }): Promise<GatewayResult<SymbolMasterRow[]>>
   screenBase(opts?: { source?: SourcePref }): Promise<GatewayResult<ScreenRow[]>>
   search(query: string, opts?: { limit?: number; source?: SourcePref }): Promise<GatewayResult<SymbolMasterRow[]>>
+  /**
+   * M84：统计计算桥任务（纯计算，零网络——数据由 Node 侧传入复用网关缓存）。
+   * - 无解释器时抛 GatewayError（不提供 Node 近似值）；
+   * - 缺包 / 参数 / 脚本错误由 BridgeError 透出（工具层转中文引导）。
+   */
+  pyStats<T = unknown>(task: 'stats' | 'significance', params: Record<string, unknown>): Promise<GatewayResult<T>>
   /** 数据源健康度（反爬联动：冷却中的源被路由跳过） */
   health(): GatewayHealth[]
   resetHealth(): void
@@ -222,6 +229,14 @@ interface ChainStep<T> {
 function errorMessage(err: unknown): string {
   if (err instanceof Error) return err.message
   return String(err)
+}
+
+/**
+ * M82：出口层失败识别——出口代理不可用时不能归因到数据源（否则「代理挂了 → 所有源被冷却 5 分钟」）。
+ * 失败原因仍计入 failures 汇总（可读），但不调 sourceFail（不冷却源）。
+ */
+function isEgressFailure(err: unknown): boolean {
+  return err instanceof AntiBotError && err.kind === 'egress'
 }
 
 /** py 桥返回的 K 线数据（fin_bridge.py task_kline / engine=akshare 同构） */
@@ -589,7 +604,8 @@ export function createFinanceGateway(deps: GatewayDeps): FinanceGateway {
         }
       } catch (err) {
         const message = errorMessage(err)
-        sourceFail(step.label, message)
+        // M82：出口层失败不冷却数据源（归因到出口，避免「代理挂了 → 全源冷却」）
+        if (!isEgressFailure(err)) sourceFail(step.label, message)
         failures.push(`${step.label}：${message}`)
       }
     }
@@ -1186,7 +1202,7 @@ export function createFinanceGateway(deps: GatewayDeps): FinanceGateway {
             }
           } catch (err) {
             const message = errorMessage(err)
-            sourceFail('eastmoney', message)
+            if (!isEgressFailure(err)) sourceFail('eastmoney', message)
             failures.push(`eastmoney：${message}`)
           }
         }
@@ -1212,7 +1228,7 @@ export function createFinanceGateway(deps: GatewayDeps): FinanceGateway {
             }
           } catch (err) {
             const message = errorMessage(err)
-            sourceFail('akshare', message)
+            if (!isEgressFailure(err)) sourceFail('akshare', message)
             failures.push(`akshare：${message}`)
           }
         }
@@ -1298,6 +1314,20 @@ export function createFinanceGateway(deps: GatewayDeps): FinanceGateway {
     }
   }
 
+  /**
+   * M84：统计计算桥任务（纯计算，零网络）。
+   * - 无解释器（absent）直接抛 GatewayError——**不提供 Node 近似值**（统计能力不允许降级为猜测）；
+   * - 缺包（DEP_MISSING）/ 参数（BAD_PARAM）等由 BridgeError 透出，工具层转中文引导（fin_env group=analytics）。
+   */
+  async function pyStats<T>(task: 'stats' | 'significance', params: Record<string, unknown>): Promise<GatewayResult<T>> {
+    const pyAvail = await pyStatusFn()
+    if (pyAvail === 'absent') {
+      throw new GatewayError('Python 统计引擎不可用（未检测到可用解释器或核心包全缺）：请先 fin_env action=install')
+    }
+    const data = (await runPyFn(task, params)) as T
+    return { data, source: 'python-bridge', asOf: nowFn().toISOString(), cache: 'miss' }
+  }
+
   return {
     quote,
     kline,
@@ -1326,6 +1356,7 @@ export function createFinanceGateway(deps: GatewayDeps): FinanceGateway {
         async () => mapPyScreenRows(await runPyFn('quote', { all: true })),
       ),
     search,
+    pyStats,
     health(): GatewayHealth[] {
       const time = nowFn().getTime()
       const out: GatewayHealth[] = []

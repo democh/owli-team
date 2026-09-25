@@ -105,25 +105,23 @@ test('M52-B · roundtable（议题圆桌）：席位环 + 议程条 + 无产物�
   await expect(page.getByText('研讨产物将汇聚在这里')).toHaveCount(0)
 })
 
-test('M52-B · arena（谈判桌）：计分板 + 左右席 + 发消息后回合轴推进', async ({ page }) => {
+test('M52-B · arena（谈判桌）：左右席 + 席签/参与条 + 发消息后 live 流式', async ({ page }) => {
   await openApp(page)
   await createSession(page, { scene: '谈判桌', title: `E2E-M52B-谈判-${Date.now()}` })
 
-  // 静态结构：左右席栏 + 中轴（教练席位）；谈判桌未配计分板部件（scoreboard 为辩论专属，随场景下线）
+  // 静态结构：左右席栏；中轴席位卡 / 计分板行均已并入（M85 合并至席签 + 会话标题行）
   await expect(page.locator('.scene-arena')).toBeVisible()
   await expect(page.locator('.scene-arena-left')).toBeVisible()
   await expect(page.locator('.scene-arena-right')).toBeVisible()
-  const center = page.locator('.scene-arena-center')
-  await expect(center).toBeVisible()
-  await expect(center.getByText('苏纵')).toBeVisible()
 
   // M52-D：左右席发言流已挂载（空态提示，两侧留白不再空白）
   await expect(page.locator('.scene-arena-left .scene-side-empty')).toHaveText('该席发言将显示在这里')
   await expect(page.locator('.scene-arena-right .scene-side-empty')).toHaveText('该席发言将显示在这里')
 
-  // 发消息 → 回合推进 → 回合轴出现 → 全链收束
-  await sendMessage(page, '@谭成 @祁弈 就这单采购谈一轮：先各自出价，再逐轮让步看能否成交。')
-  await expect(page.locator('.scene-arena-track')).toBeVisible({ timeout: 60_000 })
+  // 发消息 → 全链收束（回合轴已按产品决策移除——推进信号由下方 live 流式断言承接）
+  await sendMessage(page, '@谭成 @祁弈 就这单采购谈一轮：先各自出价，再逐轮让步 看能否成交。')
+  // 裁决席签（合并行）：苏纵与参与条同行（原中轴席位卡行已并入）
+  await expect(page.locator('.scene-arena-preside')).toContainText('苏纵', { timeout: 30_000 })
   // M60（§81）：live 通道——run 收束前侧栏条目已实时入流（流式描边 data-streaming）
   await expect(
     page

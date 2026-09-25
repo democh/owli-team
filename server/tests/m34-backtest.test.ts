@@ -14,6 +14,7 @@ import {
   runBacktest,
   type BacktestTemplate,
 } from '../src/finance/backtest.js'
+import { builtinOf } from '../src/finance/dsl/builtin.js'
 import type { KlineBar } from '../src/finance/types.js'
 
 const DAY = 86_400_000
@@ -145,8 +146,10 @@ describe('M34 回测：模板健壮性 / 确定性 / 净值采样', () => {
   it('5 模板全可运行：确定性输出（同输入逐位一致）+ 口径说明', () => {
     const closes = Array.from({ length: 300 }, (_, i) => 100 + i * 0.1 + 8 * Math.sin(i / 7))
     const bars = barsOf(closes)
-    expect(BACKTEST_TEMPLATES).toHaveLength(5)
-    for (const template of BACKTEST_TEMPLATES) {
+    // M83：新增 'dsl' 通道（需源码，见下方独立断言）——经典模板仍为 5 个
+    const classic = BACKTEST_TEMPLATES.filter((t) => t !== 'dsl')
+    expect(classic).toHaveLength(5)
+    for (const template of classic) {
       const a = runBacktest(bars, { template })
       const b = runBacktest(bars, { template })
       expect(JSON.stringify(a)).toBe(JSON.stringify(b))
@@ -157,6 +160,18 @@ describe('M34 回测：模板健壮性 / 确定性 / 净值采样', () => {
       expect(a.equity.length).toBeGreaterThan(0)
       expect(a.bars).toBe(300)
     }
+  })
+
+  it("dsl 通道（M83）：内置策略确定性输出 + 信号源口径说明；缺源码报错", () => {
+    const closes = Array.from({ length: 300 }, (_, i) => 100 + i * 0.1 + 8 * Math.sin(i / 7))
+    const bars = barsOf(closes)
+    const source = builtinOf('ma-cross')!.source
+    const a = runBacktest(bars, { template: 'dsl', dsl: source })
+    const b = runBacktest(bars, { template: 'dsl', dsl: source })
+    expect(JSON.stringify(a)).toBe(JSON.stringify(b))
+    expect(a.notes.join('\n')).toContain('信号源：DSL')
+    expect(Number.isFinite(a.metrics.totalReturn)).toBe(true)
+    expect(() => runBacktest(bars, { template: 'dsl' })).toThrow(BacktestError)
   })
 
   it('净值曲线 >600 点均匀采样：保留首尾', () => {

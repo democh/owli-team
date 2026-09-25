@@ -326,7 +326,7 @@ function ServerCard({
     try {
       if (bound) await useMcpStore.getState().unbind(server.id)
       else await useMcpStore.getState().bind(server.id)
-      toast(bound ? `已从当前会话解绑「${server.name}」` : `已绑定「${server.name}」到当前会话`)
+      toast.success(bound ? `已从当前会话解绑「${server.name}」` : `已绑定「${server.name}」到当前会话`)
     } catch (err) {
       toast.error((err as Error).message)
     }

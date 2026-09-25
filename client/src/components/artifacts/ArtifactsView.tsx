@@ -263,7 +263,7 @@ export function ArtifactsView(): React.JSX.Element {
     const id = await useCanvasStore.getState().sendArtifact(artifact.path)
     if (!id) return
     useUiStore.getState().setMainTab('canvas')
-    toast('已在画布打开')
+    toast.success('已在画布打开')
   }
 
   if (!currentId) {
@@ -369,7 +369,7 @@ export function ArtifactsView(): React.JSX.Element {
                   title="引用到输入框"
                   onClick={() => {
                     useUiStore.getState().insertToComposer(`@file:${artifact.path} `)
-                    toast('已引用到输入框')
+                    toast.success('已引用到输入框')
                   }}
                 >
                   <Quote className="size-3" />

@@ -19,7 +19,17 @@ async function jumpToLatest(page: Page): Promise<void> {
   if (await pill.isVisible().catch(() => false)) {
     await pill.click().catch(() => {})
     await page.waitForTimeout(200)
+    return
   }
+  // M85：浮标仅在「有未读新消息」时渲染——无未读时直接程序化回底（贴底跟随随后接管）
+  await page
+    .locator('[role="log"]')
+    .evaluate((el) => {
+      el.scrollTop = el.scrollHeight
+      el.dispatchEvent(new Event('scroll'))
+    })
+    .catch(() => {})
+  await page.waitForTimeout(200)
 }
 
 test('M65 · 设计容器族 + 3D 工作台全链（layout → 打开 → 平面 → 回填）', async ({ page }) => {

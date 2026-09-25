@@ -13,8 +13,10 @@ export type PyEnvLevel = 'ready' | 'partial' | 'absent'
 
 /** 核心包（全齐 → ready；全缺或无解释器 → absent） */
 export const REQUIRED_PY_PACKAGES = ['baostock', 'akshare', 'pandas', 'ta', 'tablib'] as const
-/** 可选包（openpyxl：tablib 的 XLSX 导出；curl_cffi：TLS 指纹反爬增强） */
-export const OPTIONAL_PY_PACKAGES = ['openpyxl', 'curl_cffi'] as const
+/** M84：统计扩展包（显著性检验 / ADF 平稳性 / 向量化；不参与 ready/partial/absent 分档） */
+export const ANALYTICS_PY_PACKAGES = ['numpy', 'scipy', 'statsmodels'] as const
+/** 可选包（openpyxl：tablib 的 XLSX 导出；curl_cffi：TLS 指纹反爬增强；其余为统计扩展） */
+export const OPTIONAL_PY_PACKAGES = ['openpyxl', 'curl_cffi', ...ANALYTICS_PY_PACKAGES] as const
 
 /** 最低 Python 版本（3.9：f-string / 类型语法与主流数据包要求） */
 const MIN_PYTHON_VERSION = '3.9'
@@ -129,6 +131,7 @@ export function parseProbeJson(raw: string): RawProbe | null {
 /** 探测结果 → 状态分档（纯函数，供测试） */
 export function buildStatus(raw: RawProbe): PyEnvStatus {
   const missing = REQUIRED_PY_PACKAGES.filter((name) => !raw.packages[name]?.installed)
+  const missingAnalytics = ANALYTICS_PY_PACKAGES.filter((name) => !raw.packages[name]?.installed)
   const level: PyEnvLevel =
     missing.length === 0 ? 'ready' : missing.length === REQUIRED_PY_PACKAGES.length ? 'absent' : 'partial'
   return {
@@ -138,18 +141,28 @@ export function buildStatus(raw: RawProbe): PyEnvStatus {
     version: raw.version,
     packages: raw.packages,
     missing,
-    summary: summarize(level, raw.version, raw.python, missing),
+    summary: summarize(level, raw.version, raw.python, missing, missingAnalytics),
   }
 }
 
-function summarize(level: PyEnvLevel, version: string, python: string, missing: readonly string[]): string {
+function summarize(
+  level: PyEnvLevel,
+  version: string,
+  python: string,
+  missing: readonly string[],
+  missingAnalytics: readonly string[],
+): string {
+  const analyticsNote =
+    missingAnalytics.length === 0
+      ? '；统计扩展就绪（numpy/scipy/statsmodels）'
+      : `；统计扩展缺 ${missingAnalytics.join(' / ')}（显著性检验不可用；安装：fin_env action=install group=analytics）`
   if (level === 'absent') {
-    return '未检测到可用 Python 环境（无解释器或核心包全缺），金融数据将使用 Node 数据源'
+    return `未检测到可用 Python 环境（无解释器或核心包全缺），金融数据将使用 Node 数据源${analyticsNote}`
   }
   if (level === 'partial') {
-    return `Python ${version} 可用（${python}），缺少核心包：${missing.join(' / ')}（对应能力降级到 Node 源）`
+    return `Python ${version} 可用（${python}），缺少核心包：${missing.join(' / ')}（对应能力降级到 Node 源）${analyticsNote}`
   }
-  return `Python ${version} 就绪（${python}），核心包齐备`
+  return `Python ${version} 就绪（${python}），核心包齐备${analyticsNote}`
 }
 
 /** 无 Python 环境的降级状态 */

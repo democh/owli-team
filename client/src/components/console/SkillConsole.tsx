@@ -139,7 +139,7 @@ export function SkillConsole(): React.JSX.Element {
             tags: detail.tags,
             body: detail.body,
           })
-          toast(`已复制为「${candidate}」`)
+          toast.success(`已复制为「${candidate}」`)
           return
         } catch (err) {
           if (err instanceof ApiError && err.status === 409) continue

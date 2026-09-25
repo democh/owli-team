@@ -164,7 +164,7 @@ export function AgentConsole(): React.JSX.Element {
   const doDuplicate = async (a: ConsoleAgentSummary): Promise<void> => {
     try {
       const created = await useConsoleStore.getState().duplicateAgent(a.id)
-      toast(`已复制为「${created.name}」（${created.id}）`)
+      toast.success(`已复制为「${created.name}」（${created.id}）`)
     } catch (err) {
       toast.error((err as Error).message)
     }
@@ -175,7 +175,7 @@ export function AgentConsole(): React.JSX.Element {
     setDeleting(true)
     try {
       const res = await useConsoleStore.getState().deleteAgent(deleteTarget.id, force)
-      toast(
+      toast.success(
         res.deletedGroup
           ? `「${deleteTarget.name}」已移入回收站（场景已空，整组一并保留在回收站）`
           : `「${deleteTarget.name}」已移入回收站`,
@@ -253,7 +253,7 @@ export function AgentConsole(): React.JSX.Element {
     })
     setWizardError('')
     setGenOpen(false)
-    toast('已填入新建向导——检查无误后提交创建')
+    toast.success('已填入新建向导——检查无误后提交创建')
   }
 
   const wizardSubmit = async (): Promise<void> => {

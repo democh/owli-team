@@ -1,13 +1,14 @@
 /**
- * K 线画布节点（M34 增强）：
+ * K 线画布节点（M34 增强；M83：智能分析 / 阶段色带 / 落图与分析面板）：
  * - 有 bars → 直渲染（KlineCanvas 内核与 K 线块共用；bars 过 kline-spec 收窄 + 升序归一）；
  * - 周期 / 复权切换直连 GET /api/finance/kline（只读网关，不重问 Agent），切换结果写回节点（画布自动保存）；
- * - 空态（无 bars）：输入标的 + 周期 / 复权 → 「拉取行情」直连网关，成功写回节点；
+ * - 切换失效纪律：bars 更换时同步清除 analysis / drawings（旧坐标错位防护，M83 §5.3）；
+ * - 「智能分析」直连 GET /api/finance/analysis → 结果写回节点（面板 + 落图持久携带）；
  * - 数据来源三通道：K 线块「送上画布」/ agent canvas_write / 节点内直连拉取。
  */
 import * as React from 'react'
-import { LineChart, Loader2, RefreshCw, TriangleAlert } from 'lucide-react'
-import type { CanvasKlineData, CanvasNodeDataMap } from '@multi-agent/shared'
+import { LineChart, Loader2, RefreshCw, Sparkles, TriangleAlert } from 'lucide-react'
+import type { CanvasKlineData, CanvasNodeDataMap, Drawing, KlineAnalysis, SignalSpec } from '@multi-agent/shared'
 import {
   klineDefaultTitle,
   KLINE_ADJUSTS,
@@ -21,9 +22,11 @@ import {
   type KlineIndicator,
   type KlinePeriod,
 } from '../../../lib/kline-spec'
+import { parseKlineAnalysis } from '../../../lib/kline-analysis'
 import { cn } from '../../../lib/utils'
 import { useCanvasStore } from '../../../stores/canvas-store'
 import { KlineCanvas } from '../../finance/KlineCanvas'
+import { KlineAnalysisPanel } from '../../finance/chart/KlineAnalysisPanel'
 import { NodeShell } from './NodeShell'
 import type { CanvasNodeProps } from './types'
 
@@ -41,7 +44,15 @@ function asAdjust(value: string | undefined): KlineAdjust {
 type NodeState =
   | { state: 'empty' }
   | { state: 'invalid'; error: string }
-  | { state: 'ready'; dataset: KlineDataset; indicators: KlineIndicator[]; annotations: KlineAnnotation[] }
+  | {
+      state: 'ready'
+      dataset: KlineDataset
+      indicators: KlineIndicator[]
+      annotations: KlineAnnotation[]
+      drawings: Drawing[]
+      signal: SignalSpec | null
+      analysis?: KlineAnalysis
+    }
 
 /** 节点数据 → 渲染配置（过解析器收窄；bars 缺失 = 空态，损坏 = 错误提示） */
 function narrow(d: CanvasNodeDataMap['kline']): NodeState {
@@ -58,12 +69,22 @@ function narrow(d: CanvasNodeDataMap['kline']): NodeState {
     },
     ...(d.indicators ? { indicators: d.indicators } : {}),
     ...(d.annotations ? { annotations: d.annotations } : {}),
+    ...(d.drawings !== undefined ? { drawings: d.drawings } : {}),
+    ...(d.analysis !== undefined ? { analysis: d.analysis } : {}),
   }
   const result = parseKlineSpec(JSON.stringify(wrapped))
   if (!result.ok || !result.spec.data) {
     return { state: 'invalid', error: result.ok ? '缺少 bars' : result.error }
   }
-  return { state: 'ready', dataset: result.spec.data, indicators: result.spec.indicators, annotations: result.spec.annotations }
+  return {
+    state: 'ready',
+    dataset: result.spec.data,
+    indicators: result.spec.indicators,
+    annotations: result.spec.annotations,
+    drawings: result.spec.drawings,
+    signal: result.spec.signal,
+    ...(result.spec.analysis ? { analysis: result.spec.analysis } : {}),
+  }
 }
 
 export function KlineNode({ id, data, selected }: CanvasNodeProps): React.JSX.Element {
@@ -74,9 +95,11 @@ export function KlineNode({ id, data, selected }: CanvasNodeProps): React.JSX.El
   const [period, setPeriod] = React.useState<KlinePeriod>(() => asPeriod(d.period))
   const [adjust, setAdjust] = React.useState<KlineAdjust>(() => asAdjust(d.adjust))
   const [loading, setLoading] = React.useState(false)
+  const [analyzing, setAnalyzing] = React.useState(false)
   const [error, setError] = React.useState<string | undefined>(undefined)
 
-  /** 直连行情网关拉取（只读）→ 成功写回节点（结果写回节点：工作台实体与消息块的「仅本地」不同） */
+  /** 直连行情网关拉取（只读）→ 成功写回节点（结果写回节点：工作台实体与消息块的「仅本地」不同）；
+   *  M83：bars 更换 → 同步清除 analysis / drawings（旧坐标叠加层错位防护） */
   const fetchKline = async (target: { symbol: string; period: KlinePeriod; adjust: KlineAdjust }): Promise<void> => {
     if (loading || !target.symbol) return
     setLoading(true)
@@ -96,11 +119,37 @@ export function KlineNode({ id, data, selected }: CanvasNodeProps): React.JSX.El
         adjust: ds.adjust ?? target.adjust,
         ...(ds.name ? { name: ds.name } : {}),
         bars: ds.bars,
+        analysis: undefined,
+        drawings: undefined,
       } as Partial<CanvasKlineData>)
     } catch (err) {
       setError(`拉取失败：${(err as Error).message}`)
     } finally {
       setLoading(false)
+    }
+  }
+
+  /** 智能分析（M83）：直连 GET /api/finance/analysis → 结果写回节点（面板 + 落图持久携带） */
+  const runAnalysis = async (symbol: string, period: KlinePeriod, adjust: KlineAdjust): Promise<void> => {
+    if (analyzing) return
+    setAnalyzing(true)
+    setError(undefined)
+    try {
+      const res = await fetch(
+        `/api/finance/analysis?symbol=${encodeURIComponent(symbol)}&period=${period}&adjust=${adjust}&limit=250`,
+      )
+      const body = (await res.json().catch(() => undefined)) as { error?: string; analysis?: unknown } | undefined
+      if (!res.ok) throw new Error(body?.error ?? `HTTP ${res.status}`)
+      const parsed = parseKlineAnalysis(body?.analysis)
+      if (!parsed.value) throw new Error(parsed.warnings[0] ?? '分析结果无效')
+      updateNodeData(id, {
+        analysis: parsed.value,
+        drawings: parsed.value.drawings,
+      } as Partial<CanvasKlineData>)
+    } catch (err) {
+      setError(`分析失败：${(err as Error).message}`)
+    } finally {
+      setAnalyzing(false)
     }
   }
 
@@ -185,17 +234,28 @@ export function KlineNode({ id, data, selected }: CanvasNodeProps): React.JSX.El
     )
   }
 
-  const { dataset, indicators, annotations } = parsed
+  const { dataset, indicators, annotations, drawings, signal, analysis } = parsed
   const label = klineDefaultTitle(dataset)
-  const periodLabel = dataset.period ? KLINE_PERIOD_LABELS[dataset.period] ?? dataset.period : undefined
+  const phases = analysis?.phases.bands ?? []
 
   return (
     <NodeShell nodeId={id} selected={selected} resizable={{ minWidth: 380, minHeight: 260 }}>
       <div className="flex h-full flex-col overflow-hidden rounded-[inherit]">
         <div className="flex shrink-0 items-center gap-1.5 border-b px-2.5 py-1.5 text-[10px] text-muted-foreground">
           <span className="truncate text-[11px] font-medium text-foreground">{label}</span>
-          {periodLabel && <span className="shrink-0">{periodLabel}</span>}
           {dataset.symbol && <span className="shrink-0 rounded bg-muted px-1 leading-4">{dataset.symbol}</span>}
+          {dataset.symbol && (
+            <button
+              type="button"
+              className="nodrag flex shrink-0 items-center gap-0.5 rounded px-1 py-0.5 hover:bg-accent hover:text-foreground disabled:opacity-50"
+              title="智能分析（阶段 / 情绪 / 关键位 → 面板 + 落图）"
+              disabled={analyzing}
+              onClick={() => void runAnalysis(dataset.symbol!, asPeriod(dataset.period), asAdjust(dataset.adjust))}
+            >
+              {analyzing ? <Loader2 className="size-3 animate-spin" /> : <Sparkles className="size-3" />}
+              分析
+            </button>
+          )}
           <button
             type="button"
             className="nodrag ml-auto flex shrink-0 items-center gap-0.5 rounded px-1 py-0.5 hover:bg-accent hover:text-foreground disabled:opacity-50"
@@ -250,8 +310,21 @@ export function KlineNode({ id, data, selected }: CanvasNodeProps): React.JSX.El
         {/* 图表区内滚动 / 拖动归图表自身（滚轮缩放 + 拖动平移行情），不触发画布缩放与节点拖动；
             节点拖动与缩放走标题栏 / 边框 / 缩放手柄 */}
         <div className="canvas-kline-frame nodrag nowheel min-h-0 flex-1 overflow-hidden p-1.5">
-          <KlineCanvas dataset={dataset} indicators={indicators} annotations={annotations} label={label} />
+          <KlineCanvas
+            dataset={dataset}
+            indicators={indicators}
+            annotations={annotations}
+            drawings={drawings}
+            signal={signal}
+            phases={phases}
+            label={label}
+          />
         </div>
+        {analysis && (
+          <div className="nodrag max-h-[45%] shrink-0 overflow-auto border-t px-2 py-1.5">
+            <KlineAnalysisPanel analysis={analysis} />
+          </div>
+        )}
       </div>
     </NodeShell>
   )

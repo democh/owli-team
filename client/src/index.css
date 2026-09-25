@@ -5615,7 +5615,9 @@
 .md-block-bar {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 0.4rem;
+  row-gap: 0.25rem;
   padding: 0.3rem 0.45rem 0.3rem 0.65rem;
   border-bottom: 1px solid hsl(var(--border) / 0.7);
   background: hsl(var(--muted) / 0.55);
@@ -5640,6 +5642,7 @@
 }
 .md-block-meta {
   opacity: 0.85;
+  white-space: nowrap;
 }
 .md-block-actions {
   margin-left: auto;
@@ -5651,6 +5654,7 @@
   display: inline-flex;
   align-items: center;
   gap: 0.25rem;
+  white-space: nowrap;
   padding: 0.15rem 0.4rem;
   border-radius: 0.375rem;
   color: hsl(var(--muted-foreground));
@@ -5658,6 +5662,9 @@
   transition:
     color 0.15s ease,
     background-color 0.15s ease;
+}
+.md-block-btn svg {
+  flex-shrink: 0;
 }
 .md-block-btn:hover {
   background: hsl(var(--accent));
@@ -5830,7 +5837,7 @@ pre.md-mermaid-source {
   margin-bottom: 0;
 }
 
-/* kline（M34 §6.1） */
+/* kline（M34 §6.1；M83 工具条 / 分析面板） */
 .md-kline-frame {
   position: relative;
 }
@@ -5842,13 +5849,265 @@ pre.md-mermaid-source {
   width: min(1200px, 92vw);
   height: min(80vh, 860px);
 }
-/* 画布 K 线节点（M34 增强）：帧内画布填满节点剩余空间（节点可 resize） */
-.canvas-kline-frame .md-kline-frame {
+/* M83：指标工具条（主图 / 副图 / 阶段 / 截图；窄容器主图自动收为下拉） */
+.md-kline-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.15rem;
+  row-gap: 0.25rem;
+  padding: 0.2rem 0.1rem;
+  font-size: 11px;
+}
+/* 工具条分组（M85 布局重设计）：组内 nowrap 不拆行，窄容器按组换行；end 组靠右。
+   宽度预算：chip 水平 padding 0.3rem / 组间 0.15rem——目标宽容器下总量 ≤2 行 */
+.md-kline-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.15rem;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.md-kline-group-end {
+  margin-left: auto;
+}
+.md-kline-toolbar-label {
+  color: hsl(var(--muted-foreground));
+  margin-right: 0.05rem;
+}
+.md-kline-toolbar-divider {
+  width: 1px;
+  height: 12px;
+  margin: 0 0.25rem;
+  background: hsl(var(--border));
+}
+.md-kline-toolbar-spacer {
+  flex: 1;
+}
+.md-kline-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+  white-space: nowrap;
+  border-radius: 0.375rem;
+  border: 1px solid hsl(var(--border));
+  background: hsl(var(--card));
+  color: hsl(var(--foreground) / 0.85);
+  padding: 0.05rem 0.3rem;
+  line-height: 1.5;
+  font-size: 11px;
+  transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+}
+.md-kline-chip:hover {
+  background: hsl(var(--accent) / 0.5);
+}
+.md-kline-chip.is-active {
+  background: hsl(var(--primary));
+  border-color: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
+  font-weight: 600;
+}
+.md-kline-select {
+  height: 20px;
+  border-radius: 0.375rem;
+  border: 1px solid hsl(var(--border));
+  background: hsl(var(--card));
+  font-size: 11px;
+  padding: 0 0.25rem;
+}
+/* M85：划线圈（工具条 / 样式栏 / 色板） */
+.md-kline-drawbar,
+.md-kline-stylebar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.15rem;
+  row-gap: 0.25rem;
+  padding: 0.2rem 0.1rem;
+  font-size: 11px;
+  border-top: 1px dashed hsl(var(--border) / 0.7);
+}
+.md-kline-stylebar {
+  background: hsl(var(--muted) / 0.35);
+}
+.md-kline-chip:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.md-kline-chip.is-danger {
+  background: hsl(0 72% 51%);
+  border-color: hsl(0 72% 51%);
+  color: #fff;
+  font-weight: 600;
+}
+.md-kline-toolbar-count {
+  color: hsl(var(--muted-foreground));
+  font-variant-numeric: tabular-nums;
+}
+.md-kline-swatch {
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  border: 1px solid hsl(var(--border));
+  transition: transform 0.1s ease, box-shadow 0.1s ease;
+}
+.md-kline-swatch:hover {
+  transform: scale(1.12);
+}
+.md-kline-swatch.is-active {
+  box-shadow: 0 0 0 2px hsl(var(--background)), 0 0 0 3.5px hsl(var(--foreground) / 0.65);
+}
+.md-kline-textinput {
+  height: 20px;
+  width: 130px;
+  border-radius: 0.375rem;
+  border: 1px solid hsl(var(--border));
+  background: hsl(var(--card));
+  font-size: 11px;
+  padding: 0 0.4rem;
+}
+.md-kline-textinput:focus {
+  outline: none;
+  border-color: hsl(var(--primary));
+}
+/* M83：分析面板（阶段卡 / 情绪 / 关键位 / 特征 / 历史阶段条） */
+.md-kline-analysis {
+  border-top: 1px solid hsl(var(--border) / 0.6);
+  background: hsl(var(--background) / 0.5);
+  font-size: 11.5px;
+}
+.md-kline-analysis-head {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.35rem 0.5rem 0.15rem;
+}
+.md-kline-analysis-title {
+  font-weight: 600;
+  color: hsl(var(--foreground) / 0.9);
+}
+.md-kline-phase-badge {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 0.375rem;
+  color: #ffffff;
+  font-weight: 600;
+  font-size: 11px;
+  padding: 0.05rem 0.45rem;
+  line-height: 1.5;
+}
+.md-kline-analysis-confidence {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  color: hsl(var(--muted-foreground));
+}
+.md-kline-confidence-track {
+  display: inline-block;
+  width: 72px;
+  height: 6px;
+  border-radius: 3px;
+  background: hsl(var(--muted));
+  overflow: hidden;
+}
+.md-kline-confidence-fill {
+  display: block;
   height: 100%;
+  border-radius: 3px;
+}
+.md-kline-analysis-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding: 0.1rem 0.5rem 0.45rem;
+}
+.md-kline-analysis-desc {
+  margin: 0;
+  color: hsl(var(--foreground) / 0.85);
+}
+.md-kline-analysis-row {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+.md-kline-analysis-label {
+  color: hsl(var(--muted-foreground));
+  min-width: 3.6em;
+}
+.md-kline-analysis-label::after {
+  content: '';
+}
+.md-kline-analysis-value {
+  color: hsl(var(--foreground) / 0.9);
+}
+.md-kline-analysis-meta {
+  color: hsl(var(--muted-foreground));
+  font-size: 10.5px;
+}
+.md-kline-analysis-sep {
+  color: hsl(var(--border));
+  margin: 0 0.15rem;
+}
+.md-kline-feature-chips {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+}
+.md-kline-feature-chip {
+  border-radius: 0.375rem;
+  border: 1px solid hsl(var(--border));
+  background: hsl(var(--card));
+  padding: 0 0.35rem;
+  line-height: 1.5;
+  font-size: 10.5px;
+}
+.md-kline-feature-chip.is-approx {
+  border-style: dashed;
+  color: hsl(var(--muted-foreground));
+}
+.md-kline-phase-strip {
+  display: inline-flex;
+  flex: 1;
+  min-width: 120px;
+  height: 10px;
+  border-radius: 3px;
+  overflow: hidden;
+  background: hsl(var(--muted));
+}
+.md-kline-phase-seg {
+  min-width: 2px;
+}
+.md-kline-analysis-notes {
+  margin: 0.15rem 0 0;
+  color: hsl(var(--muted-foreground));
+  font-size: 10.5px;
+}
+/* 画布 K 线节点（M34 增强）：帧内画布填满节点剩余空间（节点可 resize） */
+.canvas-kline-frame {
+  position: relative;
+}
+.canvas-kline-frame .md-kline-frame {
+  /* M85 修复（「没数据」根因）：absolute 铺满 + grid 行（auto 工具条容器 / 1fr 画布）——
+     构成「确定高度链」，klinecharts 内根 height:100% 才能正确解析。
+     注意：画布必须是 frame 的**直接子元素**且独占 1fr 行；所有工具条须包在 .md-kline-bars 里，
+     否则 1fr 行会被第二个工具条吃掉（被拉成空白），画布落隐式行被推出可视。
+     padding: inherit 保持与原 wrap 内边距一致。 */
+  position: absolute;
+  inset: 0;
+  padding: inherit;
+  display: grid;
+  grid-template-rows: auto 1fr;
+  min-height: 0;
+}
+/* K 线工具条容器（M85 布局修复）：指标 / 划线 / 样式栏统一纵向排列占 grid 首行 */
+.md-kline-bars {
+  display: flex;
+  flex-direction: column;
 }
 .canvas-kline-frame .md-kline-canvas {
-  height: 100%;
-  min-height: 160px;
+  height: auto;
+  min-height: 120px;
 }
 .md-kline-switch {
   display: flex;
@@ -6699,6 +6958,56 @@ pre.md-mermaid-source {
 }
 .scene-arena-center .scene-seat {
   flex: 1;
+}
+/* M85 布局合并（2026-09-25）：裁决席签 + 对抗参与条同行（原独立席位卡行删除） */
+.scene-arena-actionrow {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  padding: 0.15rem 0.75rem 0.1rem;
+  flex-shrink: 0;
+}
+.scene-arena-preside {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  flex-shrink: 0;
+  border: 1px solid hsl(var(--primary) / 0.22);
+  background: hsl(var(--primary) / 0.05);
+  border-radius: 999px;
+  padding: 0.1rem 0.5rem 0.1rem 0.25rem;
+  font-size: 11px;
+  color: hsl(var(--muted-foreground));
+  transition: background 0.15s ease;
+}
+.scene-arena-preside:hover {
+  background: hsl(var(--primary) / 0.1);
+}
+.scene-preside-speaking {
+  color: hsl(var(--primary));
+  font-weight: 600;
+  font-size: 10px;
+}
+/* M85 合并读数（原 arena 计分板 → 会话标题行内联；宽屏才显示） */
+.chat-head-score {
+  align-items: center;
+  gap: 0.4rem;
+  flex-shrink: 0;
+  border: 1px solid hsl(var(--border));
+  border-radius: 999px;
+  padding: 0.05rem 0.55rem;
+  font-size: 11px;
+  color: hsl(var(--muted-foreground));
+}
+.chat-head-score-side b {
+  color: hsl(var(--foreground));
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.chat-head-score-mid {
+  color: hsl(var(--primary));
+  font-weight: 600;
 }
 .scene-arena-track {
   padding: 0.25rem 0.75rem 0.1rem;
@@ -9972,6 +10281,11 @@ a.md-source-title:hover {
   padding: 0 0.34rem;
   font-size: 9px;
   font-weight: 700;
+}
+.scene-claim-grade.is-statistical {
+  background: hsl(199 89% 48% / 0.14);
+  color: hsl(200 90% 32%);
+  font-weight: 800;
 }
 .scene-claim-grade.is-official {
   background: hsl(160 84% 36% / 0.12);
@@ -13758,4 +14072,129 @@ a.md-source-title:hover {
   .tc-face {
     animation: none;
   }
+}
+
+/* ---------- 全局 toast（sonner 包装）：类型色图标底 + 左侧色条 + 卡片质感 ---------- */
+[data-sonner-toaster] {
+  --ma-toast-success: hsl(160 84% 36%);
+  --ma-toast-error: hsl(0 72% 51%);
+  --ma-toast-warning: hsl(38 92% 50%);
+  --ma-toast-info: hsl(217 91% 60%);
+  font-family: inherit;
+}
+[data-sonner-toast].ma-toast {
+  /* 注意：不覆盖 position（sonner 用 absolute + translate 做堆叠错位）/ transform / transition——
+     覆盖会导致多 toast 叠压与收起动画失效（M85 实测） */
+  overflow: hidden;
+  border-radius: 10px;
+  border: 1px solid hsl(var(--border));
+  background: hsl(var(--card));
+  color: hsl(var(--card-foreground));
+  box-shadow:
+    0 1px 2px hsl(var(--foreground) / 0.05),
+    0 6px 18px -6px hsl(var(--foreground) / 0.18);
+  font-size: 12.5px;
+}
+[data-sonner-toast].ma-toast:hover {
+  box-shadow:
+    0 2px 4px hsl(var(--foreground) / 0.06),
+    0 10px 24px -8px hsl(var(--foreground) / 0.22);
+}
+/* 左侧类型色条（裸 toast 走主色锚点） */
+[data-sonner-toast].ma-toast::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: hsl(var(--primary) / 0.6);
+}
+[data-sonner-toast][data-type='success']::before {
+  background: var(--ma-toast-success);
+}
+[data-sonner-toast][data-type='error']::before {
+  background: var(--ma-toast-error);
+}
+[data-sonner-toast][data-type='warning']::before {
+  background: var(--ma-toast-warning);
+}
+[data-sonner-toast][data-type='info']::before {
+  background: var(--ma-toast-info);
+}
+[data-sonner-toast][data-type='loading']::before {
+  background: hsl(var(--primary));
+}
+/* 类型细描边（轻微区分） */
+[data-sonner-toast][data-type='success'].ma-toast {
+  border-color: hsl(160 84% 36% / 0.28);
+}
+[data-sonner-toast][data-type='error'].ma-toast {
+  border-color: hsl(0 72% 51% / 0.3);
+}
+[data-sonner-toast][data-type='warning'].ma-toast {
+  border-color: hsl(38 92% 50% / 0.35);
+}
+[data-sonner-toast][data-type='info'].ma-toast {
+  border-color: hsl(217 91% 60% / 0.28);
+}
+/* 图标：类型色圆底 */
+[data-sonner-toast].ma-toast .ma-toast-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 7px;
+  background: hsl(var(--primary) / 0.1);
+  color: hsl(var(--primary));
+  flex-shrink: 0;
+}
+[data-sonner-toast][data-type='success'] .ma-toast-icon {
+  background: hsl(160 84% 36% / 0.12);
+  color: hsl(160 84% 30%);
+}
+[data-sonner-toast][data-type='error'] .ma-toast-icon {
+  background: hsl(0 72% 51% / 0.12);
+  color: hsl(0 72% 44%);
+}
+[data-sonner-toast][data-type='warning'] .ma-toast-icon {
+  background: hsl(38 92% 50% / 0.16);
+  color: hsl(32 95% 38%);
+}
+[data-sonner-toast][data-type='info'] .ma-toast-icon {
+  background: hsl(217 91% 60% / 0.12);
+  color: hsl(217 91% 46%);
+}
+/* 标题 / 描述 */
+[data-sonner-toast].ma-toast .ma-toast-title {
+  font-size: 12.5px;
+  font-weight: 600;
+  line-height: 1.45;
+}
+[data-sonner-toast].ma-toast .ma-toast-desc {
+  font-size: 12px;
+  color: hsl(var(--muted-foreground));
+  margin-top: 2px;
+}
+/* 关闭 / 操作按钮 */
+[data-sonner-toast].ma-toast .ma-toast-close {
+  border-radius: 6px;
+  border: 1px solid hsl(var(--border) / 0.9);
+  background: hsl(var(--card));
+  color: hsl(var(--muted-foreground));
+  transition: color 0.12s ease, background 0.12s ease;
+}
+[data-sonner-toast].ma-toast .ma-toast-close:hover {
+  color: hsl(var(--foreground));
+  background: hsl(var(--accent));
+}
+[data-sonner-toast].ma-toast .ma-toast-action {
+  border-radius: 6px;
+  font-size: 11.5px;
+  font-weight: 600;
+}
+[data-sonner-toast].ma-toast .ma-toast-cancel {
+  border-radius: 6px;
+  font-size: 11.5px;
 }

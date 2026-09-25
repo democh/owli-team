@@ -23,7 +23,7 @@ describe('主区左缘·左栏悬浮把手（垂直中部·默认不展示、悬
 
     const user = userEvent.setup()
     const handle = screen.getByTitle('隐藏左栏（⌘⇧B）')
-    // 非悬浮不展示：把手常驻但透明，悬停左缘热区（group-hover）时淡入
+    // 非悬浮不展示：把手常驻但透明，悬停左缘热区（group-hover）时淡入（恢复初始态——样式迭代后按用户要求还原）
     expect(handle.className).toContain('opacity-0')
     expect(handle.className).toContain('group-hover:opacity-100')
     // 单折角箭头双态：展开（可收起）= 向左；收起（可展开）= 向右

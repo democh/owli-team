@@ -142,7 +142,7 @@ function endRunLocally(sessionId: string, reason?: RunEndReason): void {
   }
   void sessions.loadSessions()
   if (sessions.currentId === sessionId) void sessions.refreshMessages()
-  if (reason === 'stopped') toast('已停止本次协作')
+  if (reason === 'stopped') toast.success('已停止本次协作')
   else if (reason === 'turn-limit') toast('达到回合上限，运行已收束，可继续补充指令')
   // M57 P3：配额超限收束（系统条已同时落库；此处仅轻提示）
   else if (reason === 'quota') toast('用量配额已超限，本次运行已收束（详情见系统消息）')
@@ -337,7 +337,7 @@ export const useRunStore = create<RunState>((set, get) => ({
       if (get().runId !== res.runId) get().attach(res.runId, sessionId)
       return
     }
-    if (res.queued) toast('已排队：前一轮运行结束后自动开始')
+    if (res.queued) toast.success('已排队：前一轮运行结束后自动开始')
     set({ queued: res.queued ?? false })
     get().attach(res.runId, sessionId)
   },

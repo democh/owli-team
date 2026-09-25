@@ -47,13 +47,18 @@ test('M12 微交互：帮助面板 / 进度链 / 迷你档案 / 回底浮标', a
   await page.keyboard.press('Escape')
   await expect(dossier).toBeHidden()
 
-  // 5) 回到底部浮标：滚到顶部浮现，点击回底后消失
+  // 5) 回到底部浮标（M85 重设计：仅有未读新消息时浮现——纯图标 + 未读角标；无未读不常显）
   const log = page.locator('[role="log"]')
+  const jump = page.getByRole('button', { name: /回到最新/ })
+  // 5a) 无新消息：滚到顶部不出现浮标（上滑浏览历史保持界面安静）
   await log.evaluate((el) => {
     el.scrollTop = 0
   })
-  const jump = page.getByTitle('跳到最新消息')
-  await expect(jump).toBeVisible()
+  await expect(jump).toHaveCount(0)
+  // 5b) 上滑期间新消息抵达（滚动不被打断）→ 浮标浮现 → 点击回底后消失
+  // 注：视口在顶部时虚拟列表不挂载底部胶囊，不能用「你的回合」等待——浮标出现本身即信号
+  await sendMessage(page, '@雷动 一句话回执即可。')
+  await expect(jump).toBeVisible({ timeout: 30_000 })
   await jump.click()
-  await expect(jump).toBeHidden()
+  await expect(jump).toHaveCount(0)
 })

@@ -35,10 +35,13 @@ export async function copyText(text: string): Promise<boolean> {
 export function CopyButton({
   text,
   label = '复制',
+  compact = false,
 }: {
   /** 文本或取值函数（渲染后才可取的动态内容，如邮件正文） */
   text: string | (() => string)
   label?: string
+  /** 紧凑态：仅图标（title 携带状态文案；K 线块头等窄场景用） */
+  compact?: boolean
 }): React.JSX.Element {
   const [state, setState] = React.useState<'idle' | 'done' | 'fail'>('idle')
   const timer = React.useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
@@ -55,11 +58,11 @@ export function CopyButton({
     <button
       type="button"
       className={cn('md-block-btn', state === 'fail' && 'is-fail')}
-      title={state === 'done' ? '已复制' : label}
+      title={state === 'done' ? '已复制' : state === 'fail' ? '复制失败' : label}
       onClick={onClick}
     >
       {state === 'done' ? <Check className="size-3.5 text-emerald-600" /> : <Copy className="size-3.5" />}
-      <span>{state === 'done' ? '已复制' : state === 'fail' ? '复制失败' : label}</span>
+      {!compact && <span>{state === 'done' ? '已复制' : state === 'fail' ? '复制失败' : label}</span>}
     </button>
   )
 }

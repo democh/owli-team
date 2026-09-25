@@ -85,7 +85,7 @@ export function InboxPanel(): React.JSX.Element | null {
       >
         <Inbox className="size-4" />
         {unreadCount > 0 && (
-          <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[9.5px] font-medium text-primary-foreground">
+          <span className="absolute -right-1 -top-0.5 flex h-[15px] min-w-[15px] items-center justify-center rounded-full border-2 border-background bg-destructive px-1 text-[9px] font-semibold leading-none tabular-nums text-destructive-foreground">
             {unreadCount > 99 ? '99+' : unreadCount}
           </span>
         )}

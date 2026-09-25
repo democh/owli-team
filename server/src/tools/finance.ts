@@ -1,6 +1,6 @@
 /**
- * M34 金融工具集（§5.1）：数据类 8 工具 —— fin_env / fin_search / fin_quote / fin_kline /
- * fin_indicator / fin_fund / fin_fundamental / fin_news。
+ * M34 金融工具集（§5.1）：数据类工具 —— fin_env / fin_search / fin_quote / fin_kline /
+ * fin_indicator / fin_fund / fin_fundamental / fin_news；M83 新增 fin_analyze（K 线智能分析）。
  *
  * 通用纪律：
  * - 全部 tier='deferred'（经 tool_search 检索激活；FINANCE_ENABLED=true 时才注册）；
@@ -8,13 +8,15 @@
  * - 结果含 asOf / source / cache 溯源；fin_kline 默认落盘快照并给出 kline 块模板；
  * - 数字必须出自工具（禁止模型编造）：失败时如实返回错误与降级说明。
  *
- * 量化类 4 工具（fin_screen / fin_backtest / fin_game / fin_watch）见 finance_quant.ts。
+ * 量化类工具（fin_screen / fin_backtest / fin_strategy / fin_game / fin_watch）见 finance_quant.ts。
  */
 import { execFile } from 'node:child_process'
 import { z } from 'zod'
+import { KLINE_RENDER_INDICATORS } from '@multi-agent/shared'
 import type { AppConfig } from '../config.js'
+import { analyzeKline, PHASE_CN, SENTIMENT_CN } from '../finance/analysis/index.js'
 import { sanitizedEnv } from '../finance/bridge/env.js'
-import { OPTIONAL_PY_PACKAGES, probePython, REQUIRED_PY_PACKAGES } from '../finance/bridge/probe.js'
+import { ANALYTICS_PY_PACKAGES, OPTIONAL_PY_PACKAGES, probePython, REQUIRED_PY_PACKAGES } from '../finance/bridge/probe.js'
 import { CN_TZ_OFFSET_MS, adjustLabel, periodLabel } from '../finance/period.js'
 import { buildKlineSnapshot, writeChartSnapshot } from '../finance/snapshot.js'
 import type { FundamentalPeriod, KlineBar, Quote } from '../finance/types.js'
@@ -47,6 +49,8 @@ const assetTypeSchema = z.enum(['stock', 'etf', 'fund', 'index'])
 
 const envArgs = z.object({
   action: z.enum(['status', 'install', 'refresh']).default('status'),
+  /** M84：安装包组（base 基础数据栈（默认）/ analytics 统计扩展 / all 全部可选） */
+  group: z.enum(['base', 'analytics', 'all']).default('base'),
 })
 
 /** pip 安装（5 分钟超时；外部中断（工具护栏）经 signal 联动 kill） */
@@ -89,7 +93,7 @@ function createFinEnvTool(cfg: AppConfig): AgentTool {
     tier: 'deferred',
     readOnly: false,
     description:
-      'Python 数据桥（baostock / akshare / ta / tablib）状态与安装：action=status 查看解释器、依赖包与数据源健康度；action=refresh 强制重新探测（安装后 / 排查时）；action=install 一键安装依赖（经用户审批，执行 pip install）。金融数据出现「需要 Python 环境」「依赖缺失」提示时用本工具排查。',
+      'Python 数据桥（baostock / akshare / ta / tablib + 统计扩展）状态与安装：action=status 查看解释器、依赖包与数据源健康度；action=refresh 强制重新探测（安装后 / 排查时）；action=install 安装依赖（经用户审批，group=base 基础数据栈（默认）/ analytics 统计扩展（scipy / statsmodels / numpy）/ all 全部可选）。金融数据出现「需要 Python 环境」「依赖缺失」提示或统计扩展缺失时用本工具排查。',
     parameters: {
       type: 'object',
       properties: {
@@ -97,6 +101,11 @@ function createFinEnvTool(cfg: AppConfig): AgentTool {
           type: 'string',
           enum: ['status', 'install', 'refresh'],
           description: 'status=查看状态（默认）；install=安装依赖（审批门）；refresh=强制重新探测',
+        },
+        group: {
+          type: 'string',
+          enum: ['base', 'analytics', 'all'],
+          description: 'install 的包组：base 基础数据栈（默认）/ analytics 统计扩展（scipy / statsmodels / numpy）/ all 全部可选',
         },
       },
     },
@@ -108,16 +117,29 @@ function createFinEnvTool(cfg: AppConfig): AgentTool {
       if (args.action === 'install') {
         const before = await probePython(probeOpts(false))
         const python = cfg.financePython || before.python || 'python3'
-        const packages = [...REQUIRED_PY_PACKAGES]
+        // M84：包组（base 基础数据栈 / analytics 统计扩展 / all 全部可选）
+        const packages =
+          args.group === 'analytics'
+            ? [...REQUIRED_PY_PACKAGES, ...ANALYTICS_PY_PACKAGES]
+            : args.group === 'all'
+              ? [...REQUIRED_PY_PACKAGES, ...OPTIONAL_PY_PACKAGES]
+              : [...REQUIRED_PY_PACKAGES]
         const pipArgs = ['-m', 'pip', 'install', '-U', ...packages]
         if (cfg.financePipIndexUrl) pipArgs.push('-i', cfg.financePipIndexUrl)
         const cmdText = `${python} ${pipArgs.join(' ')}`
+        const groupNote =
+          args.group === 'analytics'
+            ? '统计扩展（scipy / statsmodels / numpy：显著性检验 / ADF 平稳性）'
+            : args.group === 'all'
+              ? '基础数据栈 + 全部可选包（含统计扩展与 openpyxl / curl_cffi）'
+              : '基础数据栈（baostock / akshare / pandas / ta / tablib）'
         const approval = await approveWrite(
           ctx,
           '安装金融数据 Python 依赖',
           [
             `将执行：${cmdText}`,
             `包：${packages.join('、')}`,
+            `包组：${groupNote}`,
             `镜像：${cfg.financePipIndexUrl || '官方源（PyPI）'}`,
             '影响：在当前 Python 环境安装 / 升级上述包，可能需要 1-3 分钟',
           ].join('\n'),
@@ -161,7 +183,7 @@ function createFinEnvTool(cfg: AppConfig): AgentTool {
           `状态：${status.level}${status.python ? `｜解释器 ${status.python}${status.version ? `（${status.version}）` : ''}` : ''}`,
           `包状态：${pkgTable.join('｜')}`,
           `数据源健康度：\n${healthText}`,
-          `安装引导：缺包时调用本工具 action=install（经审批执行 python -m pip install -U ${REQUIRED_PY_PACKAGES.join(' ')}；可选包 openpyxl / curl_cffi 可单独 pip 安装）`,
+          `安装引导：缺包时调用本工具 action=install（经审批执行 pip install -U）：group=base 基础数据栈（默认）｜group=analytics 统计扩展（scipy / statsmodels / numpy，fin_stats 显著性检验用）｜group=all 全部可选（含 openpyxl / curl_cffi）`,
         ].join('\n\n'),
       }
     },
@@ -422,7 +444,7 @@ export function summarizeKline(bars: KlineBar[]): KlineSummary {
   }
 }
 
-const KLINE_INDICATORS = ['MA', 'EMA', 'VOL', 'MACD', 'RSI', 'KDJ', 'BOLL', 'ATR'] as const
+const KLINE_INDICATORS = KLINE_RENDER_INDICATORS
 const DEFAULT_KLINE_INDICATORS: string[] = ['MA', 'VOL']
 
 const klineArgs = z.object({
@@ -462,7 +484,7 @@ function createFinKlineTool(cfg: AppConfig): AgentTool {
         indicators: {
           type: 'array',
           items: { type: 'string', enum: [...KLINE_INDICATORS] },
-          description: 'K 线块渲染的指标面板（默认 ["MA","VOL"]；可选 MA/EMA/VOL/MACD/RSI/KDJ/BOLL/ATR）',
+          description: 'K 线块渲染的指标面板（默认 ["MA","VOL"]；可选 MA/EMA/BOLL/KCB/SAR/ICHIMOKU/ST/DONCHIAN/VOL/MACD/KDJ/RSI/ATR）',
         },
         annotations: {
           type: 'array',
@@ -530,6 +552,98 @@ function createFinKlineTool(cfg: AppConfig): AgentTool {
         }
       } catch (err) {
         return { ok: false, summary: `K 线获取失败：${errorText(err)}` }
+      }
+    },
+  }
+}
+
+// ---------------------------------------------------------------- fin_analyze
+
+const analyzeArgs = z.object({
+  symbol: z.string().min(1),
+  period: z.enum(['day', 'week', 'month', 'min5', 'min15', 'min30', 'min60']).default('day'),
+  adjust: z.enum(['qfq', 'hfq', 'none']).default('qfq'),
+  limit: z.number().int().min(60).max(500).default(250),
+  persist: z.boolean().default(true),
+  source: sourcePrefSchema,
+})
+
+function createFinAnalyzeTool(cfg: AppConfig): AgentTool {
+  return {
+    name: 'fin_analyze',
+    tier: 'deferred',
+    readOnly: true,
+    description:
+      'K 线智能分析（规则化统计口径）：阶段判定（十阶段：吸筹 / 筑底 / 洗盘 / 拉升 / 主升 / 派发 / 下跌 / 恐慌 / 反弹 / 震荡，含逐根色带与置信度）/ 市场情绪周期 / 支撑压力与量度目标 / 底部特征标签；默认落盘快照并给出可直接复制的 kline 块模板（阶段色带 + 关键位落图 + 分析面板）。走势复盘与结构研判的「有据可依」分析入口；不构成投资建议、不预测点位。',
+    parameters: {
+      type: 'object',
+      properties: {
+        symbol: { type: 'string', description: '标的（代码 / sh600519 / 名称）' },
+        period: { type: 'string', enum: ['day', 'week', 'month', 'min5', 'min15', 'min30', 'min60'], description: '周期（默认 day）' },
+        adjust: { type: 'string', enum: ['qfq', 'hfq', 'none'], description: '复权（默认 qfq 前复权）' },
+        limit: { type: 'number', description: 'K 线根数（默认 250；下限 60）' },
+        persist: { type: 'boolean', description: '是否落盘快照（默认 true；快照含分析结论与落图）' },
+        source: { type: 'string', enum: ['auto', 'node', 'py'], description: '数据源层级（默认 auto）' },
+      },
+      required: ['symbol'],
+    },
+    schema: analyzeArgs,
+    async execute(args: z.infer<typeof analyzeArgs>, ctx: ToolRuntime): Promise<ToolResult> {
+      const guard = financeGuard(ctx)
+      if (!guard.ok) return guard.result
+      const resolved = await resolveFinSymbol(guard.gateway, args.symbol)
+      if (!resolved.ok) return resolved.result
+      const symbol = resolved.symbol
+      const name = symbol.name ?? symbol.symbol
+      try {
+        const res = await guard.gateway.kline(symbol, args.period, args.adjust, args.limit, { source: args.source })
+        const bars = res.data.bars
+        if (bars.length === 0) return { ok: false, summary: 'K 线数据为空（源未覆盖该标的或周期）' }
+        const analysis = analyzeKline(bars, { period: args.period, adjust: args.adjust })
+
+        const render = { mainIndicator: 'MA' as const, subIndicator: 'VOL' as const, showPhases: true }
+        let snapshotPath: string | undefined
+        if (args.persist) {
+          throwIfAborted(ctx)
+          const snapshot = buildKlineSnapshot(res.data, {
+            indicators: ['MA', 'VOL'],
+            render,
+            drawings: analysis.drawings,
+            analysis,
+            ...(res.degraded ? { note: res.degraded } : {}),
+          })
+          const written = await writeChartSnapshot(ctx.workspace, cfg.financeKlineSnapshotDir, snapshot)
+          snapshotPath = written.path
+        }
+
+        const phases = analysis.phases
+        const sentiment = analysis.sentiment
+        const levels = analysis.levels
+        const levelText = (ref: typeof levels.support): string =>
+          ref ? `${fmtNum(ref.price)}（${ref.basis} · ${'touches' in ref ? `触碰 ${ref.touches} 次` : '目标'}）` : '—'
+        const parts = [
+          `标的：${name}（${symbol.symbol}） ${periodLabel(args.period)}K · ${adjustLabel(args.adjust)} · ${bars.length} 根`,
+          `阶段：${PHASE_CN[phases.current]}（置信度 ${phases.confidence}/100，自 ${phases.since} 起）—— ${phases.description}`,
+          `情绪：${SENTIMENT_CN[sentiment.stage]} ${sentiment.score}/100｜${sentiment.pathLabel}`,
+          `关键位：支撑 ${levelText(levels.support)}｜压力 ${levelText(levels.resistance)}｜量度目标 ${levels.target ? `${fmtNum(levels.target.price)}（${levels.target.basis}）` : '—'}`,
+          `特征：${analysis.features.length > 0 ? analysis.features.map((f) => `${f.label}${f.confirmed ? '' : '（近似口径）'}`).join('、') : '—'}`,
+          `落图：${analysis.drawings.length} 条（groupId analysis）`,
+          `说明：\n- ${analysis.notes.join('\n- ')}`,
+          sourceLine({ source: res.source, asOf: res.asOf, cache: res.cache, degraded: res.degraded }),
+        ]
+        const title = `${name} ${periodLabel(args.period)}K（${adjustLabel(args.adjust)}）智能分析`
+        if (snapshotPath) {
+          parts.push(`快照：${snapshotPath}（含 bars / 分析结论 / 落图，可版本 diff）`)
+          parts.push('', 'kline 块模板（复制到回复即可渲染：图 + 阶段色带 + 关键位 + 分析面板）：', klineBlockTemplate(title, snapshotPath, ['MA', 'VOL'], { render }))
+        }
+        return {
+          ok: true,
+          summary: `分析就绪：${name} 当前阶段「${PHASE_CN[phases.current]}」（置信度 ${phases.confidence}/100）；情绪 ${SENTIMENT_CN[sentiment.stage]} ${sentiment.score}/100；支撑 ${levels.support ? fmtNum(levels.support.price) : '—'} / 压力 ${levels.resistance ? fmtNum(levels.resistance.price) : '—'}${snapshotPath ? `；快照 ${snapshotPath}` : ''}`,
+          detail: parts.join('\n'),
+          ...(snapshotPath ? { artifacts: [snapshotPath] } : {}),
+        }
+      } catch (err) {
+        return { ok: false, summary: `K 线分析失败：${errorText(err)}` }
       }
     },
   }
@@ -901,13 +1015,14 @@ const finNewsTool: AgentTool = {
 
 // ---------------------------------------------------------------- 导出
 
-/** 数据类 8 工具（注册进 createToolRegistry；FINANCE_ENABLED=true 时才有意义） */
+/** 数据类 9 工具（注册进 createToolRegistry；FINANCE_ENABLED=true 时才有意义） */
 export function createFinanceTools(cfg: AppConfig): AgentTool[] {
   return [
     createFinEnvTool(cfg),
     finSearchTool,
     finQuoteTool,
     createFinKlineTool(cfg),
+    createFinAnalyzeTool(cfg),
     finIndicatorTool,
     finFundTool,
     finFundamentalTool,

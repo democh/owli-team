@@ -108,7 +108,7 @@ export function GameBlock({ code, title }: { code: string; title?: string }): Re
       ...(dataset.narrative ? { narrative: dataset.narrative } : {}),
       ...(dataset.result !== undefined ? { result: dataset.result } : {}),
     })
-    if (id) toast('已送上画布 · 顶部「画布」Tab 查看')
+    if (id) toast.success('已送上画布 · 顶部「画布」Tab 查看')
   }
 
   return (

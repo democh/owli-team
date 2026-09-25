@@ -747,7 +747,7 @@ export function Composer({ onReady, locked = false, lockedHint }: ComposerProps)
   const insertHint = active ? '插话 · 回合结束后生效' : null
 
   return (
-    <div className="border-t bg-background/80 px-4 py-3 backdrop-blur">
+    <div className="border-t bg-background/80 px-4 py-2 backdrop-blur">
       <div
         className={cn(
           'relative rounded-xl border bg-card shadow-soft transition-all focus-within:border-primary/40 focus-within:shadow-md focus-within:shadow-primary/10 focus-within:ring-[3px] focus-within:ring-primary/12',
@@ -933,7 +933,7 @@ export function Composer({ onReady, locked = false, lockedHint }: ComposerProps)
                     ? '发消息…（@ 可点名成员或 AI）'
                     : '输入消息，@ 召唤成员 / 文件 / 技能，/ 使用命令，可直接拖拽或粘贴图片 / 文档…'
           }
-          className="block w-full resize-none bg-transparent px-3.5 py-3 pr-28 text-[13.5px] leading-6 placeholder:text-muted-foreground focus:outline-none"
+          className="block w-full resize-none bg-transparent px-3.5 py-2.5 pr-28 text-[13.5px] leading-6 placeholder:text-muted-foreground focus:outline-none"
           onChange={onChange}
           onKeyDown={onKeyDown}
           onPaste={(e) => {
@@ -1029,7 +1029,7 @@ export function Composer({ onReady, locked = false, lockedHint }: ComposerProps)
       </div>
 
       {/* 底栏提示行：单行不换行（窄窗口由快捷键提示先让位，状态类信息优先保留） */}
-      <div className="mt-1.5 flex items-center gap-x-3 overflow-hidden px-1 text-[11px] text-muted-foreground">
+      <div className="mt-1 flex items-center gap-x-3 overflow-hidden px-1 text-[11px] text-muted-foreground">
         {/* M24：消息级范式选择器（三态 chip；运行中禁用——插话不支持范式选择）；M79-P：纯人聊天不渲染 */}
         {aiBarVisible && (
         <span className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap">

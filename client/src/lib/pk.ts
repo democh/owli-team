@@ -694,6 +694,9 @@ export const TEMPLATES = {
   /** 对抗参与条：叫停并裁决 */
   stopAndVerdict: (center: string): string =>
     `@${center} 请收束当前交锋，直接给出终局裁决（胜负 + 置信度 + 核心依据 + 翻盘条件）。`,
+  /** M84：对抗参与条：立场互换（两队对调重赛 ≥1 轮；裁决长记录「同证据异结论」） */
+  swapSides: (center: string): string =>
+    `@${center} 指令：执行「立场互换」——两队全员对调重赛至少一轮，并记录「同证据异结论」现象。`,
   /** 对抗参与条：倾向表态 */
   leanSide: (center: string, side: string): string =>
     `@${center} 我的观感倾向：${side}——理由：…。请在终局裁决中回应这一倾向是否成立，并给出理由。`,

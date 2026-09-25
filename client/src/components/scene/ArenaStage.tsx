@@ -22,7 +22,6 @@ import { verdictConfidenceOf } from '../../lib/verdict'
 import {
   claimNodesOfContent,
   crossFireOf,
-  duelTally,
   duelVerdictLabel,
   formatOfferAmount,
   offersOfContent,
@@ -39,13 +38,12 @@ import {
   CrossFire,
   OfferChart,
   OfferConcessions,
-  RoundTrack,
-  Scoreboard,
   SeatCard,
 } from './parts'
 import { ClaimTree } from './parts/ClaimTree'
 import { loadConclusionClosed, saveConclusionClosed, useSceneTab } from './persist'
 import { partEnabled } from './registry'
+import { AgentAvatar } from '../agents/AgentAvatar'
 import { SeatStrip } from './SeatStrip'
 import { SideFeed } from './SideFeed'
 import { useSceneBusy, useSceneLiveMessages, useSceneMessages, useSceneVerdicts } from './use-scene-data'
@@ -80,7 +78,6 @@ export function ArenaStage({ children }: { children: React.ReactNode }): React.J
     () => ({ left: seats?.left ?? [], right: seats?.right ?? [] }),
     [seats?.left, seats?.right],
   )
-  const tally = React.useMemo(() => duelTally(messages, sides), [messages, sides])
   const crossFire = React.useMemo(() => crossFireOf(messages, sides), [messages, sides])
   const rulings = React.useMemo(() => rulingsOf(messages), [messages])
   const series = React.useMemo(() => offerSeriesOf(messages, sides), [messages, sides])
@@ -88,14 +85,6 @@ export function ArenaStage({ children }: { children: React.ReactNode }): React.J
   // 终局裁决（最后一条非 none）：终局徽标 / 结论条数据源
   const finals = React.useMemo(() => verdicts.filter((v) => v.status !== 'none'), [verdicts])
   const latestFinal = finals.length > 0 ? finals[finals.length - 1] : undefined
-  const finalLabel = latestFinal
-    ? [
-        duelVerdictLabel(latestFinal.status, leftLabel, rightLabel) ?? latestFinal.title,
-        verdictConfidenceOf(latestFinal.items)?.label,
-      ]
-        .filter((v): v is string => typeof v === 'string' && v !== '')
-        .join(' · 置信度 ')
-    : undefined
   const flipItem = latestFinal?.items.find((it) => it.label.startsWith('翻盘'))
 
   // G1：报价段「图 / 表」视图（本会话记忆 ma:sc:tab:*；默认图 = 图表 + 列表并存，表 = 仅列表）
@@ -114,7 +103,7 @@ export function ArenaStage({ children }: { children: React.ReactNode }): React.J
     setConclClosed((prev) => (prev === closed ? prev : closed))
   }, [sessionId])
 
-  // A1 轮次读数：ruling 存在 → 轮次分语义；否则回落波次口径（v1 行为零变化）
+  // A1 轮次读数（M85：随对决读数一同移入竞技行）
   const note =
     rulings.length > 0
       ? latestFinal
@@ -123,16 +112,6 @@ export function ArenaStage({ children }: { children: React.ReactNode }): React.J
       : busy.waveCount > 0
         ? `第 ${busy.waveCount} 轮`
         : '未开赛'
-  const roundMarks = React.useMemo(() => {
-    const marks: Record<number, 'long' | 'short' | 'draw'> = {}
-    const titles: Record<number, string> = {}
-    rulings.forEach((r, i) => {
-      if (r.side !== 'none') marks[i] = r.side
-      const label = duelVerdictLabel(r.side, leftLabel, rightLabel)
-      if (label) titles[i] = `判定：${label}`
-    })
-    return { marks, titles }
-  }, [rulings, leftLabel, rightLabel])
 
   // A5 未决点：最新 ruling 的「未决点」条目值（加一轮模板引用源）
   const pendingPoint = React.useMemo(() => {
@@ -166,22 +145,7 @@ export function ArenaStage({ children }: { children: React.ReactNode }): React.J
     const agent = ctx?.agentOf(agentId)
     if (agent) ctx?.insert(`@${agent.name} `)
   }
-  const onSeek = (turn: number): void => {
-    // M63：有轮次判定 → 优先定位判定消息；否则保持波次定位（v1 口径）
-    const ruling = rulings[turn]
-    if (ruling) {
-      ctx?.focus(ruling.messageId)
-      return
-    }
-    const m = messages.find((x) => x.role === 'agent' && x.turnIndex === turn)
-    if (m) ctx?.focus(m.id)
-  }
-  // A1：交锋读数 → 该侧首个未响应缺陷（否则首条挑刺）
-  const onSeekCross = (side: 'left' | 'right'): void => {
-    const items = crossFire[side]
-    const target = items.find((it) => !it.responded) ?? items[0]
-    if (target) ctx?.focus(target.messageId)
-  }
+  // A1：交锋读数 → 该侧首个未响应缺陷（否则首条挑刺）——已随原中轴席位卡行删除（2026-09-25）
 
   const seatColumn = (side: 'left' | 'right', agents: AgentDefinition[]): React.JSX.Element => (
     <aside className={cn('scene-arena-side', side === 'left' ? 'scene-arena-left' : 'scene-arena-right')}>
@@ -220,18 +184,15 @@ export function ArenaStage({ children }: { children: React.ReactNode }): React.J
   ].filter(Boolean).length
   const [insightsOpen, setInsightsOpen] = React.useState(false)
 
+  // M85 收敛优化：洞察区段级收起——交锋看板「有未响应挑刺」时默认展开（待办可见），否则默认收起；
+  // 论断树默认收起——看板不再挤占消息流；用户手动切换被会话记忆（未点击时动态默认始终生效）
+  const unresponded =
+    crossFire.left.filter((i) => !i.responded).length + crossFire.right.filter((i) => !i.responded).length
+  const [cfOpen, setCfOpen] = useSceneTab('insight-cf', unresponded > 0 ? '1' : '0', ctx?.sessionId)
+  const [claimsOpen, setClaimsOpen] = useSceneTab('insight-claims', '0', ctx?.sessionId)
+
   return (
     <div className={cn('scene-arena', narrow && 'scene-arena-narrow')}>
-      {on('scoreboard') ? (
-        <Scoreboard
-          left={{ label: leftLabel, score: longs, speaks: tally.left.speaks, claims: tally.left.claims, findings: tally.left.findings, responded: tally.left.responded }}
-          right={{ label: rightLabel, score: shorts, speaks: tally.right.speaks, claims: tally.right.claims, findings: tally.right.findings, responded: tally.right.responded }}
-          note={note}
-          {...(finalLabel ? { verdictLabel: finalLabel } : {})}
-          {...(latestFinal ? { onSeekVerdict: () => ctx?.focus(latestFinal.messageId) } : {})}
-          onSeekCross={onSeekCross}
-        />
-      ) : null}
       {narrow ? (
         <SeatStrip
           agents={ctx?.participants ?? []}
@@ -243,20 +204,6 @@ export function ArenaStage({ children }: { children: React.ReactNode }): React.J
       <div className="scene-arena-body">
         {!narrow ? seatColumn('left', leftAgents) : null}
         <div className="scene-arena-axis">
-          {!narrow && centerAgents.length > 0 ? (
-            <div className="scene-arena-center">
-              {centerAgents.map((a) => (
-                <SeatCard
-                  key={a.id}
-                  agent={a}
-                  side="center"
-                  speaking={a.id === busy.speakingId}
-                  waiting={waiting.has(a.id)}
-                  onSelect={onSeat}
-                />
-              ))}
-            </div>
-          ) : null}
           {/* A6：终局结论条（L1 结论层；点条 → 定位裁决，关闭 → 本会话隐藏） */}
           {latestFinal && !conclClosed && latestFinal.status !== 'none' ? (
             <ConclusionBar
@@ -272,17 +219,6 @@ export function ArenaStage({ children }: { children: React.ReactNode }): React.J
                 setConclClosed(true)
               }}
             />
-          ) : null}
-          {busy.waveCount > 0 && on('round-track') ? (
-            <div className="scene-arena-track">
-              <RoundTrack
-                total={busy.waveCount}
-                current={busy.waveCount - 1}
-                marks={roundMarks.marks}
-                markTitles={roundMarks.titles}
-                onSeek={onSeek}
-              />
-            </div>
           ) : null}
           {verdicts.length > 0 && on('verdicts') ? (
             <div className="scene-arena-verdicts" data-verdict-flow="" aria-label="裁决流">
@@ -302,15 +238,41 @@ export function ArenaStage({ children }: { children: React.ReactNode }): React.J
               ))}
             </div>
           ) : null}
-          {/* A5：对抗参与条（左右席均非空且已开赛；一切点击只回填草稿） */}
+          {/* A5：对抗参与条（左右席均非空且已开赛；一切点击只回填草稿）——
+              M85 合并（2026-09-25）：裁决席签与参与条同一行（原独立席位卡行删除） */}
           {leftAgents.length > 0 && rightAgents.length > 0 && busy.waveCount > 0 ? (
-            <ArenaActions
-              leftLabel={leftLabel}
-              rightLabel={rightLabel}
-              center={centerAgents[0]?.name ?? '裁判'}
-              {...(pendingPoint !== undefined ? { point: pendingPoint } : {})}
-              onInsert={(text) => ctx?.insert(text)}
-            />
+            <div className="scene-arena-actionrow">
+              {/* M85：对决读数（原会话头行药丸——按用户要求移入本行行首） */}
+              <span className="chat-head-score" data-scene-score="" title="对抗计分">
+                <span className="chat-head-score-side">
+                  {leftLabel} <b>{longs}</b>
+                </span>
+                <span className="chat-head-score-mid">{note}</span>
+                <span className="chat-head-score-side">
+                  <b>{shorts}</b> {rightLabel}
+                </span>
+              </span>
+              {!narrow && centerAgents[0] ? (
+                <button
+                  type="button"
+                  className="scene-arena-preside"
+                  data-preside={centerAgents[0].id}
+                  title={`@${centerAgents[0].name}（点击点名）`}
+                  onClick={() => onSeat(centerAgents[0]!.id)}
+                >
+                  <AgentAvatar agent={centerAgents[0]} size={16} animated={centerAgents[0].id === busy.speakingId} />
+                  <span className="font-medium text-foreground">{centerAgents[0].name}</span>
+                  {centerAgents[0].id === busy.speakingId ? <span className="scene-preside-speaking">发言中</span> : null}
+                </button>
+              ) : null}
+              <ArenaActions
+                leftLabel={leftLabel}
+                rightLabel={rightLabel}
+                center={centerAgents[0]?.name ?? '裁判'}
+                {...(pendingPoint !== undefined ? { point: pendingPoint } : {})}
+                onInsert={(text) => ctx?.insert(text)}
+              />
+            </div>
           ) : null}
           {hasInsights ? (
             <>
@@ -336,8 +298,21 @@ export function ArenaStage({ children }: { children: React.ReactNode }): React.J
                     交锋看板
                     <span className="ml-auto font-normal">
                       {crossFire.left.length + crossFire.right.length} 条挑刺
+                      {unresponded > 0 ? `（${unresponded} 条未响应）` : ''}
                     </span>
+                    <button
+                      type="button"
+                      className="scene-insight-toggle"
+                      data-insight-toggle="cross-fire"
+                      aria-expanded={cfOpen === '1'}
+                      title={cfOpen === '1' ? '收起交锋看板' : '展开交锋看板（未响应优先 + 催回应）'}
+                      onClick={() => setCfOpen(cfOpen === '1' ? '0' : '1')}
+                    >
+                      {cfOpen === '1' ? <ChevronUp className="size-3" /> : <ChevronDown className="size-3" />}
+                      {cfOpen === '1' ? '收起' : '展开'}
+                    </button>
                   </div>
+                  {cfOpen === '1' ? (
                   <div className="scene-insight-body">
                     <CrossFire
                       left={{ label: leftLabel, items: crossFire.left }}
@@ -346,6 +321,7 @@ export function ArenaStage({ children }: { children: React.ReactNode }): React.J
                       onChase={(it) => ctx?.insert(TEMPLATES.chaseFinding(it.id))}
                     />
                   </div>
+                  ) : null}
                 </section>
               ) : null}
               {on('claim-tree') && claimNodes.length > 0 ? (
@@ -354,7 +330,19 @@ export function ArenaStage({ children }: { children: React.ReactNode }): React.J
                     <Scale className="size-3" />
                     论断树
                     <span className="ml-auto font-normal">{claimNodes.length} 条主张</span>
+                    <button
+                      type="button"
+                      className="scene-insight-toggle"
+                      data-insight-toggle="claims"
+                      aria-expanded={claimsOpen === '1'}
+                      title={claimsOpen === '1' ? '收起论断树' : '展开论断树（主张 / 论据 / 证据）'}
+                      onClick={() => setClaimsOpen(claimsOpen === '1' ? '0' : '1')}
+                    >
+                      {claimsOpen === '1' ? <ChevronUp className="size-3" /> : <ChevronDown className="size-3" />}
+                      {claimsOpen === '1' ? '收起' : '展开'}
+                    </button>
                   </div>
+                  {claimsOpen === '1' ? (
                   <div className="scene-insight-body">
                     <ClaimTree
                       nodes={claimNodes}
@@ -363,6 +351,7 @@ export function ArenaStage({ children }: { children: React.ReactNode }): React.J
                       onHypoAsk={(text) => ctx?.insert(TEMPLATES.markHypothesis(text))}
                     />
                   </div>
+                  ) : null}
                 </section>
               ) : null}
               {on('offers') && offers.length > 0 ? (

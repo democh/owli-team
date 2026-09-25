@@ -74,7 +74,7 @@ describe('M57 P3 ByokCard', () => {
     expect(screen.queryByPlaceholderText('sk-…')).toBeNull() // 已配置默认收起表单（密钥永不回显）
 
     await userEvent.click(screen.getByRole('button', { name: /恢复系统默认/ }))
-    await waitFor(() => expect(toast).toHaveBeenCalledWith('已恢复系统默认模型与 Key'))
+    await waitFor(() => expect(toast.success).toHaveBeenCalledWith('已恢复系统默认模型与 Key'))
     expect(calls.some((c) => c.method === 'DELETE')).toBe(true)
     await waitFor(() => expect(screen.getByText('使用系统默认')).toBeTruthy())
   })

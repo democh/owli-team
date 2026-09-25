@@ -155,7 +155,7 @@ export function CanvasComposer(): React.JSX.Element {
         el.setSelectionRange(el.value.length, el.value.length)
       }
     })
-    toast(`已引用 ${picked.length} 个选中节点`)
+    toast.success(`已引用 ${picked.length} 个选中节点`)
   }
 
   const submit = async (): Promise<void> => {

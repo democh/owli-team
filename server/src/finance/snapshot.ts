@@ -7,6 +7,7 @@
  */
 import { mkdir, writeFile } from 'node:fs/promises'
 import path from 'node:path'
+import type { Drawing, KlineAnalysis, KlineRender, SignalSpec } from '@multi-agent/shared'
 import { formatCnDateTime, type Adjust, type Period } from './period.js'
 import type { KlineBar, KlineSeries } from './types.js'
 
@@ -35,6 +36,14 @@ export interface ChartSnapshot {
   bars: KlineBar[]
   indicators?: string[]
   annotations?: ChartAnnotation[]
+  /** M83：渲染配置（主图 / 副图 / 阶段色带） */
+  render?: KlineRender
+  /** M83：落图数据（分析 / 策略产出；kind 白名单见 shared DRAWING_KINDS） */
+  drawings?: Drawing[]
+  /** M83：策略信号（交易计划落图；缺省 = 无信号或未触发） */
+  signal?: SignalSpec
+  /** M83：K 线分析结论（分析面板数据源） */
+  analysis?: KlineAnalysis
 }
 
 export interface WriteSnapshotResult {
@@ -45,7 +54,7 @@ export interface WriteSnapshotResult {
   bytes: number
 }
 
-/** 回测快照（M34 §3.4：fin_backtest 结果落盘为可复现资产） */
+/** 回测快照（M34 §3.4：fin_backtest 结果落盘为可复现资产；M83：DSL 策略记录源码） */
 export interface BacktestSnapshot {
   kind: 'backtest'
   symbol: string
@@ -58,6 +67,8 @@ export interface BacktestSnapshot {
     range: { from: string; to: string; bars: number }
     feeRate: number
     slippage: number
+    /** M83：template='dsl' 时的策略源码（复现用） */
+    dsl?: string
     note?: string
   }
   metrics: unknown
@@ -82,10 +93,18 @@ export interface ScreenSnapshot {
   rows: unknown[]
 }
 
-/** KlineSeries → chart-snapshot（meta 记录来源与口径；bars 保持升序） */
+/** KlineSeries → chart-snapshot（meta 记录来源与口径；bars 保持升序；M83 可选携带渲染/落图/信号/分析） */
 export function buildKlineSnapshot(
   series: KlineSeries,
-  opts: { indicators?: string[]; annotations?: ChartAnnotation[]; note?: string } = {},
+  opts: {
+    indicators?: string[]
+    annotations?: ChartAnnotation[]
+    note?: string
+    render?: KlineRender
+    drawings?: Drawing[]
+    signal?: SignalSpec
+    analysis?: KlineAnalysis
+  } = {},
 ): ChartSnapshot {
   const snapshot: ChartSnapshot = {
     kind: 'kline',
@@ -103,6 +122,10 @@ export function buildKlineSnapshot(
   }
   if (opts.indicators && opts.indicators.length > 0) snapshot.indicators = [...opts.indicators]
   if (opts.annotations && opts.annotations.length > 0) snapshot.annotations = [...opts.annotations]
+  if (opts.render) snapshot.render = { ...opts.render }
+  if (opts.drawings && opts.drawings.length > 0) snapshot.drawings = opts.drawings.map((d) => ({ ...d }))
+  if (opts.signal) snapshot.signal = { ...opts.signal }
+  if (opts.analysis) snapshot.analysis = opts.analysis
   return snapshot
 }
 

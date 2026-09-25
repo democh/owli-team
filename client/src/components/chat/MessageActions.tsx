@@ -149,7 +149,7 @@ export function MessageActions({
   const copy = (): void => {
     void guard(async () => {
       await navigator.clipboard.writeText(message.content)
-      toast('已复制消息内容')
+      toast.success('已复制消息内容')
     })
   }
 
@@ -160,7 +160,7 @@ export function MessageActions({
       .map((line) => `> ${line}`)
       .join('\n')
     insertToComposer(`${quoted}\n\n`)
-    toast('已引用到输入框')
+    toast.success('已引用到输入框')
     close()
   }
 
@@ -176,7 +176,7 @@ export function MessageActions({
     const key = message.memberKey ?? message.agentId
     const name = key ? labelOfMemberKey(agents, session, key) : undefined
     insertToComposer(name ? commentDraft(name, first) : `对《${baseName(first)}》的意见：`)
-    toast('已写入提意见草稿')
+    toast.success('已写入提意见草稿')
     close()
   }
 
@@ -212,7 +212,7 @@ export function MessageActions({
       useWsStore.getState().ensureSubscribed(res.session.id)
       // 切换会话后重附着：分支会话无进行中运行 → 同步断开本地旧流，防跨会话运行状态残留
       void attachActiveRunFor(res.session.id)
-      toast(`已创建分支会话：${res.session.title}`)
+      toast.success(`已创建分支会话：${res.session.title}`)
     })
 
   const remove = (): void => {
@@ -223,7 +223,7 @@ export function MessageActions({
     void guard(async () => {
       await apiDelete(`/api/sessions/${currentId}/messages/${message.id}`)
       useSessionStore.getState().removeMessage(message.id)
-      toast('已删除该消息')
+      toast.success('已删除该消息')
     })
   }
 

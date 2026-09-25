@@ -640,7 +640,7 @@ function CanvasStage(): React.JSX.Element {
     a.download = `canvas-${d.sessionId}.json`
     a.click()
     URL.revokeObjectURL(url)
-    toast('已导出画布 JSON')
+    toast.success('已导出画布 JSON')
   }, [])
 
   /** 导出脑图 Markdown（每棵树一节；无脑图时给引导） */
@@ -661,7 +661,7 @@ function CanvasStage(): React.JSX.Element {
     a.download = `mind-${d.sessionId}.md`
     a.click()
     URL.revokeObjectURL(url)
-    toast(`已导出脑图 Markdown（${roots.length} 棵树）`)
+    toast.success(`已导出脑图 Markdown（${roots.length} 棵树）`)
   }, [])
 
   // 键盘：脑图快捷编辑（Tab 加子 / Enter 加兄弟）+ 撤销重做 / 复制粘贴 / 保存（输入控件聚焦时不拦截）

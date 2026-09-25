@@ -52,6 +52,7 @@ import type { MemoryService } from '../memory/service.js'
 import type { AuditStore } from '../store/audit.js'
 import type { DbConnectionManager } from '../connections/db/manager.js'
 import type { SshConnectionManager } from '../connections/ssh/manager.js'
+import type { EgressRuntime } from '../net/egress.js'
 import type { BrowserRuntime } from '../browser/runtime.js'
 import type { StreamTokenService } from '../browser/stream-token.js'
 import type { AssetManager } from '../assets/manager.js'
@@ -152,6 +153,8 @@ export interface ApiDeps {
   ssh: SshConnectionManager
   /** M25：嵌入管理（连接测试 / provider 失效 / 状态诊断） */
   embeddings: EmbeddingManager
+  /** M82：联网出口层（出口代理测试 / 连接变更失效；缺省 = 未装配，probe 返回不可用） */
+  egress?: EgressRuntime
   /** M25：向量记忆服务（列表统计 / 语义搜索 / 重建 / 候选审核） */
   memories: MemoryService
   /** M22：浏览器运行时（会话 / 步骤 / 系统打开） */

@@ -156,7 +156,7 @@ export function ShareDialog({ sessionId, open, onOpenChange }: ShareDialogProps)
     try {
       const res = await apiPatch<{ session: Session }>(`/api/sessions/${sessionId}`, { routeMode: 'mention' })
       useSessionStore.getState().applySession(res.session)
-      toast('已切换为仅点名唤起（未 @ 成员的消息不再交给 AI）')
+      toast.success('已切换为仅点名唤起（未 @ 成员的消息不再交给 AI）')
     } catch (err) {
       toast.error((err as Error).message)
     }

@@ -77,6 +77,8 @@ export type AuditAction =
   // M57 P3：用户 LLM 凭据（BYOK）
   | 'auth.llm-credential-set'
   | 'auth.llm-credential-clear'
+  // M82：运行期设置变更（管理侧；仅记字段清单，不落值）
+  | 'settings.update'
 
 export interface AuditInput {
   /** 'user' | agentId */

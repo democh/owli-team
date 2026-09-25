@@ -13,10 +13,18 @@
  * - 流式体积上限：声明超限直接拒绝，未声明兜底流式截断（防超大响应拖垮内存）。
  */
 import { CookieJar } from 'tough-cookie'
+import { EgressError, egressFetch, egressMetaOf, type EgressChannel, type EgressMeta } from '../net/egress.js'
 import { toolAbortError } from './registry.js'
 
-/** 反爬错误分类：blocked=风控拦截（不重试 + host 冷却）；rate-limit=429（退避重试） */
-export type AntiBotErrorKind = 'blocked' | 'rate-limit' | 'timeout' | 'network' | 'status' | 'too-large'
+/** 反爬错误分类：blocked=风控拦截（不重试 + host 冷却）；rate-limit=429（退避重试）；egress=出口代理不可用（不重试不冷却 host） */
+export type AntiBotErrorKind =
+  | 'blocked'
+  | 'rate-limit'
+  | 'timeout'
+  | 'network'
+  | 'status'
+  | 'too-large'
+  | 'egress'
 
 export class AntiBotError extends Error {
   readonly kind: AntiBotErrorKind
@@ -273,6 +281,8 @@ export interface AntiBotRequest {
   cookieKey?: string
   /** 追加 UA 池（HTTP_UA_POOL 配置；与内置池合并后按 host 散列选择） */
   uaPoolExtra?: string[]
+  /** M82：出口通道（缺省 search；财经源经 defaultFetcher 注入 finance） */
+  egressChannel?: EgressChannel
 }
 
 export interface AntiBotResponse {
@@ -287,6 +297,8 @@ export interface AntiBotResponse {
   text: string
   /** Set-Cookie 原值列表（cookie 预热用） */
   setCookies: string[]
+  /** M82：出口元信息（经代理 / 回退直连时存在；工具层用于 summary 标注） */
+  egress?: EgressMeta
 }
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
@@ -391,7 +403,8 @@ async function fetchOnce(
       const jarCookie = jar.getCookieStringSync(req.url)
       if (jarCookie) explicit.cookie = jarCookie
     }
-    const res = await fetch(req.url, {
+    // M82：经出口层发出（未配置出口 = 全局 fetch，行为与历史一致）
+    const res = await egressFetch(req.egressChannel ?? 'search', req.url, {
       method: req.method ?? 'GET',
       body: req.body,
       signal: ctl.signal,
@@ -405,6 +418,7 @@ async function fetchOnce(
         pickUaProfile(host, req.uaPoolExtra),
       ),
     })
+    const egress = egressMetaOf(res)
     const retryAfterMs = parseRetryAfter(res)
     if (res.status === 429) {
       await drain(res)
@@ -463,9 +477,20 @@ async function fetchOnce(
         // 极少数非标准 Cookie 解析失败 → 跳过
       }
     }
-    return { status: res.status, ok: res.ok, statusText: res.statusText, finalUrl, headers: res.headers, text, setCookies }
+    return {
+      status: res.status,
+      ok: res.ok,
+      statusText: res.statusText,
+      finalUrl,
+      headers: res.headers,
+      text,
+      setCookies,
+      ...(egress ? { egress } : {}),
+    }
   } catch (err) {
     if (err instanceof AntiBotError) throw err
+    // M82：出口层失败（代理不可达 / 鉴权失败等）独立分类：不重试、不计入目标 host 风控冷却
+    if (err instanceof EgressError) throw new AntiBotError('egress', err.message)
     if (isAbortLike(err)) {
       if (timedOut) throw new AntiBotError('timeout', `请求超时（${limits.timeoutMs}ms）`)
       throw toolAbortError()

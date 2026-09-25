@@ -140,7 +140,7 @@ export default defineConfig({
   projects: [
     {
       name: 'main',
-      testMatch: /(relay|interject|stop|right-panel|reload|artifact-(diff|preview)|m12-interactions|m14-responsive|markdown-ext|m16-.*|m21-.*|m22-.*|m24-.*|m25-.*|m26-.*|m27-.*|m28-.*|m31-.*|m33-.*|m34-.*|m37-.*|m38-.*|m39-.*|m40-.*|m41-.*|m42-.*|m43-.*|m44-.*|m45-.*|m48-.*|m50-.*|m52-.*|m54-.*|m63-.*|m65-.*|m66-.*|m69-.*|m77-.*|m78-.*|m81-.*|console-scenes)\.spec\.ts/,
+      testMatch: /(relay|interject|stop|right-panel|reload|artifact-(diff|preview)|m12-interactions|m14-responsive|markdown-ext|m16-.*|m21-.*|m22-.*|m24-.*|m25-.*|m26-.*|m27-.*|m28-.*|m31-.*|m33-.*|m34-.*|m37-.*|m38-.*|m39-.*|m40-.*|m41-.*|m42-.*|m43-.*|m44-.*|m45-.*|m48-.*|m50-.*|m52-.*|m54-.*|m63-.*|m65-.*|m66-.*|m69-.*|m77-.*|m78-.*|m81-.*|m83-.*|m84-.*|m85-.*|console-scenes)\.spec\.ts/,
       use: { baseURL: `http://127.0.0.1:${MAIN_PORT}` },
     },
     {

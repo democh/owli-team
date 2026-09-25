@@ -189,6 +189,12 @@ export const AGENT_NAME: Record<string, string> = {
   // M66-A：堪舆阳宅
   'plan-surveyor': '察隅',
   'yangzhai-master': '司南',
+  // M84：多空对决场
+  judge: '顾鉴',
+  'bull-lead': '向阳',
+  'bear-lead': '知寒',
+  'bull-quant': '陆准',
+  'bear-quant': '程实',
 }
 
 /** 研发团队全体成员 id（场景「研发团队」推荐编制 = 默认预选） */

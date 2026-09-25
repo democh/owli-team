@@ -101,7 +101,7 @@ function PlanBoardCard({ plan, members }: { plan: Plan; members: AgentDefinition
           acceptance: s.acceptance,
         })),
       })
-      toast('已更新步骤负责人')
+      toast.success('已更新步骤负责人')
     } catch (err) {
       toast.error((err as Error).message)
     } finally {
@@ -114,7 +114,7 @@ function PlanBoardCard({ plan, members }: { plan: Plan; members: AgentDefinition
     setBusy('approve')
     try {
       await resolve(plan.id, 'approve')
-      toast('已批准，开始执行')
+      toast.success('已批准，开始执行')
     } catch (err) {
       toast.error((err as Error).message)
     } finally {

@@ -729,12 +729,10 @@ describe('M52-B 四形态组件级走查（seats / agenda 数据驱动）', () =
     expect(container.querySelector('.scene-arena')).not.toBeNull()
     expect(container.querySelector('.scene-arena-left')!.textContent).toContain('立言')
     expect(container.querySelector('.scene-arena-right')!.textContent).toContain('砺锋')
-    expect(container.querySelector('.scene-arena-center')!.textContent).toContain('明断')
-    // 计分板：左标签 = 左席首位名；第 1 波已开赛
-    const sb = container.querySelector('.scene-scoreboard')!
-    expect(sb.textContent).toContain('立言')
-    expect(sb.textContent).toContain('第 1 轮')
-    expect(container.querySelector('.scene-arena-track')).not.toBeNull()
+    // M85 合并：裁决席签 + 参与条同行（原计分板读数并入会话标题行；中轴席位卡行已并入）
+    const actionrow = container.querySelector('.scene-arena-actionrow')
+    expect(actionrow).not.toBeNull()
+    expect(actionrow!.querySelector('.scene-arena-preside')?.textContent).toContain('明断')
     expect(screen.getByTestId('stream-child')).toBeInTheDocument()
   })
 
@@ -746,13 +744,12 @@ describe('M52-B 四形态组件级走查（seats / agenda 数据驱动）', () =
       </SceneStage>,
     )
     expect(container.querySelector('.scene-arena-left')!.childElementCount).toBe(0)
-    const sb = container.querySelector('.scene-scoreboard')!
-    expect(sb.textContent).toContain('左席')
-    expect(sb.textContent).toContain('右席')
-    expect(sb.textContent).toContain('未开赛')
+    // 计分板已删除（M85 合并至会话标题行）；无席位成员 → 席签 / 参与条不渲染
+    expect(container.querySelector('.scene-arena-actionrow')).toBeNull()
+    expect(container.querySelector('.scene-arena-preside')).toBeNull()
   })
 
-  it('arena：parts 声明裁剪——negotiation 去计分板保报价流；debate 去报价流保计分板', () => {
+  it('arena：parts 声明裁剪——negotiation 保报价流；debate 保论断树并裁报价流', () => {
     const NEGO: AgentGroup = {
       ...GROUP_ARENA,
       id: 'negotiation',
@@ -763,7 +760,6 @@ describe('M52-B 四形态组件级走查（seats / agenda 数据驱动）', () =
         parts: ['round-track', 'verdicts', 'claim-tree', 'offers'],
       },
     }
-    // 谈判无计分语义：scoreboard 被 parts 裁剪（此前恒显 0:0 失真）；报价流与论断树保留
     seed([
       agentMsg('n1', 'negotiator', '::: claim 锚定策略\n- 论据 1 | 先出高锚\n:::\n\n::: offer 首轮出价\n报价：98 万\n:::', 0),
     ])
@@ -773,11 +769,11 @@ describe('M52-B 四形态组件级走查（seats / agenda 数据驱动）', () =
       </SceneStage>,
     )
     expect(container.querySelector('.scene-arena')).not.toBeNull()
-    expect(container.querySelector('.scene-scoreboard')).toBeNull()
+    // 计分板 / 回合轴均已下线（M85）：谈判仅验报价流 / 论断树保留
     expect(container.querySelector('[data-insight="offers"]')).not.toBeNull()
     expect(container.querySelector('[data-insight="claims"]')).not.toBeNull()
 
-    // debate：计分板与论断树保留；报价流（辩论无此语义）被裁剪
+    // debate：论断树保留；报价流（辩论无此语义）被裁剪
     const DEBATE: AgentGroup = {
       ...GROUP_ARENA,
       stage: {
@@ -792,7 +788,6 @@ describe('M52-B 四形态组件级走查（seats / agenda 数据驱动）', () =
         <div data-testid="stream-child-2">对话流</div>
       </SceneStage>,
     )
-    expect(c2.querySelector('.scene-scoreboard')).not.toBeNull()
     expect(c2.querySelector('[data-insight="claims"]')).not.toBeNull()
     expect(c2.querySelector('[data-insight="offers"]')).toBeNull()
   })

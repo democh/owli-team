@@ -1,5 +1,5 @@
 /**
- * M34 K 线渲染内核：副图面高度分配（纯函数）。
+ * M34 K 线渲染内核：副图面高度分配（纯函数；M83 迁移至 chart/layout）。
  *
  * 背景缺陷：klinecharts v10 布局语义为「副图面各取 layout.pane.height（缺省 100px）、
  * 主图蜡烛面只拿剩余高度」——聊天块矮容器（当时 320px）放 3 个副图（VOL/MACD/RSI）后
@@ -8,14 +8,11 @@
  * 后续调优：聊天块容器 320px → 420px → 560px、全屏 640px → 720px → 860px（展示高度过小），
  * 主图保底占比 45% → 50%（图例浮层 + 蜡烛需主图占大头），断言随容器高度同步更新。
  *
- * 说明：lib/kline 静态引入 klinecharts（浏览器运行时），本测试只覆盖纯函数，
- * mock 内核避免 jsdom 加载真实库。
+ * 说明：实现已迁至 components/finance/chart/layout（不接触 klinecharts），本测试只覆盖纯函数。
  */
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 
-vi.mock('klinecharts', () => ({ init: vi.fn(), dispose: vi.fn(), registerIndicator: vi.fn() }))
-
-import { allocateSubPaneHeight } from '../src/lib/kline'
+import { allocateSubPaneHeight } from '../src/components/finance/chart/layout'
 
 describe('M34 K 线内核：副图面高度分配', () => {
   it('聊天块 560px + 3 副图：主图保底 ≥96px，副图可读 ≥30px', () => {

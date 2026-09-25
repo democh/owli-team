@@ -1,5 +1,5 @@
 /**
- * Kline 块配置解析（纯函数，零依赖；可被主包安全静态引用）。
+ * Kline 块配置解析（纯函数；可被主包安全静态引用）。
  * ```kline 代码块 → KlineSpec；宽松校验 + 面向用户的中文错误信息。
  *
  * JSON 形状（src 快照引用与 data 内联数据至少一项；渲染优先 data）：
@@ -7,19 +7,57 @@
  *   "src": "charts/sh600519-day-202609181030.json",     // 会话工作区相对路径（快照）
  *   "data": { "kind":"kline","symbol":"sh600519","name":"贵州茅台","period":"day","adjust":"qfq",
  *             "bars":[{ "timestamp":1757952000000,"open":1450,"high":1468,"low":1442,"close":1461,"volume":28300 }] },
- *   "indicators": ["MA","VOL","MACD"],                  // 渲染面板（缺省 ["MA","VOL"]）
+ *   "indicators": ["MA","VOL","MACD"],                  // 渲染面板（缺省 ["MA","VOL"]；用于推导主/副图）
  *   "annotations": [{ "type":"priceLine","price":1500,"label":"压力位" }],
- *   "title": "贵州茅台 日K（前复权）"
+ *   "title": "贵州茅台 日K（前复权）",
+ *   // M83 扩展（全部可选；旧块零影响）：
+ *   "mainIndicator": "MA",                              // 主图指标（枚举；'none' 关闭）
+ *   "subIndicator": "VOL",                               // 副图指标（枚举；'none' 关闭）
+ *   "showPhases": true,                                  // 阶段色带（缺省：analysis 存在时 true）
+ *   "drawings": [ ... ],                                 // 落图（shared Drawing 契约）
+ *   "signal": { ... },                                   // 策略信号（交易计划落图）
+ *   "analysis": { ... }                                  // 分析结论（分析面板数据源）
  * }
  * 简写：`"data"` 也接受直接给 bars 数组（[ { timestamp, open, high, low, close, volume } ]）。
  *
  * 归一承诺：返回的 bars 按 timestamp 升序（乱序输入亦自动排序）；volume 缺省 0、turnover 可选。
+ * M83 解析策略：bars / indicators / mainIndicator / subIndicator 非法 → 显式报错（模型自纠）；
+ * drawings / signal / analysis / showPhases 非法 → 降级忽略并收集 warnings（主图不受影响）。
  */
-export const KLINE_INDICATORS = ['MA', 'EMA', 'VOL', 'MACD', 'RSI', 'KDJ', 'BOLL', 'ATR'] as const
-export type KlineIndicator = (typeof KLINE_INDICATORS)[number]
+import {
+  KLINE_RENDER_INDICATORS,
+  MAIN_INDICATORS,
+  SUB_INDICATORS,
+  type Drawing,
+  type KlineAnalysis,
+  type KlineRenderIndicator,
+  type MainIndicator,
+  type SignalSpec,
+  type SubIndicator,
+} from '@multi-agent/shared'
+import { parseDrawings, parseKlineAnalysis, parseSignal } from './kline-analysis'
+
+export const KLINE_INDICATORS = KLINE_RENDER_INDICATORS
+export type KlineIndicator = KlineRenderIndicator
 
 /** 缺省指标面板（与 fin_kline 工具默认一致） */
 export const DEFAULT_KLINE_INDICATORS: readonly KlineIndicator[] = ['MA', 'VOL']
+
+/** 主图缺省推导：按 legacy indicators 顺序取第一个主图成员；无 → 'MA' */
+export function deriveMainIndicator(indicators: readonly string[]): MainIndicator | 'none' {
+  for (const name of indicators) {
+    if ((MAIN_INDICATORS as readonly string[]).includes(name)) return name as MainIndicator
+  }
+  return 'MA'
+}
+
+/** 副图缺省推导：按 legacy indicators 顺序取第一个副图成员；无 → 'VOL' */
+export function deriveSubIndicator(indicators: readonly string[]): SubIndicator | 'none' {
+  for (const name of indicators) {
+    if ((SUB_INDICATORS as readonly string[]).includes(name)) return name as SubIndicator
+  }
+  return 'VOL'
+}
 
 /** 周期白名单（C3 行情 Tab 周期切换复用；与 server period.ts 的 PERIODS 对齐） */
 export const KLINE_PERIODS = ['day', 'week', 'month', 'min5', 'min15', 'min30', 'min60'] as const
@@ -84,6 +122,20 @@ export interface KlineSpec {
   indicators: KlineIndicator[]
   annotations: KlineAnnotation[]
   title?: string
+  /** M83：主图指标（缺省按 indicators 推导） */
+  mainIndicator?: MainIndicator | 'none'
+  /** M83：副图指标（缺省按 indicators 推导） */
+  subIndicator?: SubIndicator | 'none'
+  /** M83：阶段色带（缺省：analysis 存在时 true） */
+  showPhases?: boolean
+  /** M83：落图（降级字段；缺省 []） */
+  drawings: Drawing[]
+  /** M83：策略信号（降级字段；缺省 null） */
+  signal: SignalSpec | null
+  /** M83：分析结论（降级字段；解析失败时缺省） */
+  analysis?: KlineAnalysis
+  /** M83：增强字段降级警告（主契约错误仍走显式 error） */
+  warnings: string[]
 }
 
 export type KlineParseResult = { ok: true; spec: KlineSpec } | { ok: false; error: string }
@@ -233,6 +285,46 @@ export function parseKlineSpec(source: string): KlineParseResult {
     }
   }
 
+  // M83 渲染字段：主图 / 副图（枚举显式校验）+ 阶段开关（类型不符降级）
+  // 兼容 render 对象形态：server klineBlockTemplate / 分析快照统一生成 { render: { ... } }（顶层字段优先）
+  const renderObj =
+    typeof obj.render === 'object' && obj.render !== null && !Array.isArray(obj.render)
+      ? (obj.render as Record<string, unknown>)
+      : {}
+  const rawMainIndicator = obj.mainIndicator ?? renderObj.mainIndicator
+  const rawSubIndicator = obj.subIndicator ?? renderObj.subIndicator
+  const rawShowPhases = obj.showPhases ?? renderObj.showPhases
+  let mainIndicator: MainIndicator | 'none' | undefined
+  if (rawMainIndicator !== undefined && rawMainIndicator !== null) {
+    const v = typeof rawMainIndicator === 'string' ? rawMainIndicator.trim().toUpperCase() : ''
+    if (v !== 'NONE' && !(MAIN_INDICATORS as readonly string[]).includes(v)) {
+      return { ok: false, error: `不支持的主图指标 "${String(rawMainIndicator)}"（可选：none / ${MAIN_INDICATORS.join(' / ')}）` }
+    }
+    mainIndicator = v === 'NONE' ? 'none' : (v as MainIndicator)
+  }
+  let subIndicator: SubIndicator | 'none' | undefined
+  if (rawSubIndicator !== undefined && rawSubIndicator !== null) {
+    const v = typeof rawSubIndicator === 'string' ? rawSubIndicator.trim().toUpperCase() : ''
+    if (v !== 'NONE' && !(SUB_INDICATORS as readonly string[]).includes(v)) {
+      return { ok: false, error: `不支持的副图指标 "${String(rawSubIndicator)}"（可选：none / ${SUB_INDICATORS.join(' / ')}）` }
+    }
+    subIndicator = v === 'NONE' ? 'none' : (v as SubIndicator)
+  }
+  const warnings: string[] = []
+  let showPhases: boolean | undefined
+  if (rawShowPhases !== undefined && rawShowPhases !== null) {
+    if (typeof rawShowPhases === 'boolean') showPhases = rawShowPhases
+    else warnings.push('showPhases 应为布尔值（已忽略）')
+  }
+
+  // M83 增强字段（降级策略：非法丢弃 + warnings，主图不受影响）
+  const drawingsParsed = parseDrawings(obj.drawings)
+  warnings.push(...drawingsParsed.warnings)
+  const signalParsed = parseSignal(obj.signal)
+  warnings.push(...signalParsed.warnings)
+  const analysisParsed = parseKlineAnalysis(obj.analysis)
+  warnings.push(...analysisParsed.warnings)
+
   const title = typeof obj.title === 'string' && obj.title.trim() ? obj.title.trim() : undefined
   return {
     ok: true,
@@ -242,6 +334,13 @@ export function parseKlineSpec(source: string): KlineParseResult {
       indicators,
       annotations,
       ...(title ? { title } : {}),
+      ...(mainIndicator !== undefined ? { mainIndicator } : {}),
+      ...(subIndicator !== undefined ? { subIndicator } : {}),
+      ...(showPhases !== undefined ? { showPhases } : {}),
+      drawings: drawingsParsed.value ?? [],
+      signal: signalParsed.value ?? null,
+      ...(analysisParsed.value ? { analysis: analysisParsed.value } : {}),
+      warnings,
     },
   }
 }

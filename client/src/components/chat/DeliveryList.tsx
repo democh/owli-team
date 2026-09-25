@@ -133,7 +133,7 @@ export function ArtifactRow({
   const kind = meta?.kind ?? EXT_KIND[extOf(path)] ?? 'other'
   const toCanvas = async (): Promise<void> => {
     const id = await useCanvasStore.getState().sendArtifact(path)
-    if (id) toast('已送上画布 · 顶部「画布」Tab 查看')
+    if (id) toast.success('已送上画布 · 顶部「画布」Tab 查看')
   }
   return (
     <div

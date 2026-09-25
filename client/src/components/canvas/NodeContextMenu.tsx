@@ -115,7 +115,7 @@ export function NodeContextMenu({ nodeId, x, y, onClose, onBeginEdit }: NodeCont
     const lastFrame = genData.lastFrame
     if (!prompt || needsImage || (needsFirstLast && (!firstFrame || !lastFrame))) {
       useMediaStore.getState().openPanel({ prompt: prompt ?? '', params })
-      toast('已在生成面板回填原参数：请补齐输入后重试')
+      toast.success('已在生成面板回填原参数：请补齐输入后重试')
       return
     }
     void useMediaStore.getState().createJob({
@@ -133,7 +133,7 @@ export function NodeContextMenu({ nodeId, x, y, onClose, onBeginEdit }: NodeCont
         workflowId: params?.workflowId,
       },
     })
-    toast('已按原参数重新生成')
+    toast.success('已按原参数重新生成')
   }
   /** 删除：脑图节点删除整棵分支（包含后代）；其余节点删除自身 */
   const removeNode = (): void => {
@@ -247,7 +247,7 @@ export function NodeContextMenu({ nodeId, x, y, onClose, onBeginEdit }: NodeCont
         onClick={() =>
           run(() => {
             useUiStore.getState().insertToComposer(quoteForComposer(node))
-            toast('已引用到输入框')
+            toast.success('已引用到输入框')
           })
         }
       />

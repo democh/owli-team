@@ -24,9 +24,7 @@ test('审批：拒绝 write_todos、批准 write_file 后团队继续并交还�
   await expect(card2.getByText(`${AGENT_NAME.backend}请求执行 write_file`)).toBeVisible()
   await card2.getByRole('button', { name: '批准' }).click()
 
-  // 结论行：两笔审批的最终决定可见
-  await expect(page.getByText('已批准', { exact: true })).toBeVisible()
-  await expect(page.getByText('已拒绝', { exact: true })).toBeVisible()
+  // 已决条不再常驻（2026-09-25 产品决策）：决议后无结论行常驻，团队继续执行
 
   // 团队继续执行并交还用户（拒绝不导致整轮失败）
   await expectYourTurn(page)

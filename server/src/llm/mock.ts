@@ -588,6 +588,32 @@ const SCRIPTS: Record<string, RoleScript> = {
     `回测按七要素写全（区间 / 复权 / 费用 / 滑点 / 信号延迟 / 样本外 / 基准）；参数敏感性跑出来是平原不是尖峰，这点不错。`,
     `策略方案与条件触发式实施计划在 \`${ctx.artifactPath}\`；失效条件也写进去了。`,
   ],
+  // M84：多空对决场（裁决长 + 两主辩 + 两证据官）
+  judge: (ctx) => [
+    `开题要素定好了：标的、周期、轮数与模式已确认；结算口径（主张 / 显著证据 / 胜轮 / 回应率）先行声明。`,
+    `第 1 轮判定落卡：双方关键位证据均有触碰统计支撑（采信）；未决点在「中枢有效性与量能确认标准」的分歧上。`,
+    `终局裁决书与证据账本在 \`${ctx.artifactPath}\`；翻盘与失效条件已写全，全程不预测点位、不构成投资建议。`,
+  ],
+  'bull-lead': (ctx) => [
+    `多方结构判断：${topicName(ctx)}中枢下沿三次止跌，高低点仍呈抬升——结构未破，多头不散。`,
+    `回应空方「反抽无力」：下沿触碰统计与缩量企稳均在证据账本；条件触发是「站稳压力位且放量转强」。`,
+    `逐轮立论与失效条件在 \`${ctx.artifactPath}\`，依据均挂工具口径。`,
+  ],
+  'bear-lead': (ctx) => [
+    `空方结构判断：${topicName(ctx)}跌破中枢后反抽不过上沿、量能未续——先问它怎么跌，再问怎么涨。`,
+    `回应多方「下沿止跌」：两次反抽失败留下更长上影；失效条件（站稳压力位且放量）已写明。`,
+    `逐轮立论与反例条件在 \`${ctx.artifactPath}\`，依据均挂工具口径。`,
+  ],
+  'bull-quant': (ctx) => [
+    `多方举证：支撑触碰后的反弹窗口为 \`fin_stats significance p=0.03 n=45 CI[1.2%, 4.8%]\`（Bonferroni 校正后显著）。`,
+    `结构证据走 \`fin_analyze\` 落图（阶段=吸筹，置信度 62，规则口径）；规则证据用 \`fin_backtest template=dsl\` 同口径回测。`,
+    `证据行与快照路径汇总在 \`${ctx.artifactPath}\`；样本不足处已标注「仅供参考」。`,
+  ],
+  'bear-quant': (ctx) => [
+    `空方举证：放量滞涨事件的后续收益为 \`fin_stats significance p=0.08 n=38 CI[-6.1%, +1.2%]\`（校正后不显著，如实报告）。`,
+    `相对强弱用 \`fin_stats analysis=summary\`（A 对 B 相关性 0.62）；结构证据走 \`fin_analyze\` 落图。`,
+    `证据行与反例条件汇总在 \`${ctx.artifactPath}\`；不硬造显著性，缺包按引导安装。`,
+  ],
   // ---- v14：全域扩展（生活 6 场景 + 职能角色）----
   fitness: (ctx) => [
     `训练计划按「目标 → 现状 → 每周表」排：${topicName(ctx)}本周 3 练（推 / 拉 / 腿），动作·组次·间歇都写死了。`,
@@ -1240,6 +1266,118 @@ const VIEW_BLOCKS: Record<string, string[]> = {
     '```',
     '',
   ],
+}
+
+/**
+ * M84：多空对决场触发块（E2E 固定剧本）——「对决走查」：
+ * 一轮完整交锋（双方 claim）+ 轮次判定（ruling）+ 终局（verdict 四要素 + kpi 结算）。
+ * 触发词取全仓唯一串；块内不写 @。
+ */
+const DUEL_WALK_TRIGGER = '对决走查'
+const DUEL_WALK_BLOCKS: Record<string, string[]> = {
+  'bull-lead': [
+    '',
+    '::: claim 中枢下沿止跌，多方结构占优',
+    '视角：多方',
+    '倾向：多方',
+    '置信度：中',
+    '细节：近 40 根箱体震荡，下沿三次支撑',
+    '- 依据 | 支撑 3842.72（前低 · 触碰 3 次，规则口径）',
+    ':::',
+    '',
+  ],
+  'bear-lead': [
+    '',
+    '::: claim 跌破中枢后反抽无力，空方结构延续',
+    '视角：空方',
+    '倾向：空方',
+    '置信度：中',
+    '细节：反抽不过中枢上沿，量能未续',
+    '- 依据 | 压力 3920.20（密集区 · 触碰 2 次，规则口径）',
+    ':::',
+    '',
+  ],
+  judge: [
+    '',
+    '::: ruling 僵持 第 1 轮小结',
+    '- 亮点 | 双方关键位均有触碰统计支撑（均采信）',
+    '- 未决点 | 中枢有效性与量能确认标准存在分歧',
+    ':::',
+    '',
+    '::: verdict 僵持 多空对决终局（第 1 轮快辩）',
+    '- 胜负 | 僵持（未见压倒性证据）',
+    '- 置信度 | 中',
+    '- 核心依据 | 支撑 3842.72 三次触碰未破；压力 3920.20 反抽未过',
+    '- 翻盘条件 | 站稳 3920.20 且放量 → 转多；跌破 3842.72 → 转空',
+    '- 失效条件 | 支撑 / 压力任一被反向突破即翻转本轮结论',
+    '- 免责 | 规则化统计口径，不构成投资建议',
+    ':::',
+    '',
+    '::: kpi 对决结算',
+    '- 主张数（多/空） | 1 / 1 | — | — | claim 计数',
+    '- 显著证据（多/空） | 0 / 0 | — | — | fin_stats p<α′',
+    '- 胜轮（多/空） | 0 / 0 | — | — | ruling 计数',
+    '- 回应率（多/空） | 100% / 100% | — | — | 交锋看板计量',
+    ':::',
+    '',
+  ],
+}
+
+/**
+ * M83：K 线分析块触发块（E2E 固定剧本）——「K 线走查」：
+ * 为技术面分析师追加一条内联 ```kline 块（bars + 分析结论 + 落图 + render，零取数）。
+ * 触发词取全仓唯一串；块内不写 @。
+ */
+const KLINE_WALK_TRIGGER = 'K线走查'
+function buildKlineWalkJson(): string {
+  const base = Date.parse('2025-09-01T00:00:00+08:00')
+  const closes = Array.from({ length: 60 }, (_, i) => 100 + 12 * Math.sin(i / 5) + i * 0.2)
+  const round2 = (v: number): number => Math.round(v * 100) / 100
+  const bars = closes.map((close, i) => {
+    const open = i === 0 ? close : closes[i - 1]!
+    return {
+      timestamp: base + i * 86_400_000,
+      open: round2(open),
+      high: round2(Math.max(open, close) * 1.01),
+      low: round2(Math.min(open, close) * 0.99),
+      close: round2(close),
+      volume: 15000 + i * 50,
+    }
+  })
+  const bands = bars.map((b, i) => ({ ts: b.timestamp, phase: i < 30 ? 'markdown' : 'accumulation' }))
+  return JSON.stringify({
+    data: { kind: 'kline', symbol: 'sh600519', name: '贵州茅台', period: 'day', adjust: 'qfq', bars },
+    indicators: ['MA', 'VOL'],
+    // 与真实工具产出同形态：渲染配置嵌套于 render（klineBlockTemplate 口径），落图 / 分析在顶层
+    render: { mainIndicator: 'MA', subIndicator: 'VOL', showPhases: true },
+    drawings: [
+      { id: 'an-support', kind: 'hline', points: [{ ts: bars[59]!.timestamp, price: 104.5 }], label: '支撑 104.5（前低 · 触碰 2 次）' },
+      {
+        id: 'an-box',
+        kind: 'zone',
+        points: [
+          { ts: bars[30]!.timestamp, price: 118 },
+          { ts: bars[59]!.timestamp, price: 104.5 },
+        ],
+        label: '中枢',
+      },
+    ],
+    analysis: {
+      asOf: '2026-09-25T00:00:00.000Z',
+      bars: 60,
+      period: 'day',
+      adjust: 'qfq',
+      phases: { current: 'accumulation', confidence: 62, since: '2025-10-20', description: '低位缩量横盘、筹码集中，主力吸筹特征', bands },
+      sentiment: { score: 42, stage: 'hesitate', pathLabel: '恐慌→犹豫→修复→乐观→狂热（当前：犹豫）' },
+      levels: { support: { price: 104.5, basis: '前低', touches: 2 }, resistance: null, target: null },
+      features: [{ key: 'platform', label: '平台整理', confirmed: true }],
+      drawings: [],
+      notes: ['阶段判定为规则化统计口径，仅供复盘研究'],
+    },
+  })
+}
+const KLINE_WALK_BLOCKS: Record<string, string[]> = {
+  'analyst-ta': ['', '```kline title="贵州茅台 日K（分析走查）"', buildKlineWalkJson(), '```', ''],
 }
 
 /**
@@ -4002,6 +4140,53 @@ export function artifactFor(
           ['参考声明', ['结果为时机参考；最终决策仍在你手中']],
         ]),
       }
+    // M84：多空对决场（裁决长 + 两主辩 + 两证据官）
+    case 'judge':
+      return {
+        path: `docs/多空对决-${t}.md`,
+        content: doc(`${t}多空对决裁决书`, [
+          ['开题要素', ['标的（1–5）/ 周期 / 时间窗 / 轮数 / 模式已确认并回显']],
+          ['逐轮记录', ['第 1 轮：双方立论与举证完毕（关键位证据均采信）', '轮次判定：僵持（未决点在量能确认标准）']],
+          ['证据账本', ['支撑 3842.72（前低 · 触碰 3 次，规则口径）', '压力 3920.20（密集区 · 触碰 2 次，规则口径）']],
+          ['裁决书', ['胜负：僵持；置信度：中', '翻盘条件：站稳压力且放量 → 转多；跌破支撑 → 转空', '免责：规则化统计口径，不构成投资建议']],
+        ]),
+      }
+    case 'bull-lead':
+      return {
+        path: `docs/多方论证-${t}.md`,
+        content: doc(`${t}多方论证`, [
+          ['主线条', ['结构：中枢下沿三次止跌，高低点抬升', '催化与估值容错（条件触发式表达，不喊单）']],
+          ['回应记录', ['逐条回应空方最强论点；复读计为无效']],
+          ['失效条件', ['跌破支撑位（前低）且反抽无力量能确认']],
+        ]),
+      }
+    case 'bear-lead':
+      return {
+        path: `docs/空方论证-${t}.md`,
+        content: doc(`${t}空方论证`, [
+          ['主线条', ['结构：跌破中枢后反抽不过上沿，量能未续', '风险催化与估值透支（条件触发式表达，不喊单）']],
+          ['反例条件', ['站稳压力位且放量则空方逻辑失效（先能证伪）']],
+          ['失效条件', ['上沿被实体阳线站回并伴随量能扩张']],
+        ]),
+      }
+    case 'bull-quant':
+      return {
+        path: `docs/多方证据-${t}.md`,
+        content: doc(`${t}多方证据账本`, [
+          ['统计证据', ['支撑触碰后反弹：p=0.03，n=45，CI[1.2%, 4.8%]（Bonferroni 校正后显著）']],
+          ['结构证据', ['fin_analyze 落图（阶段=吸筹，置信度 62，规则口径）']],
+          ['回测证据', ['fin_backtest template=dsl（五件套口径）']],
+        ]),
+      }
+    case 'bear-quant':
+      return {
+        path: `docs/空方证据-${t}.md`,
+        content: doc(`${t}空方证据账本`, [
+          ['统计证据', ['放量滞涨后续收益：p=0.08，n=38（校正后不显著，如实报告）']],
+          ['相对强弱', ['fin_stats summary：A 对 B 相关性 0.62（不作因果）']],
+          ['结构证据', ['fin_analyze 落图（派发 / 跌破关键位，规则口径）']],
+        ]),
+      }
     default:
       return {
         path: `docs/工作笔记-${t}.md`,
@@ -4191,6 +4376,12 @@ const DISPLAY_NAMES: Record<string, string> = {
   // M66-A：堪舆阳宅
   'plan-surveyor': '察隅',
   'yangzhai-master': '司南',
+  // M84：多空对决场
+  judge: '顾鉴',
+  'bull-lead': '向阳',
+  'bear-lead': '知寒',
+  'bull-quant': '陆准',
+  'bear-quant': '程实',
 }
 
 /**
@@ -4545,6 +4736,8 @@ export class MockProvider implements LlmProvider {
       ...(!isNudge && userText.includes(DECISION_TRIGGER) ? (DECISION_BLOCKS[baseId] ?? []) : []),
       ...(!isNudge && userText.includes(OFFER_FIELDS_TRIGGER) ? (OFFER_FIELDS_BLOCKS[baseId] ?? []) : []),
       ...(!isNudge && userText.includes(VIEW_TRIGGER) ? (VIEW_BLOCKS[baseId] ?? []) : []),
+      ...(!isNudge && userText.includes(DUEL_WALK_TRIGGER) ? (DUEL_WALK_BLOCKS[baseId] ?? []) : []),
+      ...(!isNudge && userText.includes(KLINE_WALK_TRIGGER) ? (KLINE_WALK_BLOCKS[baseId] ?? []) : []),
       ...(!isNudge && userText.includes(ROLL_TRIGGER) ? (ROLL_BLOCKS[baseId] ?? []) : []),
       ...(!isNudge && userText.includes(CARDS_TRIGGER) ? (CARDS_BLOCKS[baseId] ?? []) : []),
       ...(!isNudge && userText.includes(KPI_TRIGGER) ? (KPI_BLOCKS[baseId] ?? []) : []),
@@ -4833,6 +5026,12 @@ export class MockProvider implements LlmProvider {
       // M66-A：堪舆阳宅（与 AGENT.md handoff 保持一致）
       'plan-surveyor': ['yangzhai-master', 'space-planner'],
       'yangzhai-master': ['plan-surveyor', 'interior-designer'],
+      // M84：多空对决场（与 AGENT.md handoff 保持一致）
+      judge: ['bull-lead', 'bear-lead'],
+      'bull-lead': ['judge', 'bull-quant'],
+      'bear-lead': ['judge', 'bear-quant'],
+      'bull-quant': ['judge', 'bull-lead'],
+      'bear-quant': ['judge', 'bear-lead'],
     }
     return table[agentId] ?? []
   }

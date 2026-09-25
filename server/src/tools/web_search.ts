@@ -8,6 +8,7 @@
  * 只读 → 可并行 + 幂等缓存；全部引擎失败时返回明确提示（不重试不加剧封禁）。
  */
 import { z } from 'zod'
+import { egressNoteOf } from '../net/egress.js'
 import { AntiBotError, antiBotFetch } from './http.js'
 import {
   cleanInline,
@@ -114,6 +115,7 @@ async function warmupSession(engine: SearchEngine, ctx: ToolRuntime): Promise<vo
       timeoutMs: ctx.httpTimeoutMs,
       minIntervalMs: ctx.httpMinIntervalMs,
       maxRetries: 1,
+      egressChannel: 'search',
       cookieKey: cookieKeyOf(ctx),
       uaPoolExtra: ctx.httpUaPoolExtra,
     })
@@ -147,6 +149,7 @@ async function searchViaEngines(
         timeoutMs: ctx.httpTimeoutMs,
         minIntervalMs: ctx.httpMinIntervalMs,
         maxBytes: HTML_MODE_MAX_BYTES,
+        egressChannel: 'search',
         cookieKey: cookieKeyOf(ctx),
         uaPoolExtra: ctx.httpUaPoolExtra,
         headers: {
@@ -159,7 +162,7 @@ async function searchViaEngines(
         continue
       }
       const mode = skips.length > 0 ? `网页抓取·${engine.label}（降级）` : `网页抓取·${engine.label}`
-      const result = formatSearchResult(params.query, items.slice(0, params.count), mode)
+      const result = formatSearchResult(params.query, items.slice(0, params.count), mode, egressNoteOf(res.egress))
       if (skips.length > 0 && result.detail) {
         result.detail = `（降级跳过 ${skips.join('；')}）\n${result.detail}`
       }
@@ -189,6 +192,7 @@ async function searchViaApi(params: { query: string; count: number }, ctx: ToolR
     minIntervalMs: ctx.httpMinIntervalMs,
     maxRetries: 2,
     accept: 'application/json',
+    egressChannel: 'search',
     cookieKey: cookieKeyOf(ctx),
     uaPoolExtra: ctx.httpUaPoolExtra,
     headers: {
@@ -228,11 +232,11 @@ async function searchViaApi(params: { query: string; count: number }, ctx: ToolR
   if (items.length === 0) {
     return { ok: false, summary: '检索未返回结果（查询词可能无匹配，或 API 额度已用尽）' }
   }
-  return formatSearchResult(params.query, items, '官方 API')
+  return formatSearchResult(params.query, items, '官方 API', egressNoteOf(res.egress))
 }
 
-/** 统一格式化：编号 + 标题 + URL + 摘要 +（站点 · 日期），超长截断 */
-function formatSearchResult(query: string, items: SearchItem[], mode: string): ToolResult {
+/** 统一格式化：编号 + 标题 + URL + 摘要 +（站点 · 日期），超长截断；note = M82 出口标注 */
+function formatSearchResult(query: string, items: SearchItem[], mode: string, note = ''): ToolResult {
   const blocks = items.map((it, i) => {
     const meta = [it.site, it.date].filter(Boolean).join(' · ')
     const lines = [`${i + 1}. ${it.title}`, `   ${it.url}`]
@@ -242,7 +246,7 @@ function formatSearchResult(query: string, items: SearchItem[], mode: string): T
   })
   let detail = blocks.join('\n\n')
   if (detail.length > MAX_DETAIL_CHARS) detail = `${detail.slice(0, MAX_DETAIL_CHARS)}\n…（结果过长已截断）`
-  return { ok: true, summary: `联网检索「${query}」：${items.length} 条结果（${mode}）`, detail }
+  return { ok: true, summary: `联网检索「${query}」：${items.length} 条结果（${mode}）${note}`, detail }
 }
 
 const searchSchema = z.object({

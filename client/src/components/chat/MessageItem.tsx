@@ -234,9 +234,9 @@ function MessageItemInner({ messageId }: { messageId: string }): React.JSX.Eleme
       if (next && next.role === 'agent' && runId && !useRunStore.getState().active) {
         const res = await apiPost<{ runId: string }>(`/api/runs/${runId}/messages/${next.id}/regenerate`)
         useRunStore.getState().attach(res.runId, message.sessionId)
-        toast('已按新内容重新生成回复')
+        toast.success('已按新内容重新生成回复')
       } else {
-        toast('已保存修改')
+        toast.success('已保存修改')
       }
     } catch (err) {
       toast.error((err as Error).message)

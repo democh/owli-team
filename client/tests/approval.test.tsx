@@ -2,7 +2,7 @@
  * 审批卡（M8）：挂起卡渲染 / 批准 / 拒绝 / 自定义反馈（fetch mock 校验请求体）。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { ApprovalRequest } from '@multi-agent/shared'
 import { ApprovalPanel } from '../src/components/chat/ApprovalPanel'
@@ -77,9 +77,9 @@ describe('ApprovalPanel 挂起卡', () => {
     expect(init.method).toBe('POST')
     expect(JSON.parse(String(init.body))).toEqual({ decision: 'approve', feedback: undefined })
 
-    // 结论行（已批准）替换挂起卡
-    expect(await screen.findByText('已批准')).toBeInTheDocument()
-    expect(screen.queryByText('模型请求审批')).not.toBeInTheDocument()
+    // 决议后：挂起卡消失；已决结论行按产品决策隐藏（不常驻）
+    await waitFor(() => expect(screen.queryByText('模型请求审批')).not.toBeInTheDocument())
+    expect(screen.queryByText('已批准')).toBeNull()
   })
 
   it('拒绝：decision=reject 且展示已拒绝', async () => {
@@ -96,7 +96,8 @@ describe('ApprovalPanel 挂起卡', () => {
     await user.click(screen.getByRole('button', { name: /拒绝/ }))
     const init = fetchMock.mock.calls[0][1] as RequestInit
     expect(JSON.parse(String(init.body)).decision).toBe('reject')
-    expect(await screen.findByText('已拒绝')).toBeInTheDocument()
+    // 结论行已隐藏（同批产品决策）：挂起卡消失即完成交互
+    await waitFor(() => expect(screen.queryByText('模型请求审批')).not.toBeInTheDocument())
   })
 
   it('自定义反馈：空内容拦截；填写后随请求提交', async () => {

@@ -44,6 +44,13 @@ export const RuntimeSettingsSchema = z.object({
   financeQuoteRefreshMs: z.number().int().min(2_000).max(600_000),
   financeMinIntervalMs: z.number().int().min(0).max(60_000),
   financePyTimeoutMs: z.number().int().min(1_000).max(600_000),
+  // M82：联网出口（热更新；凭据不在本层——代理目标与账号在连接中心 kind='proxy'，本层只存引用与策略）
+  egressMode: z.enum(['direct', 'proxy']),
+  egressConnectionId: z.string().max(100),
+  egressChannels: z.array(z.enum(['search', 'finance', 'browser', 'mcp', 'llm'])).max(5),
+  egressNoProxy: z.array(z.string().max(200)).max(200),
+  egressFallback: z.enum(['direct', 'fail']),
+  egressProbeUrl: z.string().max(500),
 })
 
 export type RuntimeSettings = z.infer<typeof RuntimeSettingsSchema>

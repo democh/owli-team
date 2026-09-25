@@ -18,6 +18,8 @@ M34 金融 Python 桥（固定脚本 + JSON 协议；由 server 侧 bridge/runne
     fund_profile  akshare 基金净值走势
     news          akshare 个股新闻（东方财富）
     export_table  tablib 表格导出（csv/json/xlsx）
+    stats         描述统计 / 收益分布 / 相关性 / ADF 平稳性（M84；纯计算：series 由 Node 侧传入）
+    significance  事件后前向收益显著性检验（M84；纯计算：bars/events 由 Node 侧传入）
 
 安全: 仅供 server 固定调用；参数白名单校验；无文件写入（导出内容以文本/Base64 返回）。
 反爬: curl_cffi 可用时接管 requests（TLS 指纹模拟 Chrome；FIN_BRIDGE_IMPERSONATE=0 关闭）。
@@ -737,6 +739,237 @@ def task_export_table(params: dict) -> dict:
     raise BridgeError("BAD_PARAM", f"不支持的导出格式：{fmt}（支持 csv / json / xlsx）")
 
 
+# ---------------------------------------------------------------- 统计任务（M84；纯计算，零网络）
+
+
+def _stats_clean(value):
+    """numpy / pandas 数值 → JSON 安全原生类型（NaN → None）。"""
+    if value is None:
+        return None
+    try:
+        number = float(value)
+    except Exception:
+        return _clean_value(value)
+    if number != number:  # NaN
+        return None
+    return round(number, 6)
+
+
+def _round4(value):
+    number = _stats_clean(value)
+    return None if number is None else round(number, 4)
+
+
+def task_stats(params: dict) -> dict:
+    """描述统计 / 收益分布 / 相关性 / ADF 平稳性（series 由 Node 侧传入；numpy+pandas 必需，statsmodels 可缺省）。"""
+    np = require("numpy", "统计分析")
+    pd = require("pandas", "统计分析")
+    raw_series = params.get("series")
+    if not isinstance(raw_series, list) or not (1 <= len(raw_series) <= 8):
+        raise BridgeError("BAD_PARAM", "series 必须是 1–8 元素的数组")
+    items = params.get("items") or ["summary", "distribution", "correlation", "stationarity"]
+    if not isinstance(items, list):
+        raise BridgeError("BAD_PARAM", "items 必须是数组")
+    window = param_int(params, "window", 60)
+    ann = 250
+
+    frames = {}
+    order = []
+    for entry in raw_series:
+        if not isinstance(entry, dict):
+            raise BridgeError("BAD_PARAM", "series 元素必须是对象（{name, timestamps, closes}）")
+        name = str(entry.get("name") or f"series{len(order) + 1}")
+        closes = entry.get("closes")
+        if not isinstance(closes, list) or len(closes) < 5:
+            raise BridgeError("BAD_PARAM", f"{name} 的 closes 至少需要 5 个点")
+        timestamps = entry.get("timestamps")
+        idx = [int(t) for t in timestamps] if isinstance(timestamps, list) and len(timestamps) == len(closes) else list(range(len(closes)))
+        values = [_num(c) for c in closes]
+        frames[name] = pd.Series(values, index=idx, dtype="float64").dropna()
+        if len(frames[name]) < 5:
+            raise BridgeError("BAD_PARAM", f"{name} 有效数据不足（< 5 点）")
+        order.append(name)
+
+    out = {"names": order, "engine": "python", "items": {}, "notes": []}
+    notes = out["notes"]
+
+    if "summary" in items:
+        rows = []
+        for name in order:
+            s = frames[name]
+            rets = s.pct_change().dropna()
+            first = float(s.iloc[0])
+            last = float(s.iloc[-1])
+            days = max(1, len(s) - 1)
+            annual_return = (last / first) ** (ann / days) - 1 if first > 0 and last > 0 else None
+            annual_vol = float(rets.std(ddof=1)) * (ann ** 0.5) if len(rets) > 1 else None
+            cummax = s.cummax()
+            drawdown = (cummax - s) / cummax
+            rows.append({
+                "name": name,
+                "points": int(len(s)),
+                "first": round(first, 4),
+                "last": round(last, 4),
+                "changePct": _round4((last / first - 1) * 100) if first > 0 else None,
+                "annualReturnPct": _round4(annual_return * 100) if annual_return is not None else None,
+                "annualVolPct": _round4(annual_vol * 100) if annual_vol is not None else None,
+                "maxDrawdownPct": _round4(float(drawdown.max()) * 100),
+                "percentile": _round4(float((s <= last).mean())),
+                "skew": _round4(rets.skew()) if len(rets) >= 3 else None,
+                "kurtosis": _round4(rets.kurtosis()) if len(rets) >= 4 else None,
+            })
+        out["items"]["summary"] = rows
+
+    if "distribution" in items:
+        rows = []
+        for name in order:
+            rets = frames[name].pct_change().dropna()
+            if len(rets) < 5:
+                continue
+            quantiles = {f"{int(q * 100)}%": _round4(float(rets.quantile(q)) * 100) for q in (0.01, 0.05, 0.25, 0.5, 0.75, 0.95, 0.99)}
+            hist, edges = np.histogram(rets.values, bins=12)
+            buckets = [
+                {"from": _round4(float(edges[i]) * 100), "to": _round4(float(edges[i + 1]) * 100), "count": int(hist[i])}
+                for i in range(len(hist))
+            ]
+            rows.append({"name": name, "quantilesPct": quantiles, "buckets": buckets})
+        out["items"]["distribution"] = rows
+
+    if "correlation" in items and len(order) >= 2:
+        df = pd.DataFrame({name: frames[name] for name in order})
+        ret_df = df.pct_change().dropna()
+        if len(ret_df) >= 5:
+            pearson = ret_df.corr(method="pearson")
+            spearman = ret_df.corr(method="spearman")
+            rolling_last = {}
+            for i, a in enumerate(order):
+                for b in order[i + 1:]:
+                    series_corr = ret_df[a].rolling(window).corr(ret_df[b]).dropna()
+                    rolling_last[f"{a}|{b}"] = _round4(series_corr.iloc[-1]) if len(series_corr) > 0 else None
+            out["items"]["correlation"] = {
+                "names": order,
+                "pearson": [[_round4(pearson.loc[a, b]) for b in order] for a in order],
+                "spearman": [[_round4(spearman.loc[a, b]) for b in order] for a in order],
+                "rollingWindow": window,
+                "rollingLast": rolling_last,
+                "points": int(len(ret_df)),
+            }
+        else:
+            notes.append("相关性跳过：对齐后收益样本不足 5 点")
+
+    if "stationarity" in items:
+        try:
+            from statsmodels.tsa.stattools import adfuller
+
+            rows = []
+            for name in order:
+                s = frames[name]
+                try:
+                    price_p = float(adfuller(s.values, maxlag=min(10, max(1, len(s) // 10)), autolag="AIC")[1])
+                except Exception:
+                    price_p = None
+                rets = s.pct_change().dropna()
+                try:
+                    return_p = float(adfuller(rets.values, maxlag=min(10, max(1, len(rets) // 10)), autolag="AIC")[1])
+                except Exception:
+                    return_p = None
+                rows.append({"name": name, "priceP": _round4(price_p), "returnP": _round4(return_p)})
+            out["items"]["stationarity"] = rows
+        except ImportError:
+            notes.append("ADF 平稳性跳过：缺少 statsmodels（fin_env action=install group=analytics）")
+
+    if not out["items"]:
+        raise BridgeError("BAD_PARAM", "items 未命中任何可用分析项")
+    return out
+
+
+def task_significance(params: dict) -> dict:
+    """事件后前向收益的显著性检验（numpy + scipy；bars/events 由 Node 侧传入，零网络）。"""
+    np = require("numpy", "统计检验")
+    try:
+        from scipy import stats as scipy_stats
+    except Exception as exc:
+        raise BridgeError("DEP_MISSING", "缺少 Python 包 scipy（用于显著性检验）", f"pip install scipy; {exc}")
+
+    closes_raw = params.get("closes")
+    if not isinstance(closes_raw, list) or len(closes_raw) < 30:
+        raise BridgeError("BAD_PARAM", "closes 至少需要 30 个点")
+    closes = np.array([_num(c) if _num(c) is not None else 0.0 for c in closes_raw], dtype=float)
+    n = len(closes)
+    events_raw = params.get("events")
+    if not isinstance(events_raw, list):
+        raise BridgeError("BAD_PARAM", "events 必须是下标数组")
+    events = sorted({int(e) for e in events_raw if isinstance(e, (int, float)) and 0 <= int(e) < n})
+    horizons_raw = params.get("horizons") or [1, 3, 5, 10, 20]
+    if not isinstance(horizons_raw, list) or not (1 <= len(horizons_raw) <= 6):
+        raise BridgeError("BAD_PARAM", "horizons 必须是 1–6 元素的数组")
+    horizons = []
+    for h in horizons_raw:
+        try:
+            hv = int(h)
+        except Exception:
+            raise BridgeError("BAD_PARAM", "horizons 元素必须是整数")
+        if hv < 1 or hv > 60:
+            raise BridgeError("BAD_PARAM", "horizons 元素需在 1–60")
+        if hv not in horizons:
+            horizons.append(hv)
+    bootstrap = param_int(params, "bootstrap", 2000)
+    bootstrap = max(200, min(10000, bootstrap))
+    seed = param_int(params, "seed", 42)
+    alpha = 0.05
+    bonferroni_alpha = alpha / len(horizons)
+
+    notes = [
+        "前向收益 = 事件后第 h 根收盘 / 事件根收盘 − 1；t 检验为单样本（对 0）；bootstrap 为均值百分位法 95% CI",
+        f"多重检验校正：Bonferroni α' = α / 窗口数 = {alpha} / {len(horizons)}（校正后更严格）",
+    ]
+    rows = []
+    for h in horizons:
+        valid_events = [e for e in events if e + h < n]
+        row = {"horizon": h, "samples": len(valid_events)}
+        if len(valid_events) >= 5:
+            x = np.array([closes[e + h] / closes[e] - 1 for e in valid_events], dtype=float)
+            mean = float(np.mean(x))
+            # 基准：全样本同窗口前向收益均值
+            all_idx = np.arange(0, n - h)
+            baseline = float(np.mean(closes[all_idx + h] / closes[all_idx] - 1))
+            gains = float(x[x > 0].sum())
+            losses = float(-x[x < 0].sum())
+            t_stat, p_value = scipy_stats.ttest_1samp(x, 0.0)
+            rng = np.random.default_rng(seed)
+            samples = rng.choice(x, size=(bootstrap, len(x)), replace=True)
+            boot_means = samples.mean(axis=1)
+            ci_low, ci_high = np.percentile(boot_means, [2.5, 97.5])
+            row.update({
+                "meanPct": _round4(mean * 100),
+                "medianPct": _round4(float(np.median(x)) * 100),
+                "winRate": _round4(float(np.mean(x > 0))),
+                "profitFactor": _round4(gains / losses) if losses > 0 else None,
+                "tStat": _round4(float(t_stat)),
+                "pValue": _stats_clean(float(p_value)),
+                "significant": bool(p_value < bonferroni_alpha),
+                "direction": "positive" if mean > 0 else ("negative" if mean < 0 else None),
+                "ciLowPct": _round4(float(ci_low) * 100),
+                "ciHighPct": _round4(float(ci_high) * 100),
+                "baselineMeanPct": _round4(baseline * 100),
+                "excessPct": _round4((mean - baseline) * 100),
+            })
+        else:
+            notes.append(f"h={h} 样本不足（{len(valid_events)} < 5）：仅报事件计数")
+        rows.append(row)
+
+    return {
+        "events": len(events),
+        "bars": n,
+        "alpha": alpha,
+        "bonferroniAlpha": _round4(bonferroni_alpha),
+        "bootstrap": bootstrap,
+        "seed": seed,
+        "horizons": rows,
+        "notes": notes,
+    }
+
+
 # ---------------------------------------------------------------- 环境状态任务
 
 
@@ -761,7 +994,7 @@ def task_capabilities(_params: dict) -> dict:
         except Exception:
             return False
 
-    names = ["baostock", "akshare", "pandas", "ta", "tablib", "openpyxl", "curl_cffi"]
+    names = ["baostock", "akshare", "pandas", "ta", "tablib", "openpyxl", "curl_cffi", "numpy", "scipy", "statsmodels"]
     packages = {n: {"installed": installed(n), "version": version(n)} for n in names}
     missing = [n for n in ("baostock", "akshare", "pandas", "ta", "tablib") if not packages[n]["installed"]]
     level = "absent" if len(missing) == 5 else ("partial" if missing else "ready")
@@ -788,6 +1021,8 @@ TASKS = {
     "fund_profile": task_fund_profile,
     "news": task_news,
     "export_table": task_export_table,
+    "stats": task_stats,
+    "significance": task_significance,
 }
 
 

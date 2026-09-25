@@ -1,10 +1,10 @@
 /**
  * 收尾交付清单（M37-6 修订，ADR 0092；分层默认续修订，ADR 0123）——本轮 Run 交还用户时，
- * 若本轮有交付件，在消息流尾部给出交付清单：类型图标 / 目录 / 文件名 / 体积 / 交付者 + 快捷继续。
- * 默认只展示最终交付（结论性件按重要度取前 N，过程产物判定见 lib/delivery）；
- * 过程产物（charts/ 行情与博弈快照等）与溢出项收进「其他」组默认折叠，箭头全展示 / 收起；
- * 整清单可整体收起隐藏（头部左簇即开关，收起后仅留概要行与快捷继续）；
- * 全为过程产物的极端下「其他」默认展开（卡片不空）；面板入口由头部按钮承载。
+ * 若本轮有交付件，在消息流尾部给出交付清单：类型图标 / 目录 / 文件名 / 体积 / 交付者
+ * （M85：底部快捷 chips（继续推进 / 总结本轮）已按用户决策移除）。
+ * 紧凑口径（2026-09-25 用户决策）：**只展示核心交付件**——过程产物（charts/ 行情与博弈快照等）
+ * 与溢出项不再展示（原「其他」折叠组已移除，头部计数保留总数）；「接着说」入口已移除；
+ * 整清单可整体收起隐藏（头部左簇即开关，收起后仅留概要行）；面板入口由头部按钮承载。
  * 无交付件则完全不渲染（轮次结束不重复固定文案；「你的回合」交接条已承载收束语义）。
  * 触发完全从消息派生（尾条为成员「完成」消息且 mentions 仅含 user、无运行中 Run）；
  * 订阅按「尾条指纹」隔离：流式 delta 不改指纹 → 不触发本组件重渲染。
@@ -17,7 +17,7 @@
  * 闭环统计（已回应 / 未闭环）+ 「签收」（本地态 sessionStorage；签收时回填「已签收 <名> vN。」草稿）。
  */
 import * as React from 'react'
-import { ChevronRight, MessageSquarePlus, Package, PackageCheck, PackageOpen } from 'lucide-react'
+import { ChevronRight, Package, PackageCheck, PackageOpen } from 'lucide-react'
 import type { AgentDefinition, ChatMessage } from '@multi-agent/shared'
 import { useAgentStore } from '../../stores/agent-store'
 import { useRunStore } from '../../stores/run-store'
@@ -70,23 +70,16 @@ const VERDICT_TONE: Record<AcceptanceInfo['verdict'], string> = {
   未通过: 'bg-rose-500/10 text-rose-600',
 }
 
-/** 快捷继续 chips：回填草稿由用户确认发送（ADR 0064） */
-const QUICK_CHIPS: { label: string; prompt: string }[] = [
-  { label: '继续推进', prompt: '继续推进下一步' },
-  { label: '总结本轮', prompt: '总结一下本轮的成果与遗留问题' },
-]
-
 /** 交付清单主体：仅在可见时挂载（元数据按会话共享缓存补齐） */
 function DeliveryManifest({ info }: { info: CloseoutInfo }): React.JSX.Element {
   const agents = useAgentStore((s) => s.agents)
   const meta = useArtifactMeta()
   const ctx = useSceneCtx()
+  // 签收回填草稿（M44 AF-5）
   const insertToComposer = useUiStore((s) => s.insertToComposer)
   const expandWorkspace = useUiStore((s) => s.expandWorkspace)
   const [burst, setBurst] = React.useState(0)
-  // 「其他」组折叠态：null = 未操作（默认口径——有最终交付则折叠，全为过程产物则展开）
-  const [othersOpen, setOthersOpen] = React.useState<boolean | null>(null)
-  // 整清单折叠态：默认展开（收起后仅留概要行与快捷继续）
+  // 整清单折叠态：默认展开（收起后仅留概要行）
   const [listOpen, setListOpen] = React.useState(true)
 
   // M39（DEV-3）：development 场景验收区（qa 判定 + 未决项；无 qa 内容 → 不渲染）
@@ -146,14 +139,12 @@ function DeliveryManifest({ info }: { info: CloseoutInfo }): React.JSX.Element {
   React.useEffect(() => {
     if (celebratedRef.current === info.tailId) return
     celebratedRef.current = info.tailId
-    setOthersOpen(null) // 新尾条：回到默认折叠口径
     setListOpen(true) // 新尾条：整清单回到展开
     if (Date.now() - Date.parse(info.createdAt) < CELEBRATE_WINDOW_MS) setBurst((n) => n + 1)
   }, [info.tailId, info.createdAt])
 
-  // 分层默认：最终交付（重要度前 N）+ 其他（过程产物与溢出项）
-  const { primary, others } = React.useMemo(() => partitionDelivery(info.entries), [info.entries])
-  const othersShown = othersOpen ?? primary.length === 0
+  // M85：仅取核心交付件（过程产物不再展示——partitionDelivery 的 others 部分按用户决策移除）
+  const { primary } = React.useMemo(() => partitionDelivery(info.entries), [info.entries])
   const authors: AgentDefinition[] = []
   const authorIds = new Set<string>()
   for (const e of info.entries) {
@@ -166,7 +157,7 @@ function DeliveryManifest({ info }: { info: CloseoutInfo }): React.JSX.Element {
   return (
     <div
       data-delivery-manifest
-      className="handoff-in relative mx-4 mb-3 mt-1 overflow-hidden rounded-xl border border-primary/20 bg-gradient-to-br from-primary/[0.06] via-primary/[0.02] to-transparent px-3.5 py-2.5"
+      className="handoff-in relative mx-4 mb-3 mt-1 overflow-hidden rounded-xl border border-primary/20 bg-gradient-to-br from-primary/[0.06] via-primary/[0.02] to-transparent px-3 py-2"
     >
       <ConfettiBurst burst={burst} />
       <div className="flex items-center gap-2">
@@ -224,7 +215,7 @@ function DeliveryManifest({ info }: { info: CloseoutInfo }): React.JSX.Element {
       {listOpen && (
         <>
           {primary.length > 0 && (
-            <div data-delivery-group="primary" className="mt-1.5 space-y-0.5 border-t border-primary/10 pt-1.5">
+            <div data-delivery-group="primary" className="mt-1 space-y-0.5 border-t border-primary/10 pt-1">
               {primary.map((e) => (
                 <ArtifactRow
                   key={e.path}
@@ -234,35 +225,6 @@ function DeliveryManifest({ info }: { info: CloseoutInfo }): React.JSX.Element {
                   stage={stageOf(groupId, e.agentId)}
                 />
               ))}
-            </div>
-          )}
-          {others.length > 0 && (
-            <div className={cn(primary.length > 0 ? 'mt-1' : 'mt-1.5 border-t border-primary/10 pt-1.5')}>
-              <button
-                type="button"
-                data-delivery-toggle
-                aria-expanded={othersShown}
-                aria-label={`其他 ${others.length} 件`}
-                title={othersShown ? '收起其他' : `展开其他 ${others.length} 件`}
-                onClick={() => setOthersOpen(!othersShown)}
-                className="flex w-full items-center gap-1 rounded-lg border border-dashed border-primary/25 px-2 py-1 text-[11px] text-muted-foreground transition-colors hover:border-primary/45 hover:text-primary"
-              >
-                <ChevronRight className={cn('size-3 shrink-0 transition-transform', othersShown && 'rotate-90')} />
-                其他 · {others.length} 件
-              </button>
-              {othersShown && (
-                <div data-delivery-group="others" className="mt-0.5 space-y-0.5">
-                  {others.map((e) => (
-                    <ArtifactRow
-                      key={e.path}
-                      path={e.path}
-                      meta={meta.get(e.path)}
-                      author={agents.find((a) => a.id === e.agentId)}
-                      stage={stageOf(groupId, e.agentId)}
-                    />
-                  ))}
-                </div>
-              )}
             </div>
           )}
         </>
@@ -330,23 +292,6 @@ function DeliveryManifest({ info }: { info: CloseoutInfo }): React.JSX.Element {
         </div>
       ) : null}
 
-      <div className="mt-2 flex flex-wrap items-center gap-1.5 border-t border-primary/10 pt-2">
-        <span className="inline-flex items-center gap-1 text-[11px] text-muted-foreground">
-          <MessageSquarePlus className="size-3" />
-          接着说
-        </span>
-        {QUICK_CHIPS.map((c) => (
-          <button
-            key={c.label}
-            type="button"
-            title={c.prompt}
-            className="rounded-full border bg-card px-2.5 py-0.5 text-[11.5px] text-muted-foreground transition-colors hover:border-primary/30 hover:text-primary"
-            onClick={() => insertToComposer(c.prompt)}
-          >
-            {c.label}
-          </button>
-        ))}
-      </div>
     </div>
   )
 }

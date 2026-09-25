@@ -1,0 +1,1192 @@
+{
+  "kind": "kline",
+  "symbol": "sh600519",
+  "name": "贵州茅台",
+  "period": "day",
+  "adjust": "qfq",
+  "meta": {
+    "source": "node",
+    "asOf": "2026-09-25T02:00:00.000Z",
+    "bars": 80
+  },
+  "bars": [
+    {
+      "timestamp": 1780243200000,
+      "open": 96,
+      "high": 97.15,
+      "low": 94.85,
+      "close": 96,
+      "volume": 18000
+    },
+    {
+      "timestamp": 1780329600000,
+      "open": 96,
+      "high": 98.95,
+      "low": 94.85,
+      "close": 97.78,
+      "volume": 19993
+    },
+    {
+      "timestamp": 1780416000000,
+      "open": 97.78,
+      "high": 100.71,
+      "low": 96.61,
+      "close": 99.51,
+      "volume": 21770
+    },
+    {
+      "timestamp": 1780502400000,
+      "open": 99.51,
+      "high": 102.37,
+      "low": 98.32,
+      "close": 101.15,
+      "volume": 23139
+    },
+    {
+      "timestamp": 1780588800000,
+      "open": 101.15,
+      "high": 103.9,
+      "low": 99.94,
+      "close": 102.66,
+      "volume": 23952
+    },
+    {
+      "timestamp": 1780675200000,
+      "open": 102.66,
+      "high": 105.25,
+      "low": 101.43,
+      "close": 104,
+      "volume": 24122
+    },
+    {
+      "timestamp": 1780761600000,
+      "open": 104,
+      "high": 106.4,
+      "low": 102.75,
+      "close": 105.13,
+      "volume": 23636
+    },
+    {
+      "timestamp": 1780848000000,
+      "open": 105.13,
+      "high": 107.31,
+      "low": 103.87,
+      "close": 106.03,
+      "volume": 22549
+    },
+    {
+      "timestamp": 1780934400000,
+      "open": 106.03,
+      "high": 107.96,
+      "low": 104.76,
+      "close": 106.68,
+      "volume": 20984
+    },
+    {
+      "timestamp": 1781020800000,
+      "open": 106.68,
+      "high": 108.34,
+      "low": 105.4,
+      "close": 107.05,
+      "volume": 19117
+    },
+    {
+      "timestamp": 1781107200000,
+      "open": 107.05,
+      "high": 108.44,
+      "low": 105.77,
+      "close": 107.15,
+      "volume": 19443
+    },
+    {
+      "timestamp": 1781193600000,
+      "open": 107.15,
+      "high": 108.44,
+      "low": 105.69,
+      "close": 106.98,
+      "volume": 21338
+    },
+    {
+      "timestamp": 1781280000000,
+      "open": 106.98,
+      "high": 108.26,
+      "low": 105.25,
+      "close": 106.53,
+      "volume": 22901
+    },
+    {
+      "timestamp": 1781366400000,
+      "open": 106.53,
+      "high": 107.81,
+      "low": 104.57,
+      "close": 105.84,
+      "volume": 23964
+    },
+    {
+      "timestamp": 1781452800000,
+      "open": 105.84,
+      "high": 107.11,
+      "low": 103.65,
+      "close": 104.91,
+      "volume": 24414
+    },
+    {
+      "timestamp": 1781539200000,
+      "open": 104.91,
+      "high": 106.17,
+      "low": 102.54,
+      "close": 103.78,
+      "volume": 24204
+    },
+    {
+      "timestamp": 1781625600000,
+      "open": 103.78,
+      "high": 105.03,
+      "low": 101.26,
+      "close": 102.49,
+      "volume": 23360
+    },
+    {
+      "timestamp": 1781712000000,
+      "open": 102.49,
+      "high": 103.72,
+      "low": 99.86,
+      "close": 101.07,
+      "volume": 21979
+    },
+    {
+      "timestamp": 1781798400000,
+      "open": 101.07,
+      "high": 102.29,
+      "low": 98.38,
+      "close": 99.57,
+      "volume": 20216
+    },
+    {
+      "timestamp": 1781884800000,
+      "open": 99.57,
+      "high": 100.77,
+      "low": 96.85,
+      "close": 98.03,
+      "volume": 18871
+    },
+    {
+      "timestamp": 1781971200000,
+      "open": 98.03,
+      "high": 99.21,
+      "low": 95.34,
+      "close": 96.49,
+      "volume": 20845
+    },
+    {
+      "timestamp": 1782057600000,
+      "open": 96.49,
+      "high": 97.65,
+      "low": 93.87,
+      "close": 95.01,
+      "volume": 22572
+    },
+    {
+      "timestamp": 1782144000000,
+      "open": 95.01,
+      "high": 96.15,
+      "low": 92.5,
+      "close": 93.63,
+      "volume": 23865
+    },
+    {
+      "timestamp": 1782230400000,
+      "open": 93.63,
+      "high": 94.75,
+      "low": 91.27,
+      "close": 92.38,
+      "volume": 24585
+    },
+    {
+      "timestamp": 1782316800000,
+      "open": 92.38,
+      "high": 93.49,
+      "low": 90.22,
+      "close": 91.31,
+      "volume": 24656
+    },
+    {
+      "timestamp": 1782403200000,
+      "open": 91.31,
+      "high": 92.41,
+      "low": 89.37,
+      "close": 90.45,
+      "volume": 24074
+    },
+    {
+      "timestamp": 1782489600000,
+      "open": 90.45,
+      "high": 91.54,
+      "low": 88.75,
+      "close": 89.83,
+      "volume": 22905
+    },
+    {
+      "timestamp": 1782576000000,
+      "open": 89.83,
+      "high": 90.91,
+      "low": 88.39,
+      "close": 89.46,
+      "volume": 21283
+    },
+    {
+      "timestamp": 1782662400000,
+      "open": 89.46,
+      "high": 90.54,
+      "low": 88.3,
+      "close": 89.37,
+      "volume": 19388
+    },
+    {
+      "timestamp": 1782748800000,
+      "open": 89.37,
+      "high": 90.63,
+      "low": 88.3,
+      "close": 89.55,
+      "volume": 20307
+    },
+    {
+      "timestamp": 1782835200000,
+      "open": 89.55,
+      "high": 91.09,
+      "low": 88.48,
+      "close": 90.01,
+      "volume": 22164
+    },
+    {
+      "timestamp": 1782921600000,
+      "open": 90.01,
+      "high": 91.82,
+      "low": 88.93,
+      "close": 90.73,
+      "volume": 23662
+    },
+    {
+      "timestamp": 1783008000000,
+      "open": 90.73,
+      "high": 92.81,
+      "low": 89.65,
+      "close": 91.71,
+      "volume": 24638
+    },
+    {
+      "timestamp": 1783094400000,
+      "open": 91.71,
+      "high": 94.02,
+      "low": 90.61,
+      "close": 92.9,
+      "volume": 24990
+    },
+    {
+      "timestamp": 1783180800000,
+      "open": 92.9,
+      "high": 95.43,
+      "low": 91.79,
+      "close": 94.3,
+      "volume": 24681
+    },
+    {
+      "timestamp": 1783267200000,
+      "open": 94.3,
+      "high": 97,
+      "low": 93.17,
+      "close": 95.85,
+      "volume": 23749
+    },
+    {
+      "timestamp": 1783353600000,
+      "open": 95.85,
+      "high": 98.7,
+      "low": 94.7,
+      "close": 97.53,
+      "volume": 22299
+    },
+    {
+      "timestamp": 1783440000000,
+      "open": 97.53,
+      "high": 100.47,
+      "low": 96.36,
+      "close": 99.28,
+      "volume": 20496
+    },
+    {
+      "timestamp": 1783526400000,
+      "open": 99.28,
+      "high": 102.27,
+      "low": 98.09,
+      "close": 101.06,
+      "volume": 19741
+    },
+    {
+      "timestamp": 1783612800000,
+      "open": 101.06,
+      "high": 104.07,
+      "low": 99.85,
+      "close": 102.83,
+      "volume": 21691
+    },
+    {
+      "timestamp": 1783699200000,
+      "open": 102.83,
+      "high": 105.8,
+      "low": 101.6,
+      "close": 104.54,
+      "volume": 23364
+    },
+    {
+      "timestamp": 1783785600000,
+      "open": 104.54,
+      "high": 107.42,
+      "low": 103.29,
+      "close": 106.15,
+      "volume": 24578
+    },
+    {
+      "timestamp": 1783872000000,
+      "open": 106.15,
+      "high": 108.9,
+      "low": 104.87,
+      "close": 107.61,
+      "volume": 25204
+    },
+    {
+      "timestamp": 1783958400000,
+      "open": 107.61,
+      "high": 110.2,
+      "low": 106.32,
+      "close": 108.89,
+      "volume": 25175
+    },
+    {
+      "timestamp": 1784044800000,
+      "open": 108.89,
+      "high": 111.27,
+      "low": 107.58,
+      "close": 109.95,
+      "volume": 24498
+    },
+    {
+      "timestamp": 1784131200000,
+      "open": 109.95,
+      "high": 112.11,
+      "low": 108.64,
+      "close": 110.78,
+      "volume": 23252
+    },
+    {
+      "timestamp": 1784217600000,
+      "open": 110.78,
+      "high": 112.68,
+      "low": 109.45,
+      "close": 111.35,
+      "volume": 21576
+    },
+    {
+      "timestamp": 1784304000000,
+      "open": 111.35,
+      "high": 112.98,
+      "low": 110.01,
+      "close": 111.64,
+      "volume": 19658
+    },
+    {
+      "timestamp": 1784390400000,
+      "open": 111.64,
+      "high": 112.99,
+      "low": 110.3,
+      "close": 111.65,
+      "volume": 21167
+    },
+    {
+      "timestamp": 1784476800000,
+      "open": 111.65,
+      "high": 112.99,
+      "low": 110.06,
+      "close": 111.4,
+      "volume": 22982
+    },
+    {
+      "timestamp": 1784563200000,
+      "open": 111.4,
+      "high": 112.73,
+      "low": 109.54,
+      "close": 110.87,
+      "volume": 24411
+    },
+    {
+      "timestamp": 1784649600000,
+      "open": 110.87,
+      "high": 112.2,
+      "low": 108.78,
+      "close": 110.1,
+      "volume": 25298
+    },
+    {
+      "timestamp": 1784736000000,
+      "open": 110.1,
+      "high": 111.43,
+      "low": 107.81,
+      "close": 109.12,
+      "volume": 25551
+    },
+    {
+      "timestamp": 1784822400000,
+      "open": 109.12,
+      "high": 110.42,
+      "low": 106.64,
+      "close": 107.94,
+      "volume": 25144
+    },
+    {
+      "timestamp": 1784908800000,
+      "open": 107.94,
+      "high": 109.23,
+      "low": 105.32,
+      "close": 106.6,
+      "volume": 24126
+    },
+    {
+      "timestamp": 1784995200000,
+      "open": 106.6,
+      "high": 107.88,
+      "low": 103.89,
+      "close": 105.15,
+      "volume": 22612
+    },
+    {
+      "timestamp": 1785081600000,
+      "open": 105.15,
+      "high": 106.41,
+      "low": 102.39,
+      "close": 103.63,
+      "volume": 20771
+    },
+    {
+      "timestamp": 1785168000000,
+      "open": 103.63,
+      "high": 104.88,
+      "low": 100.86,
+      "close": 102.09,
+      "volume": 20609
+    },
+    {
+      "timestamp": 1785254400000,
+      "open": 102.09,
+      "high": 103.31,
+      "low": 99.36,
+      "close": 100.56,
+      "volume": 22531
+    },
+    {
+      "timestamp": 1785340800000,
+      "open": 100.56,
+      "high": 101.77,
+      "low": 97.92,
+      "close": 99.11,
+      "volume": 24145
+    },
+    {
+      "timestamp": 1785427200000,
+      "open": 99.11,
+      "high": 100.3,
+      "low": 96.59,
+      "close": 97.76,
+      "volume": 25278
+    },
+    {
+      "timestamp": 1785513600000,
+      "open": 97.76,
+      "high": 98.93,
+      "low": 95.4,
+      "close": 96.56,
+      "volume": 25807
+    },
+    {
+      "timestamp": 1785600000000,
+      "open": 96.56,
+      "high": 97.72,
+      "low": 94.41,
+      "close": 95.55,
+      "volume": 25679
+    },
+    {
+      "timestamp": 1785686400000,
+      "open": 95.55,
+      "high": 96.7,
+      "low": 93.63,
+      "close": 94.76,
+      "volume": 24910
+    },
+    {
+      "timestamp": 1785772800000,
+      "open": 94.76,
+      "high": 95.9,
+      "low": 93.09,
+      "close": 94.22,
+      "volume": 23588
+    },
+    {
+      "timestamp": 1785859200000,
+      "open": 94.22,
+      "high": 95.35,
+      "low": 92.8,
+      "close": 93.93,
+      "volume": 21863
+    },
+    {
+      "timestamp": 1785945600000,
+      "open": 93.93,
+      "high": 95.06,
+      "low": 92.79,
+      "close": 93.92,
+      "volume": 20033
+    },
+    {
+      "timestamp": 1786032000000,
+      "open": 93.92,
+      "high": 95.32,
+      "low": 92.79,
+      "close": 94.19,
+      "volume": 22023
+    },
+    {
+      "timestamp": 1786118400000,
+      "open": 94.19,
+      "high": 95.86,
+      "low": 93.06,
+      "close": 94.73,
+      "volume": 23792
+    },
+    {
+      "timestamp": 1786204800000,
+      "open": 94.73,
+      "high": 96.67,
+      "low": 93.59,
+      "close": 95.53,
+      "volume": 25147
+    },
+    {
+      "timestamp": 1786291200000,
+      "open": 95.53,
+      "high": 97.73,
+      "low": 94.38,
+      "close": 96.57,
+      "volume": 25944
+    },
+    {
+      "timestamp": 1786377600000,
+      "open": 96.57,
+      "high": 99,
+      "low": 95.41,
+      "close": 97.83,
+      "volume": 26097
+    },
+    {
+      "timestamp": 1786464000000,
+      "open": 97.83,
+      "high": 100.47,
+      "low": 96.65,
+      "close": 99.27,
+      "volume": 25593
+    },
+    {
+      "timestamp": 1786550400000,
+      "open": 99.27,
+      "high": 102.08,
+      "low": 98.08,
+      "close": 100.87,
+      "volume": 24492
+    },
+    {
+      "timestamp": 1786636800000,
+      "open": 100.87,
+      "high": 103.8,
+      "low": 99.66,
+      "close": 102.57,
+      "volume": 22916
+    },
+    {
+      "timestamp": 1786723200000,
+      "open": 102.57,
+      "high": 105.59,
+      "low": 101.34,
+      "close": 104.34,
+      "volume": 21044
+    },
+    {
+      "timestamp": 1786809600000,
+      "open": 104.34,
+      "high": 107.39,
+      "low": 103.08,
+      "close": 106.12,
+      "volume": 21475
+    },
+    {
+      "timestamp": 1786896000000,
+      "open": 106.12,
+      "high": 109.17,
+      "low": 104.85,
+      "close": 107.88,
+      "volume": 23363
+    },
+    {
+      "timestamp": 1786982400000,
+      "open": 107.88,
+      "high": 110.88,
+      "low": 106.58,
+      "close": 109.56,
+      "volume": 24915
+    },
+    {
+      "timestamp": 1787068800000,
+      "open": 109.56,
+      "high": 112.46,
+      "low": 108.25,
+      "close": 111.13,
+      "volume": 25964
+    }
+  ],
+  "indicators": [
+    "MA",
+    "VOL"
+  ],
+  "render": {
+    "mainIndicator": "MA",
+    "subIndicator": "VOL",
+    "showPhases": true
+  },
+  "drawings": [
+    {
+      "id": "an-box",
+      "kind": "zone",
+      "groupId": "analysis",
+      "points": [
+        {
+          "ts": 1780243200000,
+          "price": 112.99
+        },
+        {
+          "ts": 1787068800000,
+          "price": 88.3
+        }
+      ],
+      "label": "中枢",
+      "style": {
+        "color": "#8b5cf6"
+      },
+      "explain": "近 80 根重叠区间（上沿 112.99 / 下沿 88.3）"
+    },
+    {
+      "id": "an-support",
+      "kind": "hline",
+      "groupId": "analysis",
+      "points": [
+        {
+          "ts": 1787068800000,
+          "price": 92.79
+        }
+      ],
+      "label": "支撑 92.79（前低 · 触碰 1 次）",
+      "style": {
+        "color": "#0fa975"
+      }
+    },
+    {
+      "id": "an-resistance",
+      "kind": "hline",
+      "groupId": "analysis",
+      "points": [
+        {
+          "ts": 1787068800000,
+          "price": 112.99
+        }
+      ],
+      "label": "压力 112.99（前高 · 触碰 1 次）",
+      "style": {
+        "color": "#dc2828"
+      }
+    },
+    {
+      "id": "an-target",
+      "kind": "hline",
+      "groupId": "analysis",
+      "points": [
+        {
+          "ts": 1787068800000,
+          "price": 137.68
+        }
+      ],
+      "label": "量度目标 137.68（箱体量度（88.3 ~ 112.99））",
+      "style": {
+        "color": "#f59e0b",
+        "dash": true
+      }
+    },
+    {
+      "id": "an-low",
+      "kind": "textLabel",
+      "groupId": "analysis",
+      "points": [
+        {
+          "ts": 1786032000000,
+          "price": 92.79
+        }
+      ],
+      "label": "探底 92.79",
+      "style": {
+        "color": "#0ea5e9"
+      },
+      "explain": "当前阶段：震荡"
+    }
+  ],
+  "analysis": {
+    "asOf": "2026-09-25T03:28:10.868Z",
+    "bars": 80,
+    "period": "day",
+    "adjust": "qfq",
+    "phases": {
+      "current": "range",
+      "confidence": 49,
+      "since": "2026-06-01",
+      "description": "区间震荡，方向未明",
+      "bands": [
+        {
+          "ts": 1780243200000,
+          "phase": "range"
+        },
+        {
+          "ts": 1780329600000,
+          "phase": "range"
+        },
+        {
+          "ts": 1780416000000,
+          "phase": "range"
+        },
+        {
+          "ts": 1780502400000,
+          "phase": "range"
+        },
+        {
+          "ts": 1780588800000,
+          "phase": "range"
+        },
+        {
+          "ts": 1780675200000,
+          "phase": "range"
+        },
+        {
+          "ts": 1780761600000,
+          "phase": "range"
+        },
+        {
+          "ts": 1780848000000,
+          "phase": "range"
+        },
+        {
+          "ts": 1780934400000,
+          "phase": "range"
+        },
+        {
+          "ts": 1781020800000,
+          "phase": "range"
+        },
+        {
+          "ts": 1781107200000,
+          "phase": "range"
+        },
+        {
+          "ts": 1781193600000,
+          "phase": "range"
+        },
+        {
+          "ts": 1781280000000,
+          "phase": "range"
+        },
+        {
+          "ts": 1781366400000,
+          "phase": "range"
+        },
+        {
+          "ts": 1781452800000,
+          "phase": "range"
+        },
+        {
+          "ts": 1781539200000,
+          "phase": "range"
+        },
+        {
+          "ts": 1781625600000,
+          "phase": "range"
+        },
+        {
+          "ts": 1781712000000,
+          "phase": "range"
+        },
+        {
+          "ts": 1781798400000,
+          "phase": "range"
+        },
+        {
+          "ts": 1781884800000,
+          "phase": "range"
+        },
+        {
+          "ts": 1781971200000,
+          "phase": "range"
+        },
+        {
+          "ts": 1782057600000,
+          "phase": "range"
+        },
+        {
+          "ts": 1782144000000,
+          "phase": "range"
+        },
+        {
+          "ts": 1782230400000,
+          "phase": "range"
+        },
+        {
+          "ts": 1782316800000,
+          "phase": "range"
+        },
+        {
+          "ts": 1782403200000,
+          "phase": "range"
+        },
+        {
+          "ts": 1782489600000,
+          "phase": "range"
+        },
+        {
+          "ts": 1782576000000,
+          "phase": "range"
+        },
+        {
+          "ts": 1782662400000,
+          "phase": "range"
+        },
+        {
+          "ts": 1782748800000,
+          "phase": "range"
+        },
+        {
+          "ts": 1782835200000,
+          "phase": "range"
+        },
+        {
+          "ts": 1782921600000,
+          "phase": "range"
+        },
+        {
+          "ts": 1783008000000,
+          "phase": "range"
+        },
+        {
+          "ts": 1783094400000,
+          "phase": "range"
+        },
+        {
+          "ts": 1783180800000,
+          "phase": "range"
+        },
+        {
+          "ts": 1783267200000,
+          "phase": "range"
+        },
+        {
+          "ts": 1783353600000,
+          "phase": "range"
+        },
+        {
+          "ts": 1783440000000,
+          "phase": "range"
+        },
+        {
+          "ts": 1783526400000,
+          "phase": "range"
+        },
+        {
+          "ts": 1783612800000,
+          "phase": "range"
+        },
+        {
+          "ts": 1783699200000,
+          "phase": "range"
+        },
+        {
+          "ts": 1783785600000,
+          "phase": "range"
+        },
+        {
+          "ts": 1783872000000,
+          "phase": "range"
+        },
+        {
+          "ts": 1783958400000,
+          "phase": "range"
+        },
+        {
+          "ts": 1784044800000,
+          "phase": "range"
+        },
+        {
+          "ts": 1784131200000,
+          "phase": "range"
+        },
+        {
+          "ts": 1784217600000,
+          "phase": "range"
+        },
+        {
+          "ts": 1784304000000,
+          "phase": "range"
+        },
+        {
+          "ts": 1784390400000,
+          "phase": "range"
+        },
+        {
+          "ts": 1784476800000,
+          "phase": "range"
+        },
+        {
+          "ts": 1784563200000,
+          "phase": "range"
+        },
+        {
+          "ts": 1784649600000,
+          "phase": "range"
+        },
+        {
+          "ts": 1784736000000,
+          "phase": "range"
+        },
+        {
+          "ts": 1784822400000,
+          "phase": "range"
+        },
+        {
+          "ts": 1784908800000,
+          "phase": "range"
+        },
+        {
+          "ts": 1784995200000,
+          "phase": "range"
+        },
+        {
+          "ts": 1785081600000,
+          "phase": "range"
+        },
+        {
+          "ts": 1785168000000,
+          "phase": "range"
+        },
+        {
+          "ts": 1785254400000,
+          "phase": "range"
+        },
+        {
+          "ts": 1785340800000,
+          "phase": "range"
+        },
+        {
+          "ts": 1785427200000,
+          "phase": "range"
+        },
+        {
+          "ts": 1785513600000,
+          "phase": "range"
+        },
+        {
+          "ts": 1785600000000,
+          "phase": "range"
+        },
+        {
+          "ts": 1785686400000,
+          "phase": "range"
+        },
+        {
+          "ts": 1785772800000,
+          "phase": "range"
+        },
+        {
+          "ts": 1785859200000,
+          "phase": "range"
+        },
+        {
+          "ts": 1785945600000,
+          "phase": "range"
+        },
+        {
+          "ts": 1786032000000,
+          "phase": "range"
+        },
+        {
+          "ts": 1786118400000,
+          "phase": "range"
+        },
+        {
+          "ts": 1786204800000,
+          "phase": "range"
+        },
+        {
+          "ts": 1786291200000,
+          "phase": "range"
+        },
+        {
+          "ts": 1786377600000,
+          "phase": "range"
+        },
+        {
+          "ts": 1786464000000,
+          "phase": "range"
+        },
+        {
+          "ts": 1786550400000,
+          "phase": "range"
+        },
+        {
+          "ts": 1786636800000,
+          "phase": "range"
+        },
+        {
+          "ts": 1786723200000,
+          "phase": "range"
+        },
+        {
+          "ts": 1786809600000,
+          "phase": "range"
+        },
+        {
+          "ts": 1786896000000,
+          "phase": "range"
+        },
+        {
+          "ts": 1786982400000,
+          "phase": "range"
+        },
+        {
+          "ts": 1787068800000,
+          "phase": "range"
+        }
+      ]
+    },
+    "sentiment": {
+      "score": 60,
+      "stage": "repair",
+      "pathLabel": "恐慌→犹豫→修复→乐观→狂热（当前：修复）"
+    },
+    "levels": {
+      "support": {
+        "price": 92.79,
+        "basis": "前低",
+        "touches": 1
+      },
+      "resistance": {
+        "price": 112.99,
+        "basis": "前高",
+        "touches": 1
+      },
+      "target": {
+        "price": 137.68,
+        "basis": "箱体量度（88.3 ~ 112.99）"
+      }
+    },
+    "features": [],
+    "drawings": [
+      {
+        "id": "an-box",
+        "kind": "zone",
+        "groupId": "analysis",
+        "points": [
+          {
+            "ts": 1780243200000,
+            "price": 112.99
+          },
+          {
+            "ts": 1787068800000,
+            "price": 88.3
+          }
+        ],
+        "label": "中枢",
+        "style": {
+          "color": "#8b5cf6"
+        },
+        "explain": "近 80 根重叠区间（上沿 112.99 / 下沿 88.3）"
+      },
+      {
+        "id": "an-support",
+        "kind": "hline",
+        "groupId": "analysis",
+        "points": [
+          {
+            "ts": 1787068800000,
+            "price": 92.79
+          }
+        ],
+        "label": "支撑 92.79（前低 · 触碰 1 次）",
+        "style": {
+          "color": "#0fa975"
+        }
+      },
+      {
+        "id": "an-resistance",
+        "kind": "hline",
+        "groupId": "analysis",
+        "points": [
+          {
+            "ts": 1787068800000,
+            "price": 112.99
+          }
+        ],
+        "label": "压力 112.99（前高 · 触碰 1 次）",
+        "style": {
+          "color": "#dc2828"
+        }
+      },
+      {
+        "id": "an-target",
+        "kind": "hline",
+        "groupId": "analysis",
+        "points": [
+          {
+            "ts": 1787068800000,
+            "price": 137.68
+          }
+        ],
+        "label": "量度目标 137.68（箱体量度（88.3 ~ 112.99））",
+        "style": {
+          "color": "#f59e0b",
+          "dash": true
+        }
+      },
+      {
+        "id": "an-low",
+        "kind": "textLabel",
+        "groupId": "analysis",
+        "points": [
+          {
+            "ts": 1786032000000,
+            "price": 92.79
+          }
+        ],
+        "label": "探底 92.79",
+        "style": {
+          "color": "#0ea5e9"
+        },
+        "explain": "当前阶段：震荡"
+      }
+    ],
+    "notes": [
+      "阶段判定为规则化统计口径，仅供复盘研究",
+      "关键位为摆动点聚类口径（±1.2% 容差 / 同类最短间隔 8 根）",
+      "市场情绪为多因子加权（0-100），不构成涨跌预测"
+    ]
+  }
+}

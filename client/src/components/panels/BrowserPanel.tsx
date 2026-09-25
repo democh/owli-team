@@ -258,7 +258,7 @@ export function BrowserPanel(): React.JSX.Element {
                 void useBrowserStore
                   .getState()
                   .openExternal(externalUrl.trim())
-                  .then(() => toast('已交给系统浏览器打开'))
+                  .then(() => toast.success('已交给系统浏览器打开'))
                   .catch((err: Error) => toast.error(err.message))
               }
             >

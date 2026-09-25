@@ -125,6 +125,15 @@ describe('证据等级徽标（lib/evidence）', () => {
     expect(gradeOf('')).toBeUndefined()
     expect(EVIDENCE_LABEL.official).toBe('官方')
   })
+
+  it('M84 统计级：含 p= / n= / CI[ 的证据行升级且优先级最高（含官方词亦归统计）', () => {
+    expect(gradeOf('- 依据 | fin_stats significance p=0.03 n=45 CI[1.2%, 4.8%]')).toBe('statistical')
+    expect(gradeOf('回测 p<0.05，样本 45')).toBe('statistical')
+    expect(gradeOf('官方数据，p=0.02（统计局）')).toBe('statistical')
+    expect(EVIDENCE_LABEL.statistical).toBe('统计')
+    // 无统计要素时保持原有分级
+    expect(gradeOf('官方通报（统计局）')).toBe('official')
+  })
 })
 
 // ---------- lib/pk 扩展 ----------
@@ -293,27 +302,7 @@ function negoCtx(over: Partial<SceneCtx> = {}): SceneCtx {
   })
 }
 
-describe('arena 集成：A1 计分板 / A2 交锋看板 / A4 回合轴 / A5 参与条 / A6 结论条', () => {
-  it('A1 交锋计量板：读数与交锋点击 → 定位未响应缺陷消息', () => {
-    seed([
-      agentMsg('m1', 'negative', FINDINGS_L, { turnIndex: 0 }),
-      agentMsg('m2', 'affirmative', '「缺陷 2」回应：口径已统一。', { turnIndex: 0 }),
-    ])
-    const focus = vi.fn()
-    const { container } = render(wrap(<ArenaStage><div>流</div></ArenaStage>, makeCtx({ focus })))
-    const sb = container.querySelector('.scene-scoreboard')!
-    const metrics = sb.querySelectorAll('.scene-sb-metrics')
-    expect(metrics).toHaveLength(2)
-    expect(metrics[0]!.textContent).toContain('发言')
-    expect(metrics[0]!.textContent).toContain('交锋')
-    // 右席（反方）提缺 2 条、已响应 1 条；交锋读数点击 → 定位首个未响应缺陷消息（m1）
-    const crosses = sb.querySelectorAll('.scene-sb-cross')
-    expect(metrics[0]!.querySelector('.scene-sb-cross')?.textContent).toContain('0')
-    expect(crosses[1]!.textContent).toContain('2')
-    fireEvent.click(crosses[1]!)
-    expect(focus).toHaveBeenCalledWith('m1')
-  })
-
+describe('arena 集成：A2 交锋看板 / A5 参与条 / A6 结论条', () => {
   it('A2 交锋看板：未响应优先 + 催回应回填；A5 参与条：叫停 / 加一轮引用未决点', () => {
     seed([
       agentMsg('m1', 'judge', RULING1, { turnIndex: 0 }),
@@ -342,6 +331,9 @@ describe('arena 集成：A1 计分板 / A2 交锋看板 / A4 回合轴 / A5 参�
     expect(insert).toHaveBeenCalledWith(TEMPLATES.extraRound('明断', '规模化后的边际成本是否成立'))
     fireEvent.click(actions.querySelector('[data-aa="lean-left"]')!)
     expect(insert).toHaveBeenCalledWith(TEMPLATES.leanSide('明断', '立言'))
+    // M84：互换立场（两队对调重赛指令；裁决长记录同证据异结论）
+    fireEvent.click(actions.querySelector('[data-aa="swap"]')!)
+    expect(insert).toHaveBeenCalledWith(TEMPLATES.swapSides('明断'))
   })
 
   it('A4 回合轴判定色点 + 轮次读数；A6 结论条：定位与关闭记忆', () => {
@@ -351,8 +343,7 @@ describe('arena 集成：A1 计分板 / A2 交锋看板 / A4 回合轴 / A5 参�
     ])
     const focus = vi.fn()
     const { container } = render(wrap(<ArenaStage><div>流</div></ArenaStage>, makeCtx({ focus })))
-    expect(container.querySelector('.scene-rt-mark.is-long')).not.toBeNull()
-    expect(container.querySelector('.scene-sb-note')?.textContent).toBe('共 1 轮')
+    expect(container.querySelector('[data-verdict-flow] [data-status="long"]')).not.toBeNull()
     const bar = container.querySelector('[data-conclusion]')!
     expect(bar.textContent).toContain('立言 胜')
     expect(bar.textContent).toContain('置信度 高')
@@ -362,6 +353,43 @@ describe('arena 集成：A1 计分板 / A2 交锋看板 / A4 回合轴 / A5 参�
     fireEvent.click(container.querySelector('.scene-conclusion-close')!)
     expect(container.querySelector('[data-conclusion]')).toBeNull()
     expect(sessionStorage.getItem('ma:sc:concl:sa')).toBe('true')
+  })
+
+  it('M85 洞察区收敛：无未响应时交锋看板默认收起（可展开）；论断树默认收起（可展开）', () => {
+    // 全部挑刺已回应 → 交锋看板默认收起；带 claim 消息 → 论断树默认收起
+    seed([
+      agentMsg('m1', 'judge', RULING1, { turnIndex: 0 }),
+      agentMsg('m2', 'negative', FINDINGS_L, { turnIndex: 0 }),
+      agentMsg('m3', 'affirmative', '「缺陷 1」回应：口径已补。', { turnIndex: 0 }),
+      agentMsg('m4', 'affirmative', '「缺陷 2」回应：已统一。', { turnIndex: 0 }),
+      agentMsg('m5', 'affirmative', VIEW_FA, { turnIndex: 0 }),
+    ])
+    const { container } = render(wrap(<ArenaStage><div>流</div></ArenaStage>, makeCtx()))
+    const cf = container.querySelector('[data-insight="cross-fire"]')!
+    expect(cf).not.toBeNull()
+    expect(cf.querySelector('.scene-insight-body')).toBeNull()
+    expect(cf.querySelector('[data-insight-toggle="cross-fire"]')!.getAttribute('aria-expanded')).toBe('false')
+    const claims = container.querySelector('[data-insight="claims"]')!
+    expect(claims).not.toBeNull()
+    expect(claims.querySelector('.scene-claim-tree')).toBeNull()
+    // 展开 → body 出现
+    fireEvent.click(claims.querySelector('[data-insight-toggle="claims"]')!)
+    expect(claims.querySelector('.scene-claim-tree')).not.toBeNull()
+    fireEvent.click(cf.querySelector('[data-insight-toggle="cross-fire"]')!)
+    expect(cf.querySelector('.scene-insight-body')).not.toBeNull()
+  })
+
+  it('M85 洞察区收敛：有未响应挑刺时交锋看板默认展开（计数标注未响应数）', () => {
+    seed([
+      agentMsg('m1', 'judge', RULING1, { turnIndex: 0 }),
+      agentMsg('m2', 'negative', FINDINGS_L, { turnIndex: 0 }),
+      agentMsg('m3', 'affirmative', '「缺陷 2」回应：口径已统一。', { turnIndex: 0 }),
+    ])
+    const { container } = render(wrap(<ArenaStage><div>流</div></ArenaStage>, makeCtx()))
+    const cf = container.querySelector('[data-insight="cross-fire"]')!
+    expect(cf.querySelector('.scene-insight-body')).not.toBeNull()
+    expect(cf.querySelector('[data-insight-toggle="cross-fire"]')!.getAttribute('aria-expanded')).toBe('true')
+    expect(cf.textContent).toContain('1 条未响应')
   })
 
   it('G1/G2 报价图与让步刻度：点位定位 / 走廊 / 基准线 / 警示回填', () => {

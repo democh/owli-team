@@ -390,13 +390,13 @@ export function SessionList({ onSelect }: SessionListProps): React.JSX.Element {
                     />
                   )}
                   {count > 0 && (
-                    <Badge
-                      variant="destructive"
-                      className="badge-pop h-4 min-w-4 justify-center px-1 text-[10px]"
+                    <span
+                      className="badge-pop inline-flex h-[18px] min-w-[18px] shrink-0 items-center justify-center rounded-full bg-destructive px-1 text-[10px] font-bold leading-none tabular-nums text-destructive-foreground shadow-sm"
+                      title={`${count} 条未读`}
                       aria-label={`${count} 条未读`}
                     >
                       {count > 99 ? '99+' : count}
-                    </Badge>
+                    </span>
                   )}
                   <span className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
                     {s.kind === 'direct' || s.kind === 'group' ? (

@@ -83,6 +83,7 @@ import { MCP_TOPIC, type NotifyType } from '@multi-agent/shared'
 import { SecretVault } from './connections/crypto.js'
 import { ConnectionStore } from './store/connections.js'
 import { AuditStore } from './store/audit.js'
+import { configureEgress } from './net/egress.js'
 import { DbConnectionManager } from './connections/db/manager.js'
 import { SshConnectionManager } from './connections/ssh/manager.js'
 import { EmbeddingManager } from './embeddings/manager.js'
@@ -229,6 +230,8 @@ if (vault.source === 'ephemeral') {
   log.warn('连接凭据使用临时密钥（密钥文件不可写）：重启后已保存的连接凭据不可解密，需重新保存')
 }
 const connectionStore = new ConnectionStore(db, vault)
+// M82：联网出口层（默认 direct：未配置时全链路行为与历史一致）
+const egress = configureEgress({ cfg, connections: connectionStore })
 const auditStore = new AuditStore(db)
 // M57 P3：BYOK 包装（按会话属主解析用户 LLM 凭据；无凭据 / Mock 直通系统 provider；凭据变更 invalidate 重建）
 const llmCredentials = new LlmCredentialStore(db, vault)
@@ -648,6 +651,8 @@ app.use(
     audit: auditStore,
     db: dbManager,
     ssh: sshManager,
+    // M82：联网出口（出口代理测试 / 连接与设置变更失效）
+    egress,
     // M25：向量记忆（管理 / 统计 / 重建 / 语义搜索）
     memories,
     browser: browserRuntime,
@@ -752,6 +757,8 @@ const finishShutdown = (): void => {
     await browserRuntime.shutdown().catch(() => undefined)
     await sshManager.closeAll().catch(() => undefined)
     await dbManager.closeAll().catch(() => undefined)
+    // M82：关闭出口连接池（未配置出口时为空操作）
+    await egress.invalidate().catch(() => undefined)
     // M27：注销 MCP 工具并关闭全部连接（含 stdio 子进程回收）
     mcpJson.stop()
     await mcpManager.stopAll().catch(() => undefined)

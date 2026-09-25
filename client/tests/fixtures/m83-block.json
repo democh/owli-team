@@ -1,0 +1,12 @@
+{
+  "src": "charts/sh600519-day-202609250200.json",
+  "indicators": [
+    "MA",
+    "VOL"
+  ],
+  "render": {
+    "mainIndicator": "MA",
+    "subIndicator": "VOL",
+    "showPhases": true
+  }
+}

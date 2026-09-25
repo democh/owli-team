@@ -14,12 +14,13 @@ import type { AuthUser } from '../auth/service.js'
 import type { ApiDeps } from './index.js'
 import { analyzeSql, isReadOnlyStatement } from '../connections/db/guard.js'
 import { detectSshLocalPreset } from '../connections/ssh/local-preset.js'
+import { parseEgressTarget } from '../net/egress.js'
 import { apiKeyOf, normalizeLlmConfig } from '../llm/provider-router.js'
 import { probeLlmProvider } from '../llm/probe.js'
 
 const ConnectionInputSchema = z.object({
   name: z.string().min(1).max(60),
-  kind: z.enum(['postgres', 'mysql', 'sqlite', 'ssh', 'chrome', 'embedding', 'media', 'llm']),
+  kind: z.enum(['postgres', 'mysql', 'sqlite', 'ssh', 'chrome', 'embedding', 'media', 'llm', 'proxy']),
   config: z.record(z.unknown()).default({}),
   secret: z.record(z.unknown()).nullable().optional(),
   enabled: z.boolean().optional(),
@@ -179,7 +180,12 @@ export function createConnectionsRouter(deps: ApiDeps): Router {
         res.status(401).json({ error: '未登录或登录已失效：请登录后重试' })
         return
       }
-      if (parsed.data.kind === 'embedding' || parsed.data.kind === 'media' || parsed.data.kind === 'llm') {
+      if (
+        parsed.data.kind === 'embedding' ||
+        parsed.data.kind === 'media' ||
+        parsed.data.kind === 'llm' ||
+        parsed.data.kind === 'proxy'
+      ) {
         res.status(403).json({ error: `「${parsed.data.kind}」连接为全局配置：请联系管理员在管理控制台设置` })
         return
       }
@@ -193,6 +199,14 @@ export function createConnectionsRouter(deps: ApiDeps): Router {
       const baseUrl = typeof parsed.data.config.baseUrl === 'string' ? parsed.data.config.baseUrl.trim() : ''
       if (!/^https?:\/\//i.test(baseUrl)) {
         res.status(400).json({ error: '模型服务需要合法的接入地址（http:// 或 https:// 开头）' })
+        return
+      }
+    }
+    // M82：出口代理连接——配置合法性前置校验（与运行期共用 parseEgressTarget；账号口令在 secret）
+    if (parsed.data.kind === 'proxy') {
+      const check = parseEgressTarget(parsed.data.config, parsed.data.secret ?? undefined)
+      if (!check.ok) {
+        res.status(400).json({ error: check.error })
         return
       }
     }
@@ -239,6 +253,16 @@ export function createConnectionsRouter(deps: ApiDeps): Router {
           }
         }
       }
+      // M82：出口代理连接——合并 config / secret 后校验（未带 secret = 沿用现有凭据）
+      if (existing?.kind === 'proxy' && parsed.data.config) {
+        const mergedConfig = { ...existing.config, ...parsed.data.config }
+        const secret = parsed.data.secret === null ? undefined : (parsed.data.secret ?? deps.connections.getSecret(existing.id))
+        const check = parseEgressTarget(mergedConfig, secret)
+        if (!check.ok) {
+          res.status(400).json({ error: check.error })
+          return
+        }
+      }
       // M57 P3：成员不可改 system 连接（已被 ownerOrAdmin 拦截）；对自有 personal 忽略 memberUse 字段
       const patch = isAdminReq(req) ? parsed.data : { ...parsed.data, memberUse: undefined }
       try {
@@ -247,9 +271,10 @@ export function createConnectionsRouter(deps: ApiDeps): Router {
           res.status(404).json({ error: '连接不存在' })
           return
         }
-        // 配置 / 凭据变化 → 使缓存句柄失效（下次执行按新配置重建；ssh / embedding 同效）
+        // 配置 / 凭据变化 → 使缓存句柄失效（下次执行按新配置重建；ssh / embedding / 出口代理同效）
         await Promise.all([deps.db.invalidate(connection.id), deps.ssh.invalidate(connection.id)])
         deps.embeddings.invalidate(connection.id)
+        await deps.egress?.invalidate(connection.id)
         deps.audit.record({
           actor: 'user',
           ...actorOf(req),
@@ -277,6 +302,7 @@ export function createConnectionsRouter(deps: ApiDeps): Router {
       await deps.db.invalidate(existing.id)
       await deps.ssh.invalidate(existing.id)
       deps.embeddings.invalidate(existing.id)
+      await deps.egress?.invalidate(existing.id)
       deps.connections.remove(existing.id)
       deps.audit.record({
         actor: 'user',
@@ -413,6 +439,32 @@ export function createConnectionsRouter(deps: ApiDeps): Router {
         })
         res.json({
           result: result.ok ? { ok: true, latencyMs: result.latencyMs, detail: result.detail } : { ok: false, error: result.error },
+          connection: deps.connections.get(connection.id),
+        })
+        return
+      }
+      // M82：出口代理测试 = 出口探测（经该绑定请求 egressProbeUrl，回显出口 IP / 延迟）
+      if (connection.kind === 'proxy') {
+        if (!deps.egress) {
+          res.json({ result: { ok: false, error: '出口探测未装配' } })
+          return
+        }
+        const result = await deps.egress.probe({ connectionId: connection.id })
+        deps.connections.setStatus(connection.id, result.ok ? 'ok' : 'error', result.ok ? undefined : result.error)
+        deps.audit.record({
+          actor: 'user',
+          ...actorOf(req),
+          action: 'connection.test',
+          resourceType: 'connection',
+          resourceId: connection.id,
+          ok: result.ok,
+          error: result.ok ? undefined : result.error,
+          detail: result.ok ? { exitIp: result.exitIp, latencyMs: result.latencyMs } : undefined,
+        })
+        res.json({
+          result: result.ok
+            ? { ok: true, latencyMs: result.latencyMs, detail: result.detail ?? '出口可用' }
+            : { ok: false, error: result.error },
           connection: deps.connections.get(connection.id),
         })
         return
@@ -609,6 +661,11 @@ export function createConnectionsRouter(deps: ApiDeps): Router {
     // 多 Provider：模型服务全局共享（不参与会话绑定；在「设置 → 模型与生成」中配置）
     if (connection.kind === 'llm') {
       res.status(400).json({ error: '模型服务连接不参与会话绑定（在「设置 → 模型与生成」中配置）' })
+      return
+    }
+    // M82：出口代理全局共享（不参与会话绑定；在「设置 → 联网与出网」中启用）
+    if (connection.kind === 'proxy') {
+      res.status(400).json({ error: '出口代理不参与会话绑定（在「设置 → 联网与出网」中启用）' })
       return
     }
     // M57：成员仅可绑定 member_use=1 的 system 连接（admin 不限）；M57 P3：本人 personal 连接亦可

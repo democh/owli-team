@@ -2,9 +2,6 @@
  * M52-A：场景元件库汇总（§7.6 12 件）——注册表与面板按名引用。
  * M63（批一）：交锋看板 / 报价折线与让步刻度 / 终局结论条 / 对抗参与条 / 四路观点卡 / 博弈走子板。
  */
-export { RoundTrack } from './RoundTrack'
-export { Scoreboard } from './Scoreboard'
-export type { ScoreSide } from './Scoreboard'
 export { SeatCard } from './SeatCard'
 export { SeatRing } from './SeatRing'
 export { MomentumBar } from './MomentumBar'

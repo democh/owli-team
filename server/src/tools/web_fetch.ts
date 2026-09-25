@@ -3,9 +3,11 @@
  * - 不设访问限制：任意域名与重定向目标均可抓取（无白名单；ADR 0136）；
  * - 只读 → 可并行 + 幂等缓存；
  * - 反爬（tools/http.ts 统一实现）：浏览器头 / 域名限速 / 退避重试 / 超时 /
- *   风控页识别与冷却 / GBK 等字符集解码 / 流式体积上限。
+ *   风控页识别与冷却 / GBK 等字符集解码 / 流式体积上限；
+ * - M82：经联网出口层发出（search 通道；代理 / 回退直连在 summary 标注）。
  */
 import { z } from 'zod'
+import { egressNoteOf } from '../net/egress.js'
 import { AntiBotError, antiBotFetch } from './http.js'
 import { toolAbortError, type ToolRuntime, type ToolResult } from './registry.js'
 import { htmlToText } from './text.js'
@@ -33,6 +35,9 @@ function antiBotMessage(err: AntiBotError): string {
         : '响应过大（超过 512KB 上限），已拒绝'
     case 'network':
       return `抓取出错：${err.message}`
+    case 'egress':
+      // M82：出口代理不可用（严格模式）；回退直连在成功路径标注
+      return `出口请求失败：${err.message}（可在设置 → 联网与出网中检查出口配置或切换回退策略）`
     case 'status':
       return `抓取失败：HTTP ${err.status ?? '未知'}`
   }
@@ -71,10 +76,13 @@ export const webFetchTool = {
         timeoutMs: ctx.httpTimeoutMs,
         minIntervalMs: ctx.httpMinIntervalMs,
         maxBytes: MAX_BYTES,
+        egressChannel: 'search',
         // M57：Cookie 罐按触发者分桶（多用户同站点会话不串号）
         cookieKey: ctx.triggerUserId ?? ctx.userId,
         uaPoolExtra: ctx.httpUaPoolExtra,
       })
+      /** M82：出口标注（经代理 / 回退直连 / 降级中） */
+      const note = egressNoteOf(res.egress)
       // 任意重定向目标均可返回（无白名单；仅报告最终 host）
       const finalHost = new URL(res.finalUrl).hostname
       if (!res.ok) {
@@ -86,12 +94,12 @@ export const webFetchTool = {
       let text = res.text
       if (contentType.includes('html') || /^\s*<(!doctype|html)/i.test(text)) text = htmlToText(text)
       if (text.trim().length === 0) {
-        return { ok: true, summary: `已抓取 ${finalHost}（内容为空）`, detail: '（页面无可读文本内容）' }
+        return { ok: true, summary: `已抓取 ${finalHost}（内容为空）${note}`, detail: '（页面无可读文本内容）' }
       }
       const truncated = text.length > MAX_CHARS
       return {
         ok: true,
-        summary: `已抓取 ${finalHost}（${text.length} 字符${truncated ? '，已截断' : ''}）`,
+        summary: `已抓取 ${finalHost}（${text.length} 字符${truncated ? '，已截断' : ''}）${note}`,
         detail: truncated ? `${text.slice(0, MAX_CHARS)}\n…（内容超长已截断）` : text,
       }
     } catch (err) {

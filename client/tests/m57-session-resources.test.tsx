@@ -126,7 +126,7 @@ describe('M57 P3 SessionResourcesDialog', () => {
 
     await userEvent.click(screen.getByRole('button', { name: /绑定/ }))
     await waitFor(() => expect(calls.some((c) => c === 'POST /api/sessions/s1/connections')).toBe(true))
-    expect(toast).toHaveBeenCalledWith(expect.stringContaining('已绑定「候选库」到当前会话'))
+    expect(toast.success).toHaveBeenCalledWith(expect.stringContaining('已绑定「候选库」到当前会话'))
   })
 
   it('MCP 区：切页签后绑定 / 解绑调用对应路由', async () => {

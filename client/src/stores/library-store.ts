@@ -127,7 +127,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
         toast.error('画布加载失败，稍后再试')
         return false
       }
-      toast('已放入画布（素材副本已存入会话工作区）')
+      toast.success('已放入画布（素材副本已存入会话工作区）')
       return true
     } catch (err) {
       toast.error((err as Error).message)

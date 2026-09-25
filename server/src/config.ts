@@ -12,6 +12,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { z } from 'zod'
+import { DEFAULT_EGRESS_NO_PROXY } from './net/egress.js'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 /** 仓库根目录（dev: server/src/../.. ，build: server/dist/../..） */
@@ -73,6 +74,24 @@ function envEnum<T extends string>(key: string, allowed: readonly T[], def: T): 
 
 function resolveDir(key: string, def: string): string {
   return path.resolve(ROOT_DIR, envStr(key, def))
+}
+
+/** M82：出口通道列表解析（未知通道丢弃 + 告警；空 = 内置默认 search/finance/browser） */
+function readEgressChannels(raw: string[]): Array<'search' | 'finance' | 'browser' | 'mcp' | 'llm'> {
+  const known = ['search', 'finance', 'browser', 'mcp', 'llm'] as const
+  type Channel = (typeof known)[number]
+  if (raw.length === 0) return ['search', 'finance', 'browser']
+  const out: Channel[] = []
+  for (const item of raw) {
+    const id = item.trim().toLowerCase()
+    if ((known as readonly string[]).includes(id)) {
+      const channel = id as Channel
+      if (!out.includes(channel)) out.push(channel)
+    } else {
+      warn(`EGRESS_CHANNELS 含未知通道「${item}」，已忽略（可选 ${known.join('/')}）`)
+    }
+  }
+  return out.length > 0 ? out : ['search', 'finance', 'browser']
 }
 
 /** 模型单价（每 1K token，美元）；用于成本估算（估算量级，可用 LLM_PRICING_JSON 覆盖） */
@@ -170,6 +189,23 @@ export interface AppConfig {
   /** 联网工具单次请求超时（毫秒） */
   httpTimeoutMs: number
   artifactMaxBytes: number
+
+  // ---------- M82：联网出口（出网代理 / 隧道） ----------
+
+  /** 全局出口形态：direct=直连（默认，零回归）/ proxy=经出口代理（连接中心 kind='proxy' 或 EGRESS_PROXY_URL） */
+  egressMode: 'direct' | 'proxy'
+  /** 出口连接 id（连接中心 kind='proxy'；空 = 用 EGRESS_PROXY_URL 后备） */
+  egressConnectionId: string
+  /** env 后备出口 URL（http(s)://user:pass@host:port / socks5://…；仅 env，不入 settings——含凭据） */
+  egressProxyUrl: string
+  /** 跟随全局出口的通道（未列出的通道恒直连；默认 search/finance/browser） */
+  egressChannels: Array<'search' | 'finance' | 'browser' | 'mcp' | 'llm'>
+  /** 直连旁路（host 后缀 / IP / IPv4 CIDR；回环恒直连与配置无关） */
+  egressNoProxy: string[]
+  /** 出口失败回退策略：direct=回退直连并标注（可用性优先）/ fail=严格失败（合规优先，绝不泄漏真实 IP） */
+  egressFallback: 'direct' | 'fail'
+  /** 出口探测地址（回显出口 IP；空 = 不可探测） */
+  egressProbeUrl: string
 
   approvalMode: 'off' | 'risky' | 'all'
   approvalTimeoutMs: number
@@ -388,6 +424,13 @@ const ConfigSchema = z.object({
   mcpConfigPollMs: z.number().int().min(0).max(3_600_000),
   financePyTimeoutMs: z.number().int().min(1_000).max(600_000),
   financeMinIntervalMs: z.number().int().min(0).max(60_000),
+  egressChannels: z.array(z.enum(['search', 'finance', 'browser', 'mcp', 'llm'])).max(5),
+  egressNoProxy: z.array(z.string().max(200)).max(200),
+  egressFallback: z.enum(['direct', 'fail']),
+  egressProbeUrl: z.string().max(500),
+  egressMode: z.enum(['direct', 'proxy']),
+  egressConnectionId: z.string().max(100),
+  egressProxyUrl: z.string().max(2_000),
   financeQuoteRefreshMs: z.number().int().min(2_000).max(600_000),
   financeGameMaxPaths: z.number().int().min(1).max(10_000),
   financeGameSeed: z.number().int().min(0),
@@ -495,6 +538,15 @@ export function loadConfig(): AppConfig {
     httpMinIntervalMs: envNum('HTTP_MIN_INTERVAL_MS', 1_200, 0, 60_000),
     httpTimeoutMs: envNum('HTTP_TIMEOUT_MS', 15_000, 1_000, 120_000),
     artifactMaxBytes: envNum('ARTIFACT_MAX_BYTES', 512 * 1024, 1_024),
+
+    // M82：联网出口（默认 direct；未配置时全链路行为与历史一致）
+    egressMode: envEnum('EGRESS_MODE', ['direct', 'proxy'] as const, 'direct'),
+    egressConnectionId: envStr('EGRESS_CONNECTION_ID', ''),
+    egressProxyUrl: envStr('EGRESS_PROXY_URL', ''),
+    egressChannels: readEgressChannels(envList('EGRESS_CHANNELS')),
+    egressNoProxy: envList('EGRESS_NO_PROXY', [...DEFAULT_EGRESS_NO_PROXY]),
+    egressFallback: envEnum('EGRESS_FALLBACK', ['direct', 'fail'] as const, 'direct'),
+    egressProbeUrl: envStr('EGRESS_PROBE_URL', 'https://myip.ipip.net'),
 
     approvalMode: envEnum('APPROVAL_MODE', ['off', 'risky', 'all'] as const, 'risky'),
     approvalTimeoutMs: envNum('APPROVAL_TIMEOUT_MS', 600_000, 1_000),
@@ -640,6 +692,11 @@ export function describeConfig(cfg: AppConfig): string[] {
     `审批模式: ${cfg.approvalMode}${cfg.approvalTools.length ? `（强制审批：${cfg.approvalTools.join('、')}）` : ''}`,
     `数据目录: ${cfg.dataDir}（DB: ${cfg.dbFile}）`,
     `连接中心: 密钥文件 ${cfg.connectionSecretFile}；数据库查询上限 ${cfg.dbQueryMaxRows} 行 / ${cfg.dbQueryTimeoutMs}ms`,
+    `联网出口: ${
+      cfg.egressMode === 'proxy'
+        ? `代理（绑定 ${cfg.egressConnectionId || (cfg.egressProxyUrl ? 'EGRESS_PROXY_URL 后备' : '未配置！')}；通道 ${cfg.egressChannels.join('/') || '无'}；旁路 ${cfg.egressNoProxy.length} 条；回退 ${cfg.egressFallback}）`
+        : '直连'
+    }`,
     `浏览器: 默认 ${cfg.browserDefaultBackend}${cfg.browserExecutable ? `（可执行 ${cfg.browserExecutable}）` : '（自动发现）'}；默认${cfg.browserHeadless ? '无头' : '打开窗口'}；帧率 ${cfg.browserFrameMaxFps}fps；实例上限 单用户 ${cfg.browserMaxPerUser || '不限'} / 全局 ${cfg.browserMaxTotal || '不限'}；空闲回收 ${cfg.browserIdleCloseMs > 0 ? `${Math.round(cfg.browserIdleCloseMs / 60_000)} 分钟` : '关闭'}`,
     `向量记忆: 召回${cfg.memoryRecallEnabled ? `开启（topK=${cfg.memoryRecallTopK}，阈值 ${cfg.memoryRecallMinScore}，预算 ${cfg.memoryRecallBudgetTokens}t）` : '关闭'}；沉淀 ${cfg.memoryDigestMode}；嵌入 ${
       cfg.embeddingConnectionId

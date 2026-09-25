@@ -107,7 +107,7 @@ export function PersonalMcpCard(): React.JSX.Element {
     setBusy(true)
     try {
       await apiPost(`/api/mcp/servers/${server.id}/reconnect`, {})
-      toast(`已重连「${server.displayName ?? server.name}」`)
+      toast.success(`已重连「${server.displayName ?? server.name}」`)
       await refresh()
     } catch (err) {
       toast.error((err as Error).message)

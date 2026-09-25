@@ -225,7 +225,7 @@ export function MemoryPanel(): React.JSX.Element {
       await apiPatch<{ item: MemoryItem }>(`/api/sessions/${currentId}/memory/${id}`, { content })
       setItems((prev) => prev.map((m) => (m.id === id ? { ...m, content } : m)))
       setEditingId(null)
-      toast('已更新')
+      toast.success('已更新')
     } catch (err) {
       toast.error((err as Error).message)
     } finally {
@@ -237,7 +237,7 @@ export function MemoryPanel(): React.JSX.Element {
     try {
       await apiDelete(`/api/sessions/${currentId}/memory/${id}`)
       setItems((prev) => prev.filter((m) => m.id !== id))
-      toast('已删除记忆')
+      toast.success('已删除记忆')
     } catch (err) {
       toast.error((err as Error).message)
     }
@@ -249,7 +249,7 @@ export function MemoryPanel(): React.JSX.Element {
   const elevateItem = async (item: MemoryItem): Promise<void> => {
     try {
       await apiPost(`/api/memories/${item.id}/elevate`, {})
-      toast('已提升为跨域共享（全局记忆）')
+      toast.success('已提升为跨域共享（全局记忆）')
       void load()
     } catch (err) {
       toast.error((err as Error).message)
@@ -269,7 +269,7 @@ export function MemoryPanel(): React.JSX.Element {
   const supersede = async (oldId: string, newId: string): Promise<void> => {
     try {
       await apiPost(`/api/memories/${oldId}/supersede`, { newId })
-      toast('已标记取代（旧条目不再参与召回）')
+      toast.success('已标记取代（旧条目不再参与召回）')
       setSupersedeFor(null)
       await load()
     } catch (err) {
@@ -284,7 +284,7 @@ export function MemoryPanel(): React.JSX.Element {
         '/api/memories/reindex',
         {},
       )
-      toast(`已重建：${res.result.model ?? '-'} ${res.result.dim ?? '-'}d，补账 ${res.result.requeued} 条`)
+      toast.success(`已重建：${res.result.model ?? '-'} ${res.result.dim ?? '-'}d，补账 ${res.result.requeued} 条`)
       await load()
     } catch (err) {
       toast.error((err as Error).message)

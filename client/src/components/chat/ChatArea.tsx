@@ -10,7 +10,7 @@
  */
 import * as React from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
-import { ArrowDown, Bot, Eye, Hourglass, LayoutList, LayoutPanelLeft, Loader2, Plug, Rocket, RotateCcw, Users } from 'lucide-react'
+import { ArrowDown, Bot, Eye, Hourglass, LayoutList, LayoutPanelLeft, Loader2, Rocket, RotateCcw, Users } from 'lucide-react'
 import { toast } from 'sonner'
 import type { AgentDefinition } from '@multi-agent/shared'
 import { baseAgentId } from '@multi-agent/shared'
@@ -19,7 +19,6 @@ import { apiPatch, apiPost } from '../../lib/api'
 import { cn } from '../../lib/utils'
 import { resolveIcon } from '../../lib/avatar-icons'
 import { deriveRows, type WaveInfo } from '../../lib/chat-rows'
-import { memberViews } from '../../lib/members'
 import { useAgentStore, useGroup } from '../../stores/agent-store'
 import { useRunStore } from '../../stores/run-store'
 import { useSceneStore } from '../../stores/scene-store'
@@ -30,9 +29,10 @@ import { useUiStore } from '../../stores/ui-store'
 import { ShareDialog } from '../sessions/ShareDialog'
 import { OnlineDot } from './OnlineDot'
 import { ChatMembersDialog } from '../sessions/ChatMembersDialog'
-import { SessionResourcesDialog } from '../sessions/SessionResourcesDialog'
 import { AgentAvatar } from '../agents/AgentAvatar'
 import { SceneStage } from '../scene/SceneStage'
+import { MainTabs, PanelToggleButton } from '../layout/MainTabs'
+import { useMediaQuery } from '../../lib/hooks'
 import { WorktreeBar } from '../sessions/WorktreeBar'
 import { Button } from '../ui/button'
 import { AdjournPill } from './AdjournPill'
@@ -41,9 +41,6 @@ import { MessageItem } from './MessageItem'
 import { MessageRail } from './MessageRail'
 import { WaveGroup } from './WaveGroup'
 import { WaveStrip } from './WaveStrip'
-import { WaveScrubber } from './WaveScrubber'
-import { activeWaveIndexOf, waveNodesOf } from '../../lib/wave-replay'
-import { FocusBar } from './FocusBar'
 import { Composer } from './Composer'
 import { ApprovalPanel } from './ApprovalPanel'
 import { PlanReviewCard } from './PlanReviewCard'
@@ -140,7 +137,6 @@ export function ChatArea(): React.JSX.Element {
   const hasMore = useSessionStore((s) => s.hasMore)
   const loadingEarlier = useSessionStore((s) => s.loadingEarlier)
   const loadEarlier = useSessionStore((s) => s.loadEarlier)
-  const totalCount = useSessionStore((s) => s.totalCount)
   const latestRun = useSessionStore((s) => s.latestRun)
   const agents = useAgentStore((s) => s.agents)
   const active = useRunStore((s) => s.active)
@@ -150,6 +146,7 @@ export function ChatArea(): React.JSX.Element {
   const attach = useRunStore((s) => s.attach)
   const setMainTab = useUiStore((s) => s.setMainTab)
   const listMode = useSceneStore((s) => s.listMode)
+  const narrow = useMediaQuery('(max-width: 900px)')
   const toggleListMode = useSceneStore((s) => s.toggleListMode)
   const focusRequest = useUiStore((s) => s.focusRequest)
   const focusMessage = useUiStore((s) => s.focusMessage)
@@ -157,8 +154,6 @@ export function ChatArea(): React.JSX.Element {
   const [resuming, setResuming] = React.useState(false)
   /** M57 P2：会话共享弹窗（头部入口；成员可查看 / 退出，属主可管理） */
   const [shareOpen, setShareOpen] = React.useState(false)
-  /** M57 P3：会话资源弹窗（连接 / MCP 绑定——成员自助面；管理台仍为 admin-only） */
-  const [resourcesOpen, setResourcesOpen] = React.useState(false)
   /** M79-F：群 / 私聊成员弹窗（名单 + 邀请好友 + 群主移出） */
   const [membersOpen, setMembersOpen] = React.useState(false)
 
@@ -188,8 +183,6 @@ export function ChatArea(): React.JSX.Element {
   const isChatKind = session?.kind === 'direct' || session?.kind === 'group'
   const peerEntry = session?.kind === 'direct' ? Object.entries(humanProfiles).find(([id]) => id !== myUserId) : undefined
   const chatMemberCount = session ? session.participantIds.length + Object.keys(humanProfiles).length : 0
-  // M79-AA：纯人聊天判定（与 M79-P/S 同口径：人物会话且编制无 agent）——AI 语义面（资源入口等）随此隐藏
-  const humanOnlyChat = isChatKind && memberViews(agents, session).length === 0
   const routeMode = session?.routeMode ?? 'auto'
   const waitingIds = session?.waitingOn ?? []
   const waitingLabel = React.useMemo(() => {
@@ -347,8 +340,7 @@ export function ChatArea(): React.JSX.Element {
   }, [waveOf])
 
   // M45（R-1）：波次回放条——节点列表（≥2 波呈现）与活跃波次序号
-  const waveNodes = React.useMemo(() => waveNodesOf(waveOf), [waveOf])
-  const activeWaveIdx = React.useMemo(() => activeWaveIndexOf(waveOf, vp.first), [waveOf, vp.first])
+  // （波次回放条已按产品决策移除——2026-09-25：用户确认不需要此入口）
 
   // 流式计数：写入时由 store 增量维护（原实现在此线性扫描全部消息，流式期每 40ms O(n)）
   const anyStreaming = useSessionStore((s) => s.streamingCount > 0)
@@ -373,6 +365,8 @@ export function ChatArea(): React.JSX.Element {
     <div className="flex min-h-0 flex-1 flex-col">
       {/* 会话标题栏 */}
       <div className="flex h-11 shrink-0 items-center gap-2 border-b px-4">
+        {/* M85 头部合并（2026-09-25）：主区页签（对话/画布）并入会话头行左端——顶部三层横条合为一 */}
+        <MainTabs />
         <span className="truncate text-[13px] font-semibold">{session ? session.title : '未选择会话'}</span>
         {session && isChatKind && (
           <span className="flex shrink-0 items-center gap-1.5 text-[11.5px] text-muted-foreground">
@@ -380,11 +374,6 @@ export function ChatArea(): React.JSX.Element {
             <span className="truncate">
               {session.kind === 'group' ? `${chatMemberCount} 人` : (peerEntry?.[1]?.headline ?? '私聊')}
             </span>
-          </span>
-        )}
-        {session && !isChatKind && (
-          <span className="text-[11.5px] text-muted-foreground">
-            {participants.length} 位成员 · {Math.max(messageCount, totalCount)} 条消息
           </span>
         )}
         {sceneGroup?.stage ? (
@@ -425,19 +414,6 @@ export function ChatArea(): React.JSX.Element {
             {myRole === 'owner' ? '共享' : myRole === 'editor' ? '已共享 · 可协作' : '已共享 · 只读'}
           </button>
         ) : null}
-        {/* M57 P3：资源入口（连接 / MCP 绑定——成员自助；viewer 只读查看）；M79-F：私聊隐藏（无 agent 资源语义）；
-            M79-AA：纯人群聊（无 agent 编制）同口径隐藏——资源绑定服务于 Agent 工具，与 M79-P/S 纯人聊天口径一致 */}
-        {session && session.kind !== 'direct' && !humanOnlyChat && (
-          <button
-            type="button"
-            title="会话资源：连接 / MCP 绑定（团队可用资源与我的个人资源）"
-            className="flex shrink-0 items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] text-muted-foreground transition-colors hover:border-primary/30 hover:text-primary"
-            onClick={() => setResourcesOpen(true)}
-          >
-            <Plug className="size-3.5" />
-            资源
-          </button>
-        )}
         {/* M79-E：持球徽章（被点名的成员待回复；任何人回复即清除） */}
         {session && waitingIds.length > 0 && (
           <span
@@ -471,6 +447,8 @@ export function ChatArea(): React.JSX.Element {
         )}
         {/* M52-G：标题栏头像组已移除（纯装饰且与输入条成员条 / 场景席位重复）——成员展示收口到
             输入条成员条（无席位载体时）与场景席位（arena / roundtable） */}
+        {/* M85 头部合并：主区面板钮（右栏显隐）随主区头行合入本行右端（纯人聊天不渲染） */}
+        {!narrow && session && !isChatKind ? <PanelToggleButton side="right" className="ml-auto -mr-2" /> : null}
       </div>
 
       {/* M6：worktree / 直连仓库面板（sandbox 会话不渲染） */}
@@ -664,17 +642,21 @@ export function ChatArea(): React.JSX.Element {
           )}
           <BottomFollower containerRef={containerRef} atBottomRef={atBottomRef} pinnedTopRef={pinnedTopRef} />
 
-          {/* M12：上滑后回到最新（带新消息计数）；贴右下避免遮挡卡片底部操作区 */}
-          {!atBottom && (
-            <div className="pointer-events-none sticky bottom-3 z-20 -mt-11 flex justify-end pr-2">
+          {/* M85 重设计（2026-09-25）：仅「有未读新消息」时浮现纯图标钮（无文字、不再常显）——
+              上滑纯浏览历史时保持界面安静；未读数以小角标承载（aria/title 保留完整语义） */}
+          {!atBottom && missed > 0 && (
+            <div className="pointer-events-none sticky bottom-2 z-20 -mt-10 flex justify-end pr-2">
               <button
                 type="button"
                 onClick={jumpToBottom}
-                className="pointer-events-auto flex animate-fade-in items-center gap-1.5 rounded-full border bg-card/95 py-1.5 pl-2.5 pr-3 text-[11.5px] shadow-lg shadow-slate-900/10 backdrop-blur transition-colors hover:border-primary/40 hover:text-primary"
-                title="跳到最新消息"
+                className="pointer-events-auto relative flex size-8 animate-fade-in items-center justify-center rounded-full border bg-card/95 shadow-lg shadow-slate-900/10 backdrop-blur transition-colors hover:border-primary/40 hover:text-primary"
+                title={`回到最新（${missed} 条新消息）`}
+                aria-label={`回到最新，${missed} 条新消息`}
               >
-                <ArrowDown className="size-3.5 shrink-0 text-primary" />
-                {missed > 0 ? `${missed} 条新消息` : '回到最新'}
+                <ArrowDown className="size-4 text-primary" />
+                <span className="absolute -right-1 -top-1 flex h-[15px] min-w-[15px] items-center justify-center rounded-full bg-primary px-0.5 text-[9px] font-semibold leading-none tabular-nums text-primary-foreground">
+                  {missed > 99 ? '99+' : missed}
+                </span>
               </button>
             </div>
           )}
@@ -685,8 +667,7 @@ export function ChatArea(): React.JSX.Element {
           <WaveStrip info={currentWave} total={waveTotal} group={sceneGroup} onJump={() => focusMessage(currentWave.memberIds[0]!)} />
         )}
 
-        {/* M44（AF-1）：核心交付锚定条（左上角常驻；悬浮展开版本线与未闭环意见） */}
-        <FocusBar />
+        {/* （核心交付锚定条（FocusBar）已按用户决策全链删除——2026-09-25） */}
 
         {/* M37-7：消息导航条（≥20 条；细轨 + 视口窗口 + hover 展开） */}
         {session && messageCount >= RAIL_MIN_MESSAGES && (
@@ -704,19 +685,11 @@ export function ChatArea(): React.JSX.Element {
           只读共享（viewer）：可查看消息与交付件，但不能发送 / 停止 / 审批
         </div>
       )}
-      {/* M45（R-1）：波次回放条（≥2 波；跳转复用 focusMessage——滚动 + 闪光，不重建历史状态） */}
-      {waveNodes.length >= 2 && <WaveScrubber nodes={waveNodes} activeIndex={activeWaveIdx} onJump={focusMessage} />}
+      {/* （波次回放条已删除——2026-09-25 产品决策：用户确认不需要此入口，输入区更简洁） */}
       <Composer onReady={(fn) => (insertRef.current = fn)} locked={isViewer} />
       <ShareDialog sessionId={session?.id} open={shareOpen} onOpenChange={setShareOpen} />
       {/* M79-F：群 / 私聊成员弹窗（名单 + 邀请好友 + 群主移出） */}
       <ChatMembersDialog session={session} open={membersOpen} onOpenChange={setMembersOpen} />
-      {/* M57 P3：会话资源（连接 / MCP）；viewer 只读（服务端写闸门 403 的前置提示） */}
-      <SessionResourcesDialog
-        sessionId={session?.id}
-        open={resourcesOpen}
-        onOpenChange={setResourcesOpen}
-        canWrite={myRole !== 'viewer'}
-      />
     </div>
   )
 }

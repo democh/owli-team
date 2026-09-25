@@ -384,11 +384,16 @@ describe('M21：OPC 场景与角色资产（真实 agents/ 目录）', () => {
     // 四路不持有回测 / 博弈（职责边界：策略与推演归 quant）
     expect(lib.get('analyst-ta')?.tools).not.toContain('fin_backtest')
     expect(lib.get('analyst-fa')?.tools).not.toContain('fin_game')
+    // M83：分析 / 策略 DSL 工具绑定（分析引擎归技术面；DSL 归量化；其余角色不持有）
+    expect(lib.get('analyst-ta')?.tools).toContain('fin_analyze')
+    expect(lib.get('quant')?.tools).toContain('fin_strategy')
+    expect(lib.get('analyst-fa')?.tools).not.toContain('fin_analyze')
+    expect(lib.get('analyst-news')?.tools).not.toContain('fin_strategy')
     // 技能预载
     expect(lib.get('analyst-fa')?.skills).toEqual(['fundamental-analysis', 'report-authoring'])
     expect(lib.get('analyst-ta')?.skills).toEqual(['technical-analysis', 'report-authoring'])
     expect(lib.get('analyst-news')?.skills).toEqual(['market-news-analysis', 'report-authoring'])
-    expect(lib.get('quant')?.skills).toEqual(['investment-strategy', 'game-theory-trading', 'report-authoring'])
+    expect(lib.get('quant')?.skills).toEqual(['investment-strategy', 'game-theory-trading', 'strategy-dsl', 'report-authoring'])
     // 协作基线：全部含 handoff（结构化转交为第一通道）
     for (const id of ['invest-lead', 'analyst-fa', 'analyst-ta', 'analyst-news', 'quant']) {
       expect(lib.get(id)?.tools, `${id} 缺少 handoff`).toContain('handoff')

@@ -1094,8 +1094,20 @@ export interface HealthResponse {
 
 // ---------- M22：连接中心（数据库 / SSH / 浏览器接入） ----------
 
-/** 连接类型：三种数据库 + SSH + 浏览器（CDP）+ 嵌入模型（M25）+ 媒体生成（M31）+ 模型服务（多 Provider，openai 协议） */
-export type ConnectionKind = 'postgres' | 'mysql' | 'sqlite' | 'ssh' | 'chrome' | 'embedding' | 'media' | 'llm'
+/**
+ * 连接类型：三种数据库 + SSH + 浏览器（CDP）+ 嵌入模型（M25）+ 媒体生成（M31）+ 模型服务（多 Provider，openai 协议）
+ * + 出口代理（M82：HTTP(S) / SOCKS5 出网代理；SSH 隧道 P1）
+ */
+export type ConnectionKind =
+  | 'postgres'
+  | 'mysql'
+  | 'sqlite'
+  | 'ssh'
+  | 'chrome'
+  | 'embedding'
+  | 'media'
+  | 'llm'
+  | 'proxy'
 
 export type ConnectionStatus = 'idle' | 'ok' | 'error'
 
@@ -1608,6 +1620,10 @@ export interface CanvasKlineData {
   indicators?: string[]
   /** 标注：价格线等（≤20 条） */
   annotations?: unknown[]
+  /** M83：落图（shared Drawing 契约；分析与策略产出，「智能分析」写回） */
+  drawings?: unknown[]
+  /** M83：分析结论（shared KlineAnalysis；分析面板数据源） */
+  analysis?: unknown
 }
 
 export interface CanvasNodeDataMap {

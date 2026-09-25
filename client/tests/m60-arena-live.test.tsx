@@ -7,7 +7,7 @@
  * - 宽度自适应（clamp(164px, 22%, 340px)）为纯 CSS，实测断言归 E2E（m52-stage arena 用例）。
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { act, render } from '@testing-library/react'
+import { act, fireEvent, render } from '@testing-library/react'
 import type * as React from 'react'
 import type { AgentDefinition, ChatMessage } from '@multi-agent/shared'
 import { ArenaStage } from '../src/components/scene/ArenaStage'
@@ -176,8 +176,10 @@ describe('M60 §81 冻结面边界（ADR 0129：半截容器不进派生）', ()
     try {
       act(() => patchMsg('m1', { status: 'complete' }))
       act(() => vi.advanceTimersByTime(500))
-      // 收束后：完成态快照进容器解析面
-      expect(container.querySelector('[data-insight="claims"]')).not.toBeNull()
+      // 收束后：完成态快照进容器解析面（M85：论断树默认收起 → 展开后断言）
+      const claims = container.querySelector('[data-insight="claims"]')
+      expect(claims).not.toBeNull()
+      fireEvent.click(claims!.querySelector('[data-insight-toggle="claims"]')!)
       expect(container.querySelector('[data-insight="claims"] .scene-claim-title')?.textContent).toBe('正方主张：净收益为正')
     } finally {
       vi.useRealTimers()

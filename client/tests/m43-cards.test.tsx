@@ -439,7 +439,8 @@ describe('arena 中轴合流（裁决流 / 论断树 / 报价流）', () => {
     const insights = container.querySelector('[data-insights]')!
     expect(insights).not.toBeNull()
 
-    // 论断树：claim 容器聚合；点论据 → 追问模板回填
+    // 论断树：claim 容器聚合（M85：默认收起 → 先展开）；点论据 → 追问模板回填
+    fireEvent.click(insights.querySelector('[data-insight="claims"] [data-insight-toggle="claims"]')!)
     expect(insights.querySelector('[data-insight="claims"] .scene-claim-title')?.textContent).toBe('正方主张：净收益为正')
     fireEvent.click(insights.querySelector('[data-insight="claims"] .scene-claim-head')!)
     fireEvent.click(insights.querySelector('[data-insight="claims"] .scene-claim-reason')!)

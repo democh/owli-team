@@ -8,6 +8,35 @@
 
 ## 变更记录
 
+### v108 — bullbear 五席头像批与 M83/M84 审计收口（2026-09-25）
+
+- **动因**：M84 收口审计——补齐 5 席头像资产、落地两处观察项微增强，并修复 M83 审计暴露的块模板解析缺陷；角色人设 / 协议 / 技能零改动（仅资产与客户端）。
+- **头像批（5 席）**：bullbear judge 顾鉴 / bull-lead 向阳 / bear-lead 知寒 / bull-quant 陆准 / bear-quant 程实——v3 统一风格前缀 + 七维差异化 + 场景主题色元素（绯红 #dc2626 / 墨绿 #059669 / 靛蓝 #6366f1），512×512 落盘 `agents/bullbear/<id>/avatar.png`；空方证据官首版误出拟人熊形象（bear-side 英文直译），重生成时提示词显式要求 HUMAN / no animal features；design.md §19.1 计数句与 §19.3 设定表五行已同步。
+- **M84 观察项落地**（纯客户端，零协议改动）：证据徽标「统计级」——`lib/evidence` 新增 statistical 等级（证据行含 p= / p< / p值 / CI[ / n= / Bonferroni，优先级最高；ClaimTree / StanceCard 共用渲染 + 新增 CSS 变体）；立场互换——`TEMPLATES.swapSides` + ArenaActions「互换立场」动作（回填草稿）+ ArenaStage 计分板备注「含 N 次互换」标记（协议第 6 条可见化）。
+- **M83 审计收口**：**块模板 `render` 对象形态解析缺失**修复（`kline-spec` 兼容嵌套 render，主/副图与阶段开关配置此前被静默忽略——修复后 `fin_analyze` / `fin_strategy` 生成的块配置真正生效）；「送上画布」携带 drawings / analysis；`entry` 阶段色板去重（单一来源 `phaseColors`）；E2E `e2e/m83-kline-analysis.spec.ts`（mock「K 线走查」内联块：工具条 / 阶段开关 / 分析面板 / 零取数渲染）；跨端契约 fixture（`client/tests/fixtures/m83-*.json` 由真实 server 引擎产出 + `m83-kline-contract.test.ts`，夹具首跑即暴露上述 render 缺陷）。
+- **配套**：mock 新增「K 线走查」触发块（确定性和内联数据）；playwright main testMatch + `m83-.*`；`docs/kline-analysis-dsl-design.md` §7 / `docs/bullbear-arena-design.md` 状态行回写；design.md §124/§125 审计收口行。
+- **核验**：check:agents **166/166 + 协议 41/41 + 声纹 24/24 ✅**；check:skills **72/72 ✅**；`npm run eval`（mock 确定性）**56/56 ✅**（本批零 prompt 变更）；server 全量 **1581/1581 ✅**；client 全量 **1388/1388 ✅**（新增 m83-kline-contract 2 例 + m63 统计级/互换 3 例 + spec render 形态 1 例）；E2E **m83 1/1 + m84 1/1 ✅**；双端 + e2e typecheck 0 错。
+- 相关文档：design.md **§124/§125/§19.1/§19.3** / `docs/kline-analysis-dsl-design.md` / `docs/bullbear-arena-design.md`。
+
+### v107 — 多空对决场场景与统计举证工具接入（M84）
+
+- **动因**：新场景专项「多空对决场」（M84）落地——专职对抗赛场（多空双阵营立论 / 举证 / 质证 / 结辩 + 裁决长终局裁决），消费 M83 工具链（`fin_analyze` / `fin_strategy` / `fin_backtest(dsl)`）并补齐统计举证层（`fin_stats`）。
+- **新增场景（41 个）**：`agents/bullbear/` 五席——judge 顾鉴（裁决长）· bull-lead 向阳（多方主辩）· bear-lead 知寒（空方主辩）· bull-quant 陆准（多方证据官）· bear-quant 程实（空方证据官）；`_group.yaml` arena 布局（seats 左多 / 右空 / 中央）+ parts（round-track / scoreboard / cross-fire / claim-tree / verdicts）；`_protocol.md` 17 条（五拍回合 / 证据纪律 / 容器约定 / 立场互换 / 合规红线）；预设 `bullbear-pk`。
+- **工具与技能**：五席绑定 `fin_analyze` / `fin_stats`（证据官另持 `fin_strategy` / `fin_backtest`）；新技能 `skills/quant-evidence`（量化证据与统计检验：口径纪律 / 输出解读 / 降级矩阵 / 证据行铸造）；invest 协议「多空对弈」加一行引导移交（深度对抗 → @顾鉴）。
+- **镜像面（v14/v15 纪律）**：mock 四件套补齐（5 角色 SCRIPTS / artifactFor / DISPLAY_NAMES / preferredOf）+ `e2e/helpers.ts AGENT_NAME`；新增触发块「对决走查」（claim ×2 + ruling + verdict + kpi 四容器确定性输出）；各角色落盘路径（`docs/多空对决|多方论证|空方论证|多方证据|空方证据-<主题>.md`）与 AGENT.md 交付契约逐字对齐。
+- **核验**：check:agents **166/166 + 协议 41/41 + 声纹 24/24 ✅**；check:skills **72/72 ✅**（+quant-evidence）；`npm run eval`（mock 确定性）**56/56 ✅**（零新增任务口径：mock 走查 + E2E 承接，详情见 ADR 0220）；server 全量 **132 文件 / 1581 用例 ✅**（新增 m84-stats 16 例含真脚本冒烟）；E2E **m84-bullbear 1/1 ✅**；双端 + e2e typecheck 0 错。
+- 相关文档：**ADR 0220** / design.md **§125** / `docs/bullbear-arena-design.md`（状态已回写）。
+
+### v106 — K 线分析引擎与 DSL 策略工具接入（M83 批 D）
+
+- **动因**：K 线分析引擎与 DSL 策略引擎（M83）落地后，投研两席接入新工具链——「有据可依」的图表分析（阶段 / 情绪 / 关键位 / 特征 + 落图）与可校验的策略规则化（DSL lint → run → 回测同口径）。
+- **工具接入**：`analyst-ta`（雷动）tools + `fin_analyze`（一次取全，返回含阶段色带 + 关键位落图 + 分析面板的 kline 块模板）；`quant`（方程）tools + `fin_strategy`（DSL lint → run → facts 排查 → 落图），并预载新技能 `strategy-dsl`。
+- **文案变更**：analyst-ta——专业判断 +「阶段口径」硬规则（置信度 <60 降强度表达；情绪与特征标注「规则口径」）、工作方式数据链与视图承接（`fin_analyze` 落图）、自检项（阶段与关键位禁止目测）；quant——职责（规则化产物优先写 DSL）、专业判断 +「DSL 纪律」硬规则（白名单函数 / 禁 `ref` 负偏移 / stop_target 表达式依据 / 先 lint 后 run）、工作方式 DSL 落地路径（lint → run → `fin_backtest template=dsl` 同口径回测）、数据链、自检项。
+- **新增技能**：`skills/strategy-dsl`（88 行：DSL 全字段语法 / 表达式白名单表 / lint→run→回测工作流 / 常见错误与修正表 / 纪律）；投研两席不持有其他技能变更。
+- **接口绑定断言**：`server/tests/m21.test.ts` 增加 M83 绑定（`fin_analyze` 归技术面 / `fin_strategy` 归量化 / 其余角色不持有；quant skills 含 strategy-dsl）。
+- **核验**：check:agents **161/161 + 协议 40/40 + 声纹 24/24 ✅**；check:skills **71/71 ✅**（新增 strategy-dsl）；`npm run eval`（mock 确定性）**56/56 ✅**（本批仅工具白名单 / 技能预载与人设增量，mock 面具零影响）；server 全量 **131 文件 / 1565 用例 ✅**（M83 新增 m83-analysis 15 / m83-dsl 20 / m83-finance-tools 12 / 回测 dsl 通道 1）；client 全量 **126 文件 / 1383 用例 ✅**（新增块 spec 扩展 / 分析面板 / 块级分析渲染 / 面高迁移）；双端 + e2e typecheck 0 错。
+- 相关文档：**ADR 0219** / design.md **§124** / `docs/kline-analysis-dsl-design.md`（状态已回写）。
+
 ### v105 — 过程叙述通道与 40 场景协议全量铺设（M81 批 B）
 
 - **动因**：Agent 对话啰嗦治理（设计基线 `docs/turn-card-process-design.md` v2）——content 通道补齐第三类可折叠「过程叙述」，与思考 / 工具调用组成 TurnCard 过程区；渲染端同批落地（`::: process` 容器 + ProcessBlock + 过程区重排 + mock「过程走查」触发块 + E2E `m81-turncard-process`）。

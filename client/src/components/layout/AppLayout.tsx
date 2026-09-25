@@ -25,13 +25,9 @@ import {
   ArrowLeft,
   Bell,
   BellOff,
-  ChevronLeft,
-  ChevronRight,
   Keyboard,
   PanelLeft,
   PanelRight,
-  PanelRightClose,
-  PanelRightOpen,
   UserRound,
 } from 'lucide-react'
 import { useMediaQuery } from '../../lib/hooks'
@@ -48,7 +44,7 @@ import { AccountDialog } from '../account/AccountDialog'
 import { InboxPanel } from './InboxPanel'
 import { Button } from '../ui/button'
 import { Dialog, DialogContent, DialogTitle } from '../ui/dialog'
-import { Tabs, TabsList, TabsTrigger } from '../ui/tabs'
+import { MainTabs, PanelToggleButton } from './MainTabs'
 import { AgentAvatar } from '../agents/AgentAvatar'
 import { SessionList } from '../sessions/SessionList'
 import { ChatArea } from '../chat/ChatArea'
@@ -175,36 +171,12 @@ export function HeaderBar({ narrow, onOpenSessions }: { narrow?: boolean; onOpen
   )
 }
 
-/** 面板显隐钮（左 = 主区左缘悬浮把手内 / 右 = 主区头部最右端）：常驻双态——展开态 = 「隐藏 X 栏」、
- *  收起态 = 「显示 X 栏」，左钮折角箭头方向随态翻转（展开 = 向左收起 / 收起 = 向右展开）；
- *  与 ⌘B / ⌘⇧B、命令面板同源；仅宽屏渲染（窄屏抽屉入口在顶栏 / 底部成员条）。 */
-export function PanelToggleButton({
-  side,
-  className,
-}: {
-  side: 'left' | 'right'
-  className?: string
-}): React.JSX.Element {
-  const open = useUiStore((s) => (side === 'left' ? s.leftPanelOpen : s.rightPanelOpen))
-  const toggle = useUiStore((s) => (side === 'left' ? s.toggleLeftPanel : s.toggleRightPanel))
-  const name = side === 'left' ? '左栏' : '右栏'
-  const keys = side === 'left' ? '⌘⇧B' : '⌘B'
-  const Icon = side === 'left' ? (open ? ChevronLeft : ChevronRight) : open ? PanelRightClose : PanelRightOpen
-  return (
-    <Button
-      variant="ghost"
-      size="icon-sm"
-      className={className}
-      title={`${open ? '隐藏' : '显示'}${name}（${keys}）`}
-      onClick={toggle}
-    >
-      <Icon className="size-4" />
-    </Button>
-  )
-}
+/** 面板显隐钮与主区页签已抽至 ./MainTabs（M85 头部合并）：Chat 模式 Tabs 并入会话头行（ChatArea）、
+ *  面板钮并入其右端；其余模式由本文件头行渲染。此处 re-export 保测试 / 外部 import 面不变。 */
+export { MainTabs, PanelToggleButton } from './MainTabs'
 
-/** 左栏显隐·主区左缘悬浮把手（宽屏）：垂直居中于主区左缘——默认不展示，悬停左缘热区淡入、
- *  移开淡出；点击收起 / 展开左栏（单个折角箭头，方向随态翻转）。与 ⌘⇧B、命令面板同源。 */
+/** 左栏显隐·主区左缘悬浮把手（宽屏）：垂直居中于主区左缘——**默认完全隐形**，
+ *  悬停左缘热区（group）淡入、移开淡出（2026-09-25 样式几经迭代后按用户要求恢复初始态）。 */
 export function LeftPanelEdgeHandle(): React.JSX.Element {
   return (
     <div className="group absolute left-0 top-1/2 z-10 -translate-y-1/2 py-3 pr-3">
@@ -219,7 +191,6 @@ export function LeftPanelEdgeHandle(): React.JSX.Element {
 /** 底部成员条（窄屏）：横向 @ 快捷入口 + 团队抽屉开关；M77：按成员实例渲染（分身 = 名字·灵魂名） */
 function BottomMemberBar({ onOpenTeam }: { onOpenTeam: () => void }): React.JSX.Element {
   const agents = useAgentStore((s) => s.agents)
-  const currentId = useSessionStore((s) => s.currentId)
   const session = useCurrentSession()
   const members = React.useMemo(() => memberViews(agents, session), [agents, session])
   // M79-S：纯人聊天隐藏「团队」抽屉入口（人类成员条保留——@ 点名仍需要）
@@ -280,9 +251,7 @@ function loadPaneLayout(): number[] | null {
 
 export function AppLayout(): React.JSX.Element {
   const mainTab = useUiStore((s) => s.mainTab)
-  const setMainTab = useUiStore((s) => s.setMainTab)
   // M31 修订：画布页签未读角标（agent 写入计数；进画布即清零）
-  const newCanvasCount = useUiStore((s) => s.newCanvasCount)
   const appView = useUiStore((s) => s.appView)
   // M57：成员不渲染管理面控制台（ActivityRail 已隐藏入口；此处兑底直接造访）
   const isAdmin = useAuthStore((s) => s.isAdmin)
@@ -431,8 +400,10 @@ export function AppLayout(): React.JSX.Element {
 
   const mainPane = (
     <div className="relative flex h-full min-h-0 flex-1 flex-col">
-      {/* 左栏显隐：主区左缘垂直中部悬浮把手（仅宽屏；默认不展示、悬停淡入） */}
-      {!narrow && <LeftPanelEdgeHandle />}
+      {/* 左栏显隐（M85，2026-09-25）：原左缘悬浮把手已按用户决策移除——收起入口 = ⌘⇧B / 命令面板
+          （LeftPanelEdgeHandle 组件保留供单测渲染，应用内不再挂载） */}
+      {/* M85 头部合并：Chat 模式下本头行并入会话标题行（ChatArea 渲染 Tabs + 面板钮）——仅其它主区模式渲染 */}
+      {mainTab !== 'chat' && (
       <div className="flex h-11 shrink-0 items-center gap-1 border-b px-2">
         {/* 右栏显隐钮右对齐于头部最右端（紧邻右栏；仅宽屏，窄屏抽屉入口在底部成员条） */}
         {deepTitle ? (
@@ -446,25 +417,11 @@ export function AppLayout(): React.JSX.Element {
             <span className="min-w-0 truncate text-[12.5px] font-medium">{deepTitle}</span>
           </div>
         ) : (
-          <Tabs value={mainTab} onValueChange={(v) => setMainTab(v as MainTab)}>
-            <TabsList>
-              <TabsTrigger value="chat">对话</TabsTrigger>
-              <TabsTrigger value="canvas">
-                画布
-                {newCanvasCount > 0 && (
-                  <span
-                    className="ml-1 shrink-0 rounded-full bg-primary/15 px-1 text-[9.5px] font-semibold tabular-nums text-primary"
-                    title="Agent 在画布上有新写入"
-                  >
-                    {newCanvasCount}
-                  </span>
-                )}
-              </TabsTrigger>
-            </TabsList>
-          </Tabs>
+          <MainTabs />
         )}
         {!narrow && !humanOnlyChat && <PanelToggleButton side="right" className="ml-auto" />}
       </div>
+      )}
       <ErrorBoundary>
         <React.Suspense
           fallback={<div className="flex min-h-0 flex-1 items-center justify-center text-[12px] text-muted-foreground">正在加载…</div>}

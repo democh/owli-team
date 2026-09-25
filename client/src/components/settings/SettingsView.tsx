@@ -1,7 +1,7 @@
 /**
  * M36：设置（主区视图，自 M8 设置弹窗升级为与对话 / 控制台同级的独立页）。
- * - 左侧分类导航 + 右侧专业表单：覆盖全部 26 项运行期设置
- *   （模型与生成 4 / 上下文 4 / 向量记忆 6 / 运行控制 3 / 工具与安全 5 / 金融投研 4）；
+ * - 左侧分类导航 + 右侧专业表单：覆盖全部运行期设置（模型与生成 / 媒体生成 / 上下文 /
+ *   向量记忆 / 运行控制 / 工具与安全 / 联网与出网 / 金融投研）；
  *   导航点击滚动定位、滚动联动高亮（scrollspy）。
  * - M56：「媒体生成」分组（媒体连接全局配置，自「连接管理」迁入；启用即全场景可用）——
  *   见 components/settings/MediaConnectionsSection；并消费画布生成面板的聚焦请求（settingsFocus）。
@@ -23,6 +23,7 @@ import {
   Info,
   Layers,
   Loader2,
+  Network,
   Plug,
   RotateCcw,
   Save,
@@ -32,7 +33,7 @@ import {
   TrendingUp,
 } from 'lucide-react'
 import type { ConnectionKind } from '@multi-agent/shared'
-import { apiGet, apiPut } from '../../lib/api'
+import { apiGet, apiPost, apiPut } from '../../lib/api'
 import { cn } from '../../lib/utils'
 import { useAgentStore } from '../../stores/agent-store'
 import { useConnectionsStore } from '../../stores/connections-store'
@@ -44,7 +45,7 @@ import { Input } from '../ui/input'
 import { MediaConnectionsSection } from './MediaConnectionsSection'
 import { ModelProvidersSection } from './ModelProvidersSection'
 
-/** 运行期设置表单（与 server RuntimeSettingsSchema 27 字段一一对应） */
+/** 运行期设置表单（与 server RuntimeSettingsSchema 33 字段一一对应） */
 interface SettingsForm {
   llmModel: string
   summaryModel: string
@@ -76,6 +77,13 @@ interface SettingsForm {
   financeQuoteRefreshMs: number
   financeMinIntervalMs: number
   financePyTimeoutMs: number
+  /** M82：联网出口（热更新；代理目标与凭据在「连接管理」的出口代理连接中维护） */
+  egressMode: 'direct' | 'proxy'
+  egressConnectionId: string
+  egressChannels: Array<'search' | 'finance' | 'browser' | 'mcp' | 'llm'>
+  egressNoProxy: string[]
+  egressFallback: 'direct' | 'fail'
+  egressProbeUrl: string
 }
 
 /** 字段缺省回退（服务端旧版本缺字段时不渲染受控警告）：值对齐 server env 默认 */
@@ -107,7 +115,36 @@ const FALLBACK: SettingsForm = {
   financeQuoteRefreshMs: 10_000,
   financeMinIntervalMs: 0,
   financePyTimeoutMs: 30_000,
+  egressMode: 'direct',
+  egressConnectionId: '',
+  egressChannels: ['search', 'finance', 'browser'],
+  egressNoProxy: ['localhost', '127.0.0.1', '::1', '*.local', '10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16', '169.254.0.0/16'],
+  egressFallback: 'direct',
+  egressProbeUrl: 'https://myip.ipip.net',
 }
+
+/** M82：出口状态（GET /api/egress/status） */
+interface EgressStatusInfo {
+  mode: 'direct' | 'proxy'
+  state: 'direct' | 'proxied' | 'degraded'
+  bindingName?: string
+  bindingError?: string
+  channels: string[]
+  fails: number
+  coolingUntil?: string
+  lastOkAt?: string
+  lastError?: string
+  lastProbe?: { at: string; ok: boolean; exitIp?: string; latencyMs?: number; error?: string }
+}
+
+/** M82：出口通道多选（标签与默认值对齐 server EGRESS_CHANNELS） */
+const EGRESS_CHANNELS: Array<{ id: SettingsForm['egressChannels'][number]; label: string; hint: string }> = [
+  { id: 'search', label: '搜索抓取', hint: 'web_search / web_fetch' },
+  { id: 'finance', label: '金融数据', hint: '行情 / K 线 / 新闻（含 Python 桥 P1）' },
+  { id: 'browser', label: '浏览器', hint: '自启 Chromium 出口（P1）' },
+  { id: 'mcp', label: 'MCP', hint: 'MCP HTTP / 子进程（P1）' },
+  { id: 'llm', label: '模型与嵌入', hint: '默认不跟随（防本地 / 国内端点被代理）' },
+]
 
 interface HealthInfo {
   ok?: boolean
@@ -117,7 +154,17 @@ interface HealthInfo {
   notifyPollMs?: number
 }
 
-type SectionId = 'model' | 'media' | 'context' | 'memory' | 'runtime' | 'safety' | 'finance' | 'resources' | 'system'
+type SectionId =
+  | 'model'
+  | 'media'
+  | 'context'
+  | 'memory'
+  | 'runtime'
+  | 'safety'
+  | 'network'
+  | 'finance'
+  | 'resources'
+  | 'system'
 
 const SECTIONS: Array<{ id: SectionId; label: string; icon: React.ComponentType<{ className?: string }> }> = [
   { id: 'model', label: '模型与生成', icon: Cpu },
@@ -126,6 +173,7 @@ const SECTIONS: Array<{ id: SectionId; label: string; icon: React.ComponentType<
   { id: 'memory', label: '向量记忆', icon: Brain },
   { id: 'runtime', label: '运行控制', icon: Activity },
   { id: 'safety', label: '工具与安全', icon: ShieldCheck },
+  { id: 'network', label: '联网与出网', icon: Network },
   { id: 'finance', label: '金融投研', icon: TrendingUp },
   { id: 'resources', label: '资源与集成', icon: Cable },
   { id: 'system', label: '系统信息', icon: Info },
@@ -298,6 +346,7 @@ const KIND_LABEL: Record<ConnectionKind, string> = {
   embedding: '嵌入模型',
   media: '媒体生成',
   llm: '模型服务',
+  proxy: '出口代理',
 }
 
 const WS_LABEL: Record<string, string> = {
@@ -325,6 +374,21 @@ export function SettingsView(): React.JSX.Element {
   const mcpServers = useMcpStore((s) => s.servers)
   const mcpTools = useMcpStore((s) => s.tools)
   const embeddingConns = React.useMemo(() => connections.filter((c) => c.kind === 'embedding'), [connections])
+  /** M82：出口代理连接候选（连接中心 proxy kind；不参与会话绑定） */
+  const proxyConns = React.useMemo(() => connections.filter((c) => c.kind === 'proxy'), [connections])
+  const [egressStatus, setEgressStatus] = React.useState<EgressStatusInfo | null>(null)
+  /** 旁路名单文本框（逗号/换行分隔；与 egressNoProxy 数组同步，中间态保留原始文本） */
+  const [noProxyText, setNoProxyText] = React.useState('')
+  const [probing, setProbing] = React.useState(false)
+
+  const loadEgressStatus = React.useCallback(async (): Promise<void> => {
+    try {
+      const res = await apiGet<{ status: EgressStatusInfo | null }>('/api/egress/status')
+      setEgressStatus(res.status)
+    } catch {
+      setEgressStatus(null)
+    }
+  }, [])
 
   const load = React.useCallback(async (): Promise<void> => {
     setLoading(true)
@@ -333,6 +397,7 @@ export function SettingsView(): React.JSX.Element {
       const next = { ...FALLBACK, ...res.settings }
       setForm(next)
       setBaseline(JSON.stringify(next))
+      setNoProxyText(next.egressNoProxy.join(', '))
     } catch (err) {
       toast.error((err as Error).message)
     } finally {
@@ -342,6 +407,7 @@ export function SettingsView(): React.JSX.Element {
 
   React.useEffect(() => {
     void load()
+    void loadEgressStatus()
     void useConnectionsStore.getState().load()
     void useAgentStore
       .getState()
@@ -351,7 +417,7 @@ export function SettingsView(): React.JSX.Element {
     void apiGet<HealthInfo>('/api/health')
       .then((res) => setHealth(res))
       .catch(() => setHealth(null))
-  }, [load])
+  }, [load, loadEgressStatus])
 
   const set = <K extends keyof SettingsForm>(key: K, value: SettingsForm[K]): void => {
     setForm((prev) => (prev ? { ...prev, [key]: value } : prev))
@@ -374,12 +440,62 @@ export function SettingsView(): React.JSX.Element {
       await apiPut('/api/settings', form)
       setBaseline(JSON.stringify(form))
       toast('设置已保存并即时生效')
+      // M82：出口字段可能变化 → 刷新出口状态
+      void loadEgressStatus()
     } catch (err) {
       toast.error((err as Error).message)
     } finally {
       setSaving(false)
     }
   }
+
+  /** M82：通道多选切换 */
+  const toggleEgressChannel = (id: SettingsForm['egressChannels'][number]): void => {
+    setForm((prev) =>
+      prev
+        ? {
+            ...prev,
+            egressChannels: prev.egressChannels.includes(id)
+              ? prev.egressChannels.filter((c) => c !== id)
+              : [...prev.egressChannels, id],
+          }
+        : prev,
+    )
+  }
+
+  /** M82：出口探测（复用连接测试接口：经该绑定请求 egressProbeUrl，回显出口 IP / 延迟） */
+  const testEgress = async (): Promise<void> => {
+    const id = form?.egressConnectionId ?? ''
+    if (!id) {
+      toast.error('请先选择出口连接（或在「连接管理」新建出口代理）')
+      return
+    }
+    setProbing(true)
+    try {
+      const res = await apiPost<{ result: { ok: boolean; detail?: string; error?: string } }>(
+        `/api/connections/${id}/test`,
+      )
+      if (res.result.ok) toast(`出口可用：${res.result.detail ?? '连接正常'}`)
+      else toast.error(`出口不可用：${res.result.error ?? '未知错误'}`)
+      await loadEgressStatus()
+    } catch (err) {
+      toast.error((err as Error).message)
+    } finally {
+      setProbing(false)
+    }
+  }
+
+  /** M82：出口状态摘要（面板展示） */
+  const egressStatusText = React.useMemo(() => {
+    if (!egressStatus) return '未装配（服务端未返回出口状态）'
+    if (egressStatus.bindingError) return `配置异常：${egressStatus.bindingError}`
+    if (egressStatus.mode === 'direct') return '直连（未启用出口）'
+    if (egressStatus.state === 'degraded') {
+      const until = egressStatus.coolingUntil ? new Date(egressStatus.coolingUntil).toLocaleTimeString() : '—'
+      return `出口降级中（冷却至 ${until}）：当前直连`
+    }
+    return `已启用：${egressStatus.bindingName ?? '未解析到绑定'}`
+  }, [egressStatus])
 
   const register = React.useCallback((id: SectionId, el: HTMLElement | null): void => {
     sectionRefs.current[id] = el
@@ -692,6 +808,121 @@ export function SettingsView(): React.JSX.Element {
                   checked={form.allowSensitive}
                   onChange={(v) => set('allowSensitive', v)}
                 />
+              </Section>
+
+              <Section
+                id="network"
+                title="联网与出网"
+                hint="IP 代理 / 隧道出口：联网抓取通道可统一经出口发出（目标与凭据在「连接管理 → 出口代理」维护，加密存储）"
+                register={register}
+              >
+                <Field label="出口模式" hint="direct = 直连（默认，零影响）；proxy = 按下方通道经出口代理">
+                  <select
+                    value={form.egressMode}
+                    className={selectCls}
+                    onChange={(e) => set('egressMode', e.target.value as SettingsForm['egressMode'])}
+                  >
+                    <option value="direct">direct（直连）</option>
+                    <option value="proxy">proxy（经出口代理）</option>
+                  </select>
+                </Field>
+                <Field label="出口连接" hint="在「连接管理」新建（出口代理类型）；留空 = 尝试 EGRESS_PROXY_URL 环境变量后备">
+                  <select
+                    value={form.egressConnectionId}
+                    className={cn(selectCls, 'w-64')}
+                    onChange={(e) => set('egressConnectionId', e.target.value)}
+                  >
+                    <option value="">未选择</option>
+                    {proxyConns.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name}
+                        {c.enabled ? '' : '（已禁用）'}
+                        {c.status === 'error' ? '（连接异常）' : ''}
+                      </option>
+                    ))}
+                  </select>
+                  <Button
+                    variant="outline"
+                    size="xs"
+                    disabled={probing || !form.egressConnectionId}
+                    onClick={() => void testEgress()}
+                  >
+                    {probing ? <Loader2 className="size-3.5 animate-spin" /> : <Network className="size-3.5" />}
+                    测试出口
+                  </Button>
+                </Field>
+                {form.egressMode === 'proxy' && form.egressConnectionId === '' && (
+                  <p className="pl-[11.75rem] text-[10.5px] text-amber-600">
+                    未选择出口连接：仅当已配置 EGRESS_PROXY_URL 时生效，否则出口保持直连
+                  </p>
+                )}
+                <Field label="跟随通道" hint="仅勾选通道经出口；未勾选恒直连（模型与嵌入建议保持不勾选）">
+                  <span className="flex flex-wrap gap-x-3 gap-y-1.5">
+                    {EGRESS_CHANNELS.map((c) => (
+                      <label key={c.id} className="inline-flex items-center gap-1.5 text-[11.5px]" title={c.hint}>
+                        <input
+                          type="checkbox"
+                          className="size-3.5 accent-[hsl(var(--primary))]"
+                          checked={form.egressChannels.includes(c.id)}
+                          onChange={() => toggleEgressChannel(c.id)}
+                        />
+                        {c.label}
+                      </label>
+                    ))}
+                  </span>
+                </Field>
+                <Field label="直连旁路" hint="域后缀 / IP / IPv4 CIDR，逗号分隔；回环与内网建议保留（本地服务不经代理）">
+                  <Input
+                    value={noProxyText}
+                    className="h-7 w-full max-w-xl text-[12px]"
+                    onChange={(e) => {
+                      setNoProxyText(e.target.value)
+                      set(
+                        'egressNoProxy',
+                        e.target.value
+                          .split(/[,\n]/)
+                          .map((s) => s.trim())
+                          .filter(Boolean),
+                      )
+                    }}
+                  />
+                </Field>
+                <Field
+                  label="失败回退"
+                  hint="direct = 出口不可用时回退直连并标注（可用性优先）；fail = 严格失败（合规优先，不泄漏真实 IP）"
+                >
+                  <select
+                    value={form.egressFallback}
+                    className={selectCls}
+                    onChange={(e) => set('egressFallback', e.target.value as SettingsForm['egressFallback'])}
+                  >
+                    <option value="direct">direct（回退直连）</option>
+                    <option value="fail">fail（严格失败）</option>
+                  </select>
+                </Field>
+                <Field label="探测地址" hint="测试出口时请求该地址并回显出口 IP（可换任意回显服务；留空 = 不可探测）">
+                  <Input
+                    value={form.egressProbeUrl}
+                    className="h-7 w-72 text-[12px]"
+                    onChange={(e) => set('egressProbeUrl', e.target.value)}
+                  />
+                </Field>
+                <InfoRow label="出口状态">
+                  <span className="flex flex-col gap-0.5">
+                    <span>{egressStatusText}</span>
+                    {egressStatus?.lastProbe && (
+                      <span className="text-[11px] text-muted-foreground">
+                        最近探测：{new Date(egressStatus.lastProbe.at).toLocaleString()}
+                        {egressStatus.lastProbe.ok
+                          ? ` · 出口 IP ${egressStatus.lastProbe.exitIp ?? '—'} · ${egressStatus.lastProbe.latencyMs ?? '—'}ms`
+                          : ` · 失败：${egressStatus.lastProbe.error ?? '未知错误'}`}
+                      </span>
+                    )}
+                    {egressStatus?.lastError && (
+                      <span className="text-[11px] text-amber-600">最近错误：{egressStatus.lastError}</span>
+                    )}
+                  </span>
+                </InfoRow>
               </Section>
 
               <Section id="finance" title="金融投研" register={register}>

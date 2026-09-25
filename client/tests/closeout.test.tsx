@@ -175,7 +175,7 @@ describe('收尾交付清单（CloseoutCard）', () => {
     expect(container.firstChild).toBeNull()
   })
 
-  it('分层默认：只展示最终交付（按重要度取前 5），过程产物与溢出收进「其他」折叠、箭头全展示 / 收起', async () => {
+  it('M85 紧凑口径：只展示核心交付件（过程产物不展示、无「其他」入口）；头部计数保留总数', async () => {
     const docs = Array.from({ length: 5 }, (_, i) => `docs/报告-${i}.md`)
     const charts = Array.from({ length: 8 }, (_, i) => `charts/sh600000-day-${i}.json`)
     stubArtifacts([...docs, ...charts].map((p) => ({ path: p, kind: p.endsWith('.md') ? 'markdown' : 'code', size: 1024 })))
@@ -184,20 +184,13 @@ describe('收尾交付清单（CloseoutCard）', () => {
 
     const { container } = renderCard()
     expect(screen.getByText('13 件')).toBeInTheDocument()
-    // 默认：5 行最终交付；过程产物不占默认视图
+    // 仅 5 行核心交付；过程产物不渲染，也不再有「其他」切换入口
     expect(container.querySelectorAll('[data-delivery-row]')).toHaveLength(5)
     expect(container.querySelectorAll('[data-delivery-group="others"]')).toHaveLength(0)
-    expect(screen.getByRole('button', { name: '其他 8 件' })).toHaveAttribute('aria-expanded', 'false')
-
-    // 箭头全展示 → 13 行；再点收起 → 回 5 行
-    await userEvent.click(screen.getByRole('button', { name: '其他 8 件' }))
-    expect(container.querySelectorAll('[data-delivery-row]')).toHaveLength(13)
-    expect(screen.getByRole('button', { name: '其他 8 件' })).toHaveAttribute('aria-expanded', 'true')
-    await userEvent.click(screen.getByRole('button', { name: '其他 8 件' }))
-    expect(container.querySelectorAll('[data-delivery-row]')).toHaveLength(5)
+    expect(screen.queryByRole('button', { name: /其他/ })).toBeNull()
   })
 
-  it('整体折叠：头部开关一键隐藏 / 恢复全部文件行（主区 + 其他组），概要行与快捷继续保留', async () => {
+  it('整体折叠：头部开关一键隐藏 / 恢复核心交付行，概要行保留', async () => {
     const docs = Array.from({ length: 3 }, (_, i) => `docs/报告-${i}.md`)
     const charts = ['charts/a.json']
     stubArtifacts([...docs, ...charts].map((p) => ({ path: p, kind: p.endsWith('.md') ? 'markdown' : 'code', size: 1024 })))
@@ -207,22 +200,18 @@ describe('收尾交付清单（CloseoutCard）', () => {
     const { container } = renderCard()
     const collapse = screen.getByRole('button', { name: '收起交付清单' })
     expect(container.querySelectorAll('[data-delivery-row]')).toHaveLength(3)
-    // 「其他」先展开：验证整体折叠将其暂时隐藏且状态保留
-    await userEvent.click(screen.getByRole('button', { name: '其他 1 件' }))
-    expect(container.querySelectorAll('[data-delivery-row]')).toHaveLength(4)
 
-    // 整体收起：文件行清零；概要（件数）与快捷继续保留
+    // 整体收起：文件行清零；概要（件数）保留（M85：快捷 chips 已移除）
     await userEvent.click(collapse)
     expect(collapse).toHaveAttribute('aria-expanded', 'false')
     expect(container.querySelectorAll('[data-delivery-row]')).toHaveLength(0)
     expect(container.querySelectorAll('[data-delivery-group]')).toHaveLength(0)
     expect(screen.getByText('4 件')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '继续推进' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '继续推进' })).toBeNull()
 
-    // 再点恢复：整清单回位，「其他」保持展开状态
+    // 再点恢复：核心交付行回位
     await userEvent.click(screen.getByRole('button', { name: '展开交付清单' }))
-    expect(container.querySelectorAll('[data-delivery-row]')).toHaveLength(4)
-    expect(screen.getByRole('button', { name: '其他 1 件' })).toHaveAttribute('aria-expanded', 'true')
+    expect(container.querySelectorAll('[data-delivery-row]')).toHaveLength(3)
   })
 
   it('最终交付按重要度排序（文档 > 源码 > 数据），过程目录（charts/）默认折叠', async () => {
@@ -242,22 +231,19 @@ describe('收尾交付清单（CloseoutCard）', () => {
     expect(rows).toEqual(['docs/基本面分析-增长主线.md', 'docs/技术面分析-增长主线.md', 'src/app.ts', '回测数据.csv'])
     // 元数据补齐（kind / size）后体积就位（同时收敛 fetch 异步更新）
     expect(await screen.findByText('2.0KB')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '其他 1 件' })).toHaveAttribute('aria-expanded', 'false')
   })
 
-  it('全为过程产物：主区为空，「其他」默认展开（卡片不空），箭头可收起', async () => {
+  it('M85：全为过程产物 → 清单区为空（不渲染），卡片头部计数保留', async () => {
     const paths = ['charts/a.json', 'charts/b.json']
     stubArtifacts(paths.map((p) => ({ path: p, kind: 'code', size: 1024 })))
     const tail = agentMsg('m1', 'pm', { turnIndex: 0, mentions: ['user'], artifacts: paths })
     useSessionStore.setState({ byId: new Map([[tail.id, tail]]), order: [tail.id] })
 
     const { container } = renderCard()
-    expect(container.querySelectorAll('[data-delivery-group="primary"]')).toHaveLength(0)
-    expect(container.querySelectorAll('[data-delivery-row]')).toHaveLength(2)
-    expect(screen.getByRole('button', { name: '其他 2 件' })).toHaveAttribute('aria-expanded', 'true')
-
-    await userEvent.click(screen.getByRole('button', { name: '其他 2 件' }))
+    expect(container.querySelectorAll('[data-delivery-group]')).toHaveLength(0)
     expect(container.querySelectorAll('[data-delivery-row]')).toHaveLength(0)
+    expect(screen.getByText('2 件')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '继续推进' })).toBeNull()
   })
 
   it('交付件后补（run:end 快照回填）：指纹含计数 → 清单随补全出现', async () => {

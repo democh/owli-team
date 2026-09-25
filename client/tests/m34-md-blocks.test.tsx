@@ -4,7 +4,7 @@
  * - KlineBlock：内联 data 直用、流式纯文本、错误卡回退、src 无会话报错、周期切换实拉、源码开关、全屏；
  * - GameBlock：内联 matrix 渲染（chips/矩阵/narrative/免责）、src 快照通道、模拟数据缺失、
  *   simulate 分派（echarts mock 挂载）、gameStatsChips 各模型要点。
- * 说明：lib/kline（klinecharts）与 echarts/core 在此文件 mock——jsdom 无 Canvas；
+ * 说明：chart/entry（klinecharts）与 echarts/core 在此文件 mock——jsdom 无 Canvas；
  * 内核组件本身的行为由上游库保证，这里验证块级装配与数据装配。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -12,13 +12,21 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { Markdown } from '../src/components/chat/Markdown'
 import { gameStatsChips } from '../src/components/game/GameResultView'
-import { createKline } from '../src/lib/kline'
+import { createKlineChart } from '../src/components/finance/chart/entry'
 import { clearMarkdownCaches } from '../src/lib/md-cache'
 import { useCanvasStore } from '../src/stores/canvas-store'
 import { useSessionStore } from '../src/stores/session-store'
 
-vi.mock('../src/lib/kline', () => ({
-  createKline: vi.fn(() => ({ resize: vi.fn(), dispose: vi.fn() })),
+vi.mock('../src/components/finance/chart/entry', () => ({
+  createKlineChart: vi.fn(() => ({
+    update: vi.fn(),
+    beginDraw: vi.fn(),
+    cancelDraw: vi.fn(),
+    setManualEvents: vi.fn(),
+    exportPng: vi.fn(),
+    resize: vi.fn(),
+    dispose: vi.fn(),
+  })),
 }))
 vi.mock('echarts/core', () => ({
   use: vi.fn(),
@@ -44,6 +52,36 @@ const KLINE_JSON = JSON.stringify({
   data: KLINE_DATA,
   indicators: ['MA', 'VOL', 'MACD'],
   annotations: [{ type: 'priceLine', price: 1475, label: '压力位' }],
+})
+
+/** M83：带分析结论 / 落图的块（分析面板 + 阶段色带 + 落图入参） */
+const KLINE_ANALYSIS = {
+  asOf: '2026-09-25T00:00:00.000Z',
+  bars: 3,
+  period: 'day',
+  adjust: 'qfq',
+  phases: {
+    current: 'accumulation',
+    confidence: 62,
+    since: '2026-09-20',
+    description: '低位缩量横盘、筹码集中',
+    bands: [
+      { ts: 1757952000000, phase: 'accumulation' },
+      { ts: 1758038400000, phase: 'accumulation' },
+      { ts: 1758124800000, phase: 'accumulation' },
+    ],
+  },
+  sentiment: { score: 42, stage: 'hesitate', pathLabel: '恐慌→犹豫→修复→乐观→狂热（当前：犹豫）' },
+  levels: { support: { price: 1442, basis: '前低', touches: 2 }, resistance: null, target: null },
+  features: [{ key: 'platform', label: '平台整理', confirmed: true }],
+  drawings: [{ id: 'an-support', kind: 'hline', points: [{ ts: 1758038400000, price: 1442 }], label: '支撑 1442' }],
+  notes: ['阶段判定为规则化统计口径，仅供复盘研究'],
+}
+const KLINE_ANALYSIS_JSON = JSON.stringify({
+  data: KLINE_DATA,
+  indicators: ['MA', 'VOL'],
+  drawings: [{ id: 'an-support', kind: 'hline', points: [{ ts: 1758038400000, price: 1442 }], label: '支撑 1442' }],
+  analysis: KLINE_ANALYSIS,
 })
 
 const MATRIX_RESULT = {
@@ -133,7 +171,7 @@ function jsonResponse(body: unknown): Response {
 
 beforeEach(() => {
   clearMarkdownCaches()
-  vi.mocked(createKline).mockClear()
+  vi.mocked(createKlineChart).mockClear()
   fetchMock.mockReset()
   fetchMock.mockImplementation(async () => jsonResponse({}))
   vi.stubGlobal('fetch', fetchMock)
@@ -150,22 +188,38 @@ describe('```kline 块（Markdown 路由 + 内核装配）', () => {
   it('内联 data：解析后交给 klinecharts 内核（懒加载 chunk）创建画布', async () => {
     const { container } = render(<Markdown content={'```kline\n' + KLINE_JSON + '\n```'} />)
     await waitFor(() => expect(container.querySelector('.md-kline-canvas[data-state="ready"]')).not.toBeNull())
-    expect(vi.mocked(createKline)).toHaveBeenCalledTimes(1)
-    const input = vi.mocked(createKline).mock.calls[0][1]
+    expect(vi.mocked(createKlineChart)).toHaveBeenCalledTimes(1)
+    const input = vi.mocked(createKlineChart).mock.calls[0][1]
     expect(input.dataset.name).toBe('贵州茅台')
     expect(input.dataset.bars).toHaveLength(3)
-    expect(input.indicators).toEqual(['MA', 'VOL', 'MACD'])
+    // M83：indicators 旧字段在宿主层推导为主/副图（MA → 主图；VOL → 副图）
+    expect(input.mainIndicator).toBe('MA')
+    expect(input.subIndicator).toBe('VOL')
     expect(input.annotations).toHaveLength(1)
     expect(input.label).toBe('贵州茅台 日K（前复权）')
     expect(container.querySelector('.md-block-lang')?.textContent).toBe('kline')
     expect(container.querySelector('.md-klineblock .md-block-title')?.textContent).toBe('贵州茅台 日K（前复权）')
   })
 
+  it('M83：携带 analysis / drawings → 分析面板渲染 + 入参携带落图与阶段（智能分析按钮隐藏）', async () => {
+    const { container } = render(<Markdown content={'```kline\n' + KLINE_ANALYSIS_JSON + '\n```'} />)
+    await waitFor(() => expect(container.querySelector('.md-kline-canvas[data-state="ready"]')).not.toBeNull())
+    expect(container.querySelector('.md-kline-analysis')).not.toBeNull()
+    expect(container.textContent).toContain('阶段分析')
+    expect(container.textContent).toContain('吸筹')
+    const input = vi.mocked(createKlineChart).mock.calls.at(-1)![1]
+    expect(input.drawings).toHaveLength(1)
+    expect(input.phases).toHaveLength(3)
+    expect(input.showPhases).toBe(true)
+    // 已有分析：不再展示「智能分析」按钮
+    expect(screen.queryByTitle(/智能分析/)).toBeNull()
+  })
+
   it('流式期间：仅纯文本源码，不触发内核', () => {
     const { container } = render(<Markdown content={'```kline\n' + KLINE_JSON + '\n```'} streaming />)
     expect(container.querySelector('.md-klineblock')).toBeNull()
     expect(container.textContent).toContain('sh600519')
-    expect(vi.mocked(createKline)).not.toHaveBeenCalled()
+    expect(vi.mocked(createKlineChart)).not.toHaveBeenCalled()
   })
 
   it('非法 JSON：错误卡 + 源码回退，不加载内核', () => {
@@ -173,7 +227,7 @@ describe('```kline 块（Markdown 路由 + 内核装配）', () => {
     expect(container.querySelector('.md-chart-error')).not.toBeNull()
     expect(container.textContent).toContain('K 线配置无效')
     expect(container.querySelector('.md-code-plain')).not.toBeNull()
-    expect(vi.mocked(createKline)).not.toHaveBeenCalled()
+    expect(vi.mocked(createKlineChart)).not.toHaveBeenCalled()
   })
 
   it('未知指标：错误卡给出可选清单', () => {
@@ -181,7 +235,7 @@ describe('```kline 块（Markdown 路由 + 内核装配）', () => {
       <Markdown content={'```kline\n{"data":' + JSON.stringify(KLINE_DATA) + ',"indicators":["BOLL2"]}\n```'} />,
     )
     expect(container.querySelector('.md-chart-error')!.textContent).toContain('不支持的指标 "BOLL2"')
-    expect(vi.mocked(createKline)).not.toHaveBeenCalled()
+    expect(vi.mocked(createKlineChart)).not.toHaveBeenCalled()
   })
 
   it('src 且无会话上下文：错误卡提示无法读取快照', async () => {
@@ -189,7 +243,7 @@ describe('```kline 块（Markdown 路由 + 内核装配）', () => {
     await waitFor(() =>
       expect(container.querySelector('.md-chart-error')?.textContent).toContain('当前无会话上下文，无法读取K 线快照文件'),
     )
-    expect(vi.mocked(createKline)).not.toHaveBeenCalled()
+    expect(vi.mocked(createKlineChart)).not.toHaveBeenCalled()
   })
 
   it('周期切换：直连 /api/finance/kline 实拉并重绘（仅本地展示）', async () => {
@@ -200,11 +254,11 @@ describe('```kline 块（Markdown 路由 + 内核装配）', () => {
 
     fetchMock.mockImplementation(async () => jsonResponse({ kline: { ...KLINE_DATA, period: 'week' } }))
     await user.click(screen.getByRole('button', { name: '周K' }))
-    await waitFor(() => expect(vi.mocked(createKline)).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(vi.mocked(createKlineChart)).toHaveBeenCalledTimes(2))
     expect(fetchMock).toHaveBeenCalledWith(
       expect.stringContaining('/api/finance/kline?symbol=sh600519&period=week&adjust=qfq&indicators=VOL&limit=250'),
     )
-    const second = vi.mocked(createKline).mock.calls[1][1]
+    const second = vi.mocked(createKlineChart).mock.calls[1][1]
     expect(second.dataset.period).toBe('week')
     expect(container.textContent).toContain('实拉视图')
     // 实拉视图下芯片高亮跟随展示周期（而非快照周期）
@@ -219,13 +273,13 @@ describe('```kline 块（Markdown 路由 + 内核装配）', () => {
     }))
     await user.click(screen.getByRole('button', { name: '月K' }))
     await waitFor(() => expect(container.querySelector('.md-kline-switch-error')?.textContent).toContain('网关不可用'))
-    expect(vi.mocked(createKline)).toHaveBeenCalledTimes(2)
+    expect(vi.mocked(createKlineChart)).toHaveBeenCalledTimes(2)
   })
 
   it('源码开关与全屏：Overlay 内二次挂载内核 + Esc 关闭', async () => {
     const user = userEvent.setup()
     const { container } = render(<Markdown content={'```kline\n' + KLINE_JSON + '\n```'} />)
-    await waitFor(() => expect(vi.mocked(createKline)).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(vi.mocked(createKlineChart)).toHaveBeenCalledTimes(1))
 
     await user.click(screen.getByTitle('查看源码'))
     expect(container.querySelector('.md-klineblock .md-code-plain')).not.toBeNull()
@@ -234,7 +288,7 @@ describe('```kline 块（Markdown 路由 + 内核装配）', () => {
 
     await user.click(screen.getByTitle('全屏查看'))
     expect(screen.getByRole('dialog')).toBeInTheDocument()
-    await waitFor(() => expect(vi.mocked(createKline)).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(vi.mocked(createKlineChart)).toHaveBeenCalledTimes(2))
     fireEvent.keyDown(window, { key: 'Escape' })
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
   })
@@ -246,7 +300,7 @@ describe('```kline 块（Markdown 路由 + 内核装配）', () => {
     useCanvasStore.setState({ sendKline })
     try {
       render(<Markdown content={'```kline\n' + KLINE_JSON + '\n```'} />)
-      await waitFor(() => expect(vi.mocked(createKline)).toHaveBeenCalledTimes(1))
+      await waitFor(() => expect(vi.mocked(createKlineChart)).toHaveBeenCalledTimes(1))
       await user.click(screen.getByTitle('送上画布（落为 K 线节点，可切换周期 / 复权）'))
       expect(sendKline).toHaveBeenCalledTimes(1)
       expect(sendKline.mock.calls[0]?.[0]).toMatchObject({

@@ -78,7 +78,7 @@ export function ByokCard(): React.JSX.Element {
     try {
       const res = await apiDelete<{ status: LlmCredentialStatus }>('/api/auth/llm-credentials')
       apply(res.status)
-      toast('已恢复系统默认模型与 Key')
+      toast.success('已恢复系统默认模型与 Key')
     } catch (err) {
       toast.error((err as Error).message)
     } finally {

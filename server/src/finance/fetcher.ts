@@ -8,8 +8,11 @@ import { antiBotFetch, type AntiBotRequest, type AntiBotResponse } from '../tool
 
 export type Fetcher = (req: AntiBotRequest) => Promise<AntiBotResponse>
 
-/** 默认 Fetcher：反爬模块（限速 / 冷却 / 退避 / GBK 解码） */
-export const defaultFetcher: Fetcher = (req) => antiBotFetch(req)
+/**
+ * 默认 Fetcher：反爬模块（限速 / 冷却 / 退避 / GBK 解码）；
+ * M82：出口通道固定 finance（源适配器一律经联网出口层，未配置出口时行为与历史一致）。
+ */
+export const defaultFetcher: Fetcher = (req) => antiBotFetch({ ...req, egressChannel: 'finance' })
 
 export interface SourceCtx {
   fetcher?: Fetcher

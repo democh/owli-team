@@ -66,65 +66,40 @@ test('右栏显隐：中区头部钮 / 刷新持久化 / ⌘B 与命令面板同
   await expect(teamTab(page)).toBeHidden()
 })
 
-test('左栏显隐：左缘中部悬浮把手（悬停淡入）/ 刷新持久化 / ⌘⇧B 与命令面板同源', async ({ page }) => {
+test('左栏显隐（M85 去把手）：⌘⇧B / 刷新持久化 / 命令面板同源', async ({ page }) => {
   await openApp(page)
 
-  // 1) 初始展开：左钮为主区左缘垂直中部的悬浮把手（默认不展示，悬停左缘热区淡入；不在顶栏 / 会话头部）
+  // 1) M85：左缘悬浮把手已移除——主区左缘 / 顶栏 / 会话头不渲染任何左栏浮钮
   const sessionsPanel = page.locator('[data-panel-id="sessions"]')
   const mainPanel = page.locator('[data-panel-id="main"]')
   await expect(sessionsPanel).toBeVisible()
   const widthBefore = (await sessionsPanel.boundingBox())?.width ?? 0
   expect(widthBefore).toBeGreaterThan(100)
-  const leftHandle = mainPanel.getByTitle('隐藏左栏（⌘⇧B）')
-  await expect(leftHandle).toHaveCount(1)
-  // 非悬浮不展示：初始透明（opacity:0；悬停热区淡入）
-  await expect(leftHandle).toHaveCSS('opacity', '0')
-  await leftHandle.hover()
-  await expect(leftHandle).toHaveCSS('opacity', '1')
-  // 位置：贴主区左缘（水平）、垂直居中于主区
-  const mainBox = await mainPanel.boundingBox()
-  const handleBox = await leftHandle.boundingBox()
-  expect((handleBox?.x ?? 0) - (mainBox?.x ?? 0)).toBeLessThan(16)
-  const midGap = Math.abs(
-    ((handleBox?.y ?? 0) + (handleBox?.height ?? 0) / 2) - ((mainBox?.y ?? 0) + (mainBox?.height ?? 0) / 2),
-  )
-  expect(midGap).toBeLessThan(24)
-  // 移开鼠标后淡出（非悬浮不展示）
-  await page.mouse.move(640, 40)
-  await expect(leftHandle).toHaveCSS('opacity', '0')
-  await expect(sessionsPanel.getByTitle('隐藏左栏（⌘⇧B）')).toHaveCount(0)
+  await expect(mainPanel.getByTitle('隐藏左栏（⌘⇧B）')).toHaveCount(0)
   await expect(page.locator('header').getByTitle('隐藏左栏（⌘⇧B）')).toHaveCount(0)
 
-  // 2) 收起：会话列表卸载，钮原位切换为「显示左栏（⌘⇧B）」（常驻入口）
-  await mainPanel.getByTitle('隐藏左栏（⌘⇧B）').click()
+  // 2) ⌘⇧B 收起：会话列表卸载（快捷键为唯一键盘入口）
+  await page.keyboard.press('ControlOrMeta+Shift+b')
   await expect(page.locator('[data-panel-id="sessions"]')).toHaveCount(0)
-  await expect(mainPanel.getByTitle('显示左栏（⌘⇧B）')).toBeVisible()
 
-  // 3) 刷新持久化：收起状态保持（localStorage ma:leftPanelOpen=0），钮仍在
+  // 3) 刷新持久化：收起状态保持（localStorage ma:leftPanelOpen=0）
   await page.reload()
   await expect(page.getByText('Owli Team').first()).toBeVisible()
   await expect(page.locator('[data-panel-id="sessions"]')).toHaveCount(0)
-  await expect(mainPanel.getByTitle('显示左栏（⌘⇧B）')).toBeVisible()
 
-  // 4) 点击中区钮展开：会话栏回到收起前的分栏宽度（原位恢复）
-  await mainPanel.getByTitle('显示左栏（⌘⇧B）').click()
+  // 4) ⌘⇧B 再展开：会话栏回到收起前的分栏宽度（原位恢复）
+  await page.keyboard.press('ControlOrMeta+Shift+b')
   await expect(page.locator('[data-panel-id="sessions"]')).toBeVisible()
   const widthAfter = (await page.locator('[data-panel-id="sessions"]').boundingBox())?.width ?? 0
   expect(Math.abs(widthAfter - widthBefore)).toBeLessThan(4)
 
-  // 5) ⌘⇧B / Ctrl+Shift+B：收起 + 再展开（快捷键与中区钮同源）
-  await page.keyboard.press('ControlOrMeta+Shift+b')
-  await expect(page.locator('[data-panel-id="sessions"]')).toHaveCount(0)
-  await page.keyboard.press('ControlOrMeta+Shift+b')
-  await expect(page.locator('[data-panel-id="sessions"]')).toBeVisible()
-
-  // 6) 命令面板入口同源：⌘K 打开面板 → 「左栏：显示 / 隐藏」收起
+  // 5) 命令面板入口同源：⌘K 打开面板 → 「左栏：显示 / 隐藏」收起
   await page.keyboard.press('ControlOrMeta+k')
   await page.getByRole('option', { name: '左栏：显示 / 隐藏' }).click()
   await expect(page.locator('[data-panel-id="sessions"]')).toHaveCount(0)
 })
 
-test('左右双收：主区独占 + 双钮常驻，逐一展开后左右栏均原位恢复', async ({ page }) => {
+test('左右双收：主区独占 + 单钮（右）常驻，逐一展开后左右栏均原位恢复', async ({ page }) => {
   await openApp(page)
   const sessionsPanel = page.locator('[data-panel-id="sessions"]')
   const teamPanel = page.locator('[data-panel-id="team"]')
@@ -134,16 +109,16 @@ test('左右双收：主区独占 + 双钮常驻，逐一展开后左右栏均�
   const sBefore = (await sessionsPanel.boundingBox())?.width ?? 0
   const tBefore = (await teamPanel.boundingBox())?.width ?? 0
 
-  // 先收右栏（⌘B）再收左栏（⌘⇧B）→ 两栏卸载、双钮常驻（左钮在左缘中部悬浮把手、右钮在头部最右端）
+  // 先收右栏（⌘B）再收左栏（⌘⇧B）→ 两栏卸载；M85：左栏把手已移除（左收仅 ⌘⇧B），右钮在头部最右端
   await page.keyboard.press('ControlOrMeta+b')
   await page.keyboard.press('ControlOrMeta+Shift+b')
   await expect(sessionsPanel).toHaveCount(0)
   await expect(teamPanel).toHaveCount(0)
-  await expect(mainPanel.getByTitle('显示左栏（⌘⇧B）')).toBeVisible()
+  await expect(mainPanel.getByTitle('显示左栏（⌘⇧B）')).toHaveCount(0)
   await expect(mainPanel.getByTitle('显示右栏（⌘B）')).toBeVisible()
 
   // 逐一展开（先左后右）→ 各栏回到双收前宽度（记账不串位）
-  await mainPanel.getByTitle('显示左栏（⌘⇧B）').click()
+  await page.keyboard.press('ControlOrMeta+Shift+b')
   await mainPanel.getByTitle('显示右栏（⌘B）').click()
   await expect(teamPanel).toBeVisible()
   const sAfter = (await sessionsPanel.boundingBox())?.width ?? 0

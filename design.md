@@ -617,7 +617,7 @@ http.Server ──▶ WsHub（单例，挂载 /ws）
 
 ### 19.1 设计目标
 
-- **一眼辨人（v2 强化）**：全部业务角色配备专属卡通形象照（v2 批 74 张起、后续批次逐批增补；M69 批 46 张 2026-09-19 落盘、v99 批四席 2026-09-23 补生成——均见 §19.3 表尾注；`blank/general` 有意回退渐变占位），靠「年龄 + 性别 + 脸型 + 发色发型 + 眼镜 / 胡须 + 肤色 + 职业道具」七维设定逐一区分（设定表见 §19.3），而非仅靠配色；统一纯白背景，可无缝嵌入任意底色容器；
+- **一眼辨人（v2 强化）**：全部业务角色配备专属卡通形象照（v2 批 74 张起、后续批次逐批增补；M69 批 46 张 2026-09-19 落盘、v99 批四席 2026-09-23 补生成、v108 批五席 2026-09-25 落盘——均见 §19.3 表尾注；`blank/general` 有意回退渐变占位），靠「年龄 + 性别 + 脸型 + 发色发型 + 眼镜 / 胡须 + 肤色 + 职业道具」七维设定逐一区分（设定表见 §19.3），而非仅靠配色；统一纯白背景，可无缝嵌入任意底色容器；
 - **卡通化（v2）**：风格化 3D 卡通（动画电影式渲染）——成人比例（约 1:4 头身，非 Q 版 / 幼态）、五官圆润简化、眼神略夸张、哑光黏土质感、色彩明快；头部占画面高度约 55%，保障 16–96px 小尺寸下的可辨识性；
 - **成年团队感**：成年比例半身像，统一构图与柔和棚拍光，人物好看且专业；
 - **面孔与命名一致**：西式命名角色（Felix / Ada / Iris / Leo / Max / Nova / Otto…）为欧美面孔，中文命名角色为东亚面孔；肤色、年龄带（24–52 岁）与发色错开；
@@ -765,8 +765,13 @@ agent 包内 avatar.png 自动发现 ──> avatar.image = /api/agents/<id>/ava
 | wellness-mind · emotion-companion | 听澜 · 情绪陪谈师 | 33 · 东亚女 · 温和沉静 | 低扎中长发 | 青绿针织开衫 + 米白内搭 | 双手捧茶杯 |
 | wellness-mind · mindfulness-guide | 安屿 · 正念引导师 | 30 · 东亚女 · 安定柔和 | 黑色低发髻 | 墨绿棉麻衬衫 | 小盆绿植 |
 | wellness-mind · psycho-educator | 知澄 · 心理科普员 | 36 · 东亚男 · 温和知性 | 整洁短发 + 细框眼镜 | 深蓝开衫 + 浅蓝衬衫 | 翻阅的厚书 + 彩色便签 |
+| bullbear · judge | 顾鉴 · 裁决长 | 46 · 东亚男 · 沉稳权威 | 短黑发两鬓微霜 | 深炭三件套 + 靛蓝领带 | 法槌 + 底座 |
+| bullbear · bull-lead | 向阳 · 多方主辩 | 34 · 东亚男 · 开朗自信 | 黑色短卷发 | 深灰西装 + 绯红高领毛衣 | 上扬走势图板 |
+| bullbear · bear-lead | 知寒 · 空方主辩 | 32 · 东亚女 · 冷峻审视 | 黑色长直发 | 深灰风衣 + 墨绿丝巾 | 放大镜 |
+| bullbear · bull-quant | 陆准 · 多方证据官 | 33 · 东亚男 · 理性专注 | 黑色寸头 + 方框眼镜 | 藏青马甲 + 白衬衫 + 绯红领带 | 手持计算器 |
+| bullbear · bear-quant | 程实 · 空方证据官 | 31 · 东亚女 · 认真严谨 | 棕色齐肩波波头 + 无框眼镜 | 墨绿衬衫 + 深色背带 + 工牌挂绳 | 笔记本 + 游标卡尺 |
 
-> 注（2026-09-19 M69 头像批）：上述 46 行按成品观测回溯补录（统一风格前缀 v3：半写实 3D 卡通 / 成人比例约 1:4.5 / 纯白背景 / 哑光质感；同批生成 512×512 落盘）；M51 批 40 角色与 interior 批的形象以成品为准（未入表）。2026-09-23 补：v99 新增四席（funding/dd-analyst 与 wellness-mind 三席）按成品观测补录于表尾；business-sim 三行随场景下线移除。
+> 注（2026-09-19 M69 头像批）：上述 46 行按成品观测回溯补录（统一风格前缀 v3：半写实 3D 卡通 / 成人比例约 1:4.5 / 纯白背景 / 哑光质感；同批生成 512×512 落盘）；M51 批 40 角色与 interior 批的形象以成品为准（未入表）。2026-09-23 补：v99 新增 四席（funding/dd-analyst 与 wellness-mind 三席）按成品观测补录于表尾；business-sim 三行随场景下线移除。2026-09-25 补：v108 批五席（bullbear 多空对决场）按成品观测补录于表尾（统一风格前缀 v3；场景主题色元素：绯红 #dc2626 / 墨绿 #059669 / 靛蓝 #6366f1；空方证据官首版误出拟人熊形象已重生成，提示词须显式要求 HUMAN/no animal features）。
 
 用户（人类主角）不设头像：界面中不渲染用户形象（消息流、交接条、接力视图均不出现用户头像）。
 
@@ -4538,3 +4543,50 @@ M57 多用户与长期运行暴露的横切加固：联网反爬（UA 池可配�
 - 被否决：前端启发式识别 / 独立消息字段 / 字符串二次扫描器 / 单行聚合总行 / 复用 details（详见 ADR 0217）。
 
 - 镜像面：ADR 0217 + `docs/adr/README.md` 索引、`docs/turn-card-process-design.md`（专项设计，状态已回写）、`agents/CHANGELOG.md` v105、E2E `m81-turncard-process.spec.ts`、本页。
+
+## 123. 联网出口层（M82）——BYO 代理与隧道模式（统一出口 · 按通道路由 · 回退隔离）
+
+用户诉求「所有联网搜索 / 爬虫相关通道都能配置 IP 代理或隧道模式」：此前全仓出网无任何代理能力（`antiBotFetch` + 浏览器 / 子进程各自从宿主 IP 直出），IP 级风控只能「换站点」不能「换出口」。本批落地 P0（Node 抓取主链路 + 配置面），浏览器 / 子进程 / SSH 隧道为 P1。详细设计见 `docs/egress-proxy-design.md`，决策与被否决方案见 ADR 0218。
+
+- 出口层（`server/src/net/egress.ts`）：Route 四形态 `direct / http-proxy / socks5 / ssh-tunnel`（P0 实现前三；SSH 隧道创建期显式拒绝并提示 P1，避免「建了不生效」）；按「通道门控 → 旁路 → 降级冷却」解析；**回环（localhost / 127.x / ::1）硬编码恒直连**（本地服务安全红线）；旁路支持域后缀 / 裸域名 / IP / IPv4 CIDR（与连接级 bypass 求并集）；
+- 通路接入（P0）：`antiBotFetch` 单点接入即覆盖 web_search / web_fetch / 财经 Node 源三大通道；代理路径统一用**同包 `undici.fetch` + `ProxyAgent`**（实测 npm ProxyAgent 喂给 Node 内置 fetch 报 `UND_ERR_INVALID_ARG: invalid onRequestStart`，设计期预写的兜底分支启用；SOCKS5 由 `Socks5ProxyAgent` 原生承接、远端 DNS；凭据载体实测区分：HTTP(S) 代理用 `token`、SOCKS5 用 `username/password` 选项）；直连路径保持全局 `fetch`（零回归）；
+- 配置三层：连接中心新 `kind='proxy'`（HTTP(S) / SOCKS5；凭据 SecretVault 加密、成员创建 403、不参与会话绑定、**「测试」= 出口探测**——经该出口请求 `egressProbeUrl` 回显出口 IP / 延迟并回写 status）；设置面板新增「联网与出网」区块（出口模式 / 出口连接 / 跟随通道多选 / 直连旁路 / 失败回退 / 探测地址 + 出口状态与测试按钮）；env `EGRESS_*` 作启动默认与无 DB 后备（连接缺失 / 禁用 → 回落直连并显式告警，不静默用后备 URL）；
+- 回退与归因隔离：`search/finance/browser` 默认「出口不可用 → 直连一次并标注」，连续 2 次出口级失败 60s 降级冷却（冷却期直连、到期自动重试）；`llm/mcp` 恒严格（合规场景绝不回退泄漏真实 IP）；新增 `AntiBotError('egress')` **不**计入目标 host 风控冷却，财经网关 `isEgressFailure` 不为出口失败冷却数据源（避免「代理挂了 → 全源冷却」）；工具 summary 标注「（出口：X）/（出口代理不可用，已直连）/（出口代理降级中，已直连）」；
+- 观测与审计：`GET /api/egress/status`（模式 / 绑定 / 通道 / 降级冷却 / 最近探测与错误）；设置变更首次落审计（`settings.update`，仅字段清单不落值）；
+- 核验（2026-09-25）：server **1517/1517**（新增 `tests/egress.test.ts` 29 例：配置解析 / 旁路匹配 / 路由解析 / HTTP 代理链路 / SOCKS5（无鉴权与账号口令 RFC 1929 握手）/ Basic 鉴权 / 回退与降级 / Abort 语义 / 探测 / 连接中心 CRUD 与成员 403 / 设置热更与审计 / antiBotFetch 集成与工具标注）· client **1371/1371**（新增 `tests/m82-egress.test.tsx` 4 例：设置区块渲染与出口状态 / 保存载荷 / 测试出口 / 新建出口代理载荷）· 双端 + e2e typecheck 0 错 · lint 0 error · build 通过；
+- 被否决：内置代理池 / 自动轮换 / 第三方中转（ADR 0184 口径延续）、仅 `NODE_USE_ENV_PROXY` + 进程 env、`https-proxy-agent` 栈替换、默认严格失败、全通道默认纳入出口、浏览器 / 隧道直吃鉴权代理（详见 ADR 0218）。
+
+- 镜像面：ADR 0218 + `docs/adr/README.md` 索引、`docs/egress-proxy-design.md`（ 专项设计，状态已回写）、`docs/operations.md §4.5 / §8`、`.env.example`、`server/tests/egress.test.ts` + `client/tests/m82-egress.test.tsx`、本页。
+
+## 124. K 线分析引擎与 DSL 策略引擎（M83）——阶段 / 情绪 / 关键位 · 自研安全 DSL · 图表组件族 · 双席接入
+
+- 设计：[docs/kline-analysis-dsl-design.md](docs/kline-analysis-dsl-design.md)（v2 自评审修订）；决策：[ADR 0219](docs/adr/0219-kline-analysis-dsl.md)；
+- 服务端引擎（纯计算零网络）：`finance/analysis/`（十阶段规则化判定 + 逐根回放两段式平滑（最短段 ≥3 + **方向性**转移邻接回填）/ 摆动点容平聚类关键位 / 情绪五档多因子 / 底部特征 / 落图构造；参数常量集中；样本 <60 降档声明）；`finance/dsl/`（自研 tokenizer + 递归下降 + 向量化求值；白名单函数与 indicator 口径一致；**反未来函数三层拦截**（lint / parser / 运行时 FUTURE_REF）；lint 免取数；边沿触发执行 + facts 排查快照；4 内置策略）；
+- 契约单源：`shared/src/kline-contract.ts`（Drawing / SignalSpec / KlinePhase / KlineAnalysis + 主副图枚举）——工具 / 路由 / 客户端三处消费由编译器保证一致（取代 M34 三处人工同步）；
+- 工具与路由：`fin_analyze`（分析 + 快照 + kline 块模板）· `fin_strategy`（lint / run）· `fin_backtest` 增 `template='dsl'`（**共享信号层**，与 fin_strategy 同口径；「模板 ma-cross ↔ 等价 DSL」一致性测试锁定）；快照 / 块模板扩展 render / drawings / signal / analysis（**只增可选字段**，旧块 / 旧快照零改动）；路由 `GET /finance/analysis` + `POST /finance/strategy/lint|run` + `GET /finance/strategy/meta`；
+- 客户端图表组件族：`components/finance/chart/`（theme / overlays ×6（labeledLine / rectZone / textLabel / phaseBand / positionTool / polyline）/ 自研指标 KCB·ST·DONCHIAN·ICHIMOKU + ATR / layout（副图面高度分配——既有修复与断言保留）/ drawings / entry（唯一动态 import，chunk 边界不变））+ KlineCanvas 工具条（主图 8 项 + 副图 + 阶段 + 截图；窄容器 compact）与 KlineAnalysisPanel（阶段卡 / 情绪 / 关键位 / 特征 / 历史阶段条 / 可折叠）；`lib/kline.ts` 删除；块 spec 扩展（**增强字段降级** + warnings）；KlineBlock / KlineNode 升级（智能分析按钮、面板、**切换失效纪律**、节点写回）；
+- Agent 接入（最小授权）：analyst-ta（雷动）+ `fin_analyze`；quant（方程）+ `fin_strategy` + 技能 `strategy-dsl`（DSL 语法 / 白名单 / lint→run→回测工作流）；
+- 核验（2026-09-25）：server **131 文件 / 1565 用例 ✅**（新增 m83-analysis 15 / m83-dsl 20 / m83-finance-tools 12 / 回测 dsl 通道 1）；client **126 文件 / 1383 用例 ✅**（新增 spec 扩展 / 分析面板 / 块级分析渲染 / 面高迁移）；check:agents **161/161 + 协议 40/40 + 声纹 24/24 ✅**；check:skills **71/71 ✅**（+strategy-dsl）；eval（mock）**56/56 ✅**；双端 + e2e typecheck 0 错；
+- 被否决：eval / new Function 求值 · 类型 server 主 client 镜像 · fin_kline 加 analyze 开关 · 增强字段显式报错 · 引擎内调 LLM 写文案 · 客户端日期解析（详见 ADR 0219）；
+- 镜像面：ADR 0219 + `docs/adr/README.md` 索引、`docs/kline-analysis-dsl-design.md`（状态已回写）、`agents/CHANGELOG.md` v106、`skills/strategy-dsl/SKILL.md`、`server/tests/m83-*.test.ts` + `client/tests/m83-*.test.*` + `m34-md-blocks / m34-kline-panes`（mock 边界迁移）、本页。
+- 审计收口（2026-09-25 后续核验）：**块模板 `render` 对象形态解析缺失修复**（`kline-spec` 兼容嵌套 render——server `klineBlockTemplate` 生成的主/副图与阶段开关配置此前被静默忽略）；E2E `e2e/m83-kline-analysis.spec.ts`（mock「K 线走查」内联块路径：工具条主副图切换 / 阶段开关 / 分析面板 / 零取数真实渲染）；跨端契约 fixture（`client/tests/fixtures/m83-{block,snapshot}.json` 由真实 server 引擎产出 + `m83-kline-contract.test.ts` 解析锁定）；「送上画布」携带 drawings / analysis；`entry` 阶段色板去重（单一来源 `phaseColors`）；
+
+## 125. 多空对决场与统计举证引擎（M84）——新场景 bullbear · fin_stats · Python 统计扩展
+
+- 设计：[docs/bullbear-arena-design.md](docs/bullbear-arena-design.md)；决策：[ADR 0220](docs/adr/0220-bullbear-arena-stats.md)；
+- 场景：`agents/bullbear/`（`_group.yaml` arena 布局 seats 左多右空 + 中央裁决 · `_protocol.md` 17 条 · 5 角色六段骨架 · 预设 `bullbear-pk`）；与 invest「多空对弈」边界：专职赛场 + 统计上桌 + 独立裁决书（invest 协议加一行引导移交）；
+- 统计引擎：`finance/stats.ts`（6 事件检测器 + Node 兜底基础统计）；桥 `stats` / `significance` **纯计算**任务（series / bars 由 Node 侧传入；bootstrap 固定 seed）；网关 `pyStats` 通道（absent 直接抛错，不提供近似值）；`fin_stats` 双模式（summary 可降级 Node 基础统计 / significance 桥专属不硬造）；probe `ANALYTICS_PY_PACKAGES` + `fin_env group=base|analytics|all`；
+- Agent 接入：bull-quant / bear-quant + `fin_stats` / `fin_strategy` / `fin_backtest`；judge + `fin_analyze` / `fin_stats`；技能 `skills/quant-evidence`；
+- 镜像面：mock 四件套（5 角色 SCRIPTS / artifactFor / DISPLAY_NAMES / preferredOf + e2e AGENT_NAME）+ 触发块「对决走查」（claim ×2 + ruling + verdict + kpi）+ `e2e/m84-bullbear.spec.ts`；
+- 核验（2026-09-25）：server **132 文件 / 1581 用例 ✅**（新增 m84-stats 16 例：事件检测器 / Node 兜底 / 工具降级矩阵 / 真脚本冒烟按环境守卫）；E2E **m84 1/1 ✅**；check:agents **166/166 + 协议 41/41 + 声纹 24/24 ✅**；check:skills **72/72 ✅**（+quant-evidence）；eval（mock）**56/56 ✅**（零新增口径：mock 走查 + E2E 承接）；双端 + e2e typecheck 0 错；
+- 审计收口（2026-09-25 后续核验）：观察项已落地——证据徽标「统计级」（`lib/evidence` 增 statistical：证据行含 p= / n= / CI[ 命中，优先级最高；ClaimTree / StanceCard 共用渲染）· 立场互换（ArenaActions 「互换立场」动作 + `TEMPLATES.swapSides` + 计分板备注标记）；5 角色头像 512 落盘（见 §19.3 表尾 v108 批 + CHANGELOG v108）；
+- 镜像面：ADR 0220 + `docs/adr/README.md` 索引、`docs/bullbear-arena-design.md`（状态已回写）、`agents/CHANGELOG.md` v107、`skills/quant-evidence/SKILL.md`、`server/tests/m84-stats.test.ts` + `e2e/m84-bullbear.spec.ts`、本页。
+
+## 126. K 线手动划线圈（M85 / M83 批 E-1）——十二工具 · 本地持久化 · 分组隔离
+
+- 决策：[ADR 0221](docs/adr/0221-kline-manual-drawings.md)；设计来源：[docs/kline-analysis-dsl-design.md](docs/kline-analysis-dsl-design.md) 批 E 首项；
+- 客户端：`chart/manual-drawings.ts`（12 工具注册表 / overlay 映射 / 存储净化）+ `chart/useManualDrawings.ts`（撤销重做 ≤50 步 / localStorage 持久化 / 同源事件多实例同步）+ `DrawingToolbar`（指针 + 12 工具（三分组分隔）+ 撤销 / 重做 / 两步清空 + 计数）+ `DrawingStyleBar`（色板 / 线宽 / 虚线 / 填充 / 文本 / 锁定 / 删除）+ `KlineCanvas` 集成（有 symbol 才启用；Esc / Del / ⌘Z 快捷键）+ `overlays.ts` 自定义 overlay 族（交互变体 + 新增 `fibExtension` 三点扩展 / `pitchfork` 三点分叉 / `volProfile` 区间量分（数据源 `chart.getDataList()`））+ `entry.ts` 自持绘制（capture 点击收集 + `convertFromPixel` 换算 + 预览组 `manual-draft`）与智能更新路径（id 集合不变 → `overrideOverlay` 就地覆盖保选中；结构变更 → 整组重建）；
+- 手势与语义：**多点工具依次点击 N 点即完成**（不依赖框架步数语义——实测其行为随 totalStep 不一致，已改为自持）；单点工具单击完成；右键 / Esc 取消；Del 删除（未锁）；手动组 `manual` 与分析 / 策略落图组互不可见地共存；无 symbol 的内联块不启用（不落盘）；
+- 核验（2026-09-25）：client **128 文件 / 1401 用例 ✅**（m85-manual-drawings 13 例：存储净化 / overlay 映射（含三新件）/ 钩子撤销重做与持久化 / 组件集成）；E2E **m85 1/1 + m83 复跑 1/1 ✅**（含像素→价格径向 sanity 断言）；双端 + e2e typecheck 0 错；
+- 边界：手动划线为用户本地标注（不落服务端、不随「送上画布」迁移）；批 E 已全部收口——E 余项（Monaco 策略工作室 / 实时盯盘）经产品侧确认不立项 / 暂缓（[ADR 0222](docs/adr/0222-batch-e-closure.md)）；
+- 镜像面：ADR 0221 + [ADR 0222](docs/adr/0222-batch-e-closure.md)（批 E 收口）+ `docs/adr/README.md` 索引、`docs/kline-analysis-dsl-design.md`（批 E 状态回写）、`client/tests/m85-manual-drawings.test.tsx` + `e2e/m85-kline-drawings.spec.ts`、本页。
