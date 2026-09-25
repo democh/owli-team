@@ -58,6 +58,8 @@ export interface DbHandle {
   schema(opts: { maxTables: number; timeoutMs: number }): Promise<DbSchemaSnapshot>
   version(): Promise<string | undefined>
   close(): Promise<void>
+  /** 句柄损坏（如 SQLite 超时终止 worker）：管理器据此跳过缓存自动重建；缺省 = 恒健康 */
+  isBroken?(): boolean
 }
 
 export interface DbConnector {

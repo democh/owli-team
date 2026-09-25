@@ -1,0 +1,29 @@
+id: wellness-mind
+name: 心理支持
+description: 情绪陪伴与心理韧性建设：情绪陪谈 / 正念练习 / 心理科普；非心理治疗，不做诊断、不替代咨询，危机信号直接转介专业帮助
+icon: heart-handshake
+theme: ["#0d9488", "#f472b6"]
+objective: 让情绪被接住、让练习可坚持：状态有梳理、练习有节奏、知识有出处
+chain: [emotion-companion, mindfulness-guide, psycho-educator]
+defaultSkills: [relationship-communication]
+parallel: false
+rounds: false
+order: 142
+guide: 说说你最近的状态或困扰
+agenda:
+  - label: 情绪梳理
+    prompt: 我最近状态不太好，帮我梳理一下现在的情绪和可能的来源：
+  - label: 正念练习
+    prompt: 带我做一个短时正念 / 呼吸练习，并给我一周的练习安排：
+  - label: 心理科普
+    prompt: 给我科普一下这个概念（含边界与求助渠道）：
+  - label: 复盘状态
+    prompt: 帮我复盘这段时间的情绪变化与练习执行情况：
+ritual:
+  title: 每日正念
+  cron: "30 8 * * *"
+  opener: 带我做今天的短时正念练习（3–10 分钟），并给这周剩下的练习安排。
+  description: 每天 08:30 一次短时正念
+stage:
+  layout: dock
+  panel: coach

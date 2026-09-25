@@ -7,7 +7,7 @@
  * - schema 走 information_schema（排除 pg_catalog / information_schema）。
  */
 import type { Pool as PgPool, PoolConfig } from 'pg'
-import { analyzeSql } from './guard.js'
+import { analyzeSql, wrapSelectWithLimit } from './guard.js'
 import {
   cfgBool,
   cfgNumber,
@@ -61,16 +61,18 @@ class PgHandle implements DbHandle {
         await client.query('BEGIN READ ONLY')
         inTx = true
       }
-      const res = await client.query({ text: sql, values })
-      if (inTx) await client.query('ROLLBACK')
-      inTx = false
       const analysis = analyzeSql(sql)
       const isWrite =
         analysis.mutating ||
         !['SELECT', 'WITH', 'EXPLAIN', 'SHOW', 'TABLE', 'VALUES'].includes(analysis.firstKeyword)
+      // 行数下推：SELECT/WITH 包 LIMIT maxRows+1 由库端截断（防大结果集整包拉进内存）；+1 行仅作截断探测
+      const text = isWrite ? sql : (wrapSelectWithLimit(sql, opts.maxRows) ?? sql)
+      const res = await client.query({ text, values })
+      if (inTx) await client.query('ROLLBACK')
+      inTx = false
       const rows = (res.rows ?? []) as Array<Record<string, unknown>>
-      const rowCount = rows.length
-      const limited = rowCount > opts.maxRows ? rows.slice(0, opts.maxRows) : rows
+      const overLimit = rows.length > opts.maxRows
+      const limited = overLimit ? rows.slice(0, opts.maxRows) : rows
       return {
         columns: (res.fields ?? []).map((f) => f.name),
         rows: limited.map((row) => {
@@ -78,8 +80,8 @@ class PgHandle implements DbHandle {
           for (const [key, value] of Object.entries(row)) out[key] = sanitizeRowValue(value)
           return out
         }),
-        rowCount,
-        truncated: rowCount > opts.maxRows,
+        rowCount: limited.length,
+        truncated: overLimit,
         durationMs: Date.now() - started,
         affectedRows: isWrite ? (res.rowCount ?? undefined) : undefined,
       }

@@ -142,7 +142,7 @@ export function BrowserPanel(): React.JSX.Element {
   const imgRef = React.useRef<HTMLImageElement>(null)
   const wrapRef = React.useRef<HTMLDivElement>(null)
   // M79-AF：只读共享（viewer）→ 接管 / 归还 / 关闭 / 画面输入全部只读（服务端另有写闸门兜底）
-  const isViewer = useSessionStore((s) => s.sessions.find((x) => x.id === s.currentId)?.role) === 'viewer'
+  const isViewer = useSessionStore((s) => s.current?.role) === 'viewer'
   const input = useBrowserFrameInput(wrapRef, imgRef, !isViewer)
 
   // 进入会话：加载活动会话 + 持有帧流引用；切会话 / 卸载：释放（与直播窗共享，归零才断流）

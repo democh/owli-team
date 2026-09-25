@@ -1,11 +1,19 @@
 /**
- * M79-AA：交接条（HandoffBar）——交还目标具体真人渲染。
- * - humanMentions（真人目标）→ 「from → 真人名」+ data-handoff-targets；点击头像一键接棒；
- * - 无具体目标数据的旧消息（mentions 含 user）→ 回退「你的回合」。
+ * M79-AA：交还目标具体真人渲染。
+ * - 交接条（HandoffBar）：humanMentions（真人目标）→ 「from → 真人名」+ data-handoff-targets；
+ *   点击头像一键接棒；无具体目标数据的旧消息（mentions 含 user）→ 回退「你的回合」；
+ * - 正文泛称展开（MessageItem 集成）：`@用户` / `@user` chip 就地展开为具体定向人名。
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen } from '@testing-library/react'
 import type { ChatMessage } from '@multi-agent/shared'
+
+vi.mock('sonner', () => {
+  const toastFn = vi.fn()
+  return { toast: Object.assign(toastFn, { error: vi.fn(), success: vi.fn(), info: vi.fn() }) }
+})
+
+import { MessageItem } from '../src/components/chat/MessageItem'
 import { HandoffBar } from '../src/components/chat/SystemEvent'
 import { useAgentStore } from '../src/stores/agent-store'
 import { useSessionStore } from '../src/stores/session-store'
@@ -56,5 +64,26 @@ describe('M79-AA：交接条具体真人渲染', () => {
     render(<HandoffBar message={makeAgentMessage({ mentions: ['user'] })} />)
     expect(screen.getByText('你的回合')).toBeTruthy()
     expect(document.querySelector('[data-handoff-targets]')).toBeNull()
+  })
+})
+
+describe('M79-AA：正文 @用户 泛称展开（MessageItem 集成）', () => {
+  it('agent 消息正文 @用户 → chip 展开为具体定向人名（与交接条同源 humanMentions）', () => {
+    const msg = makeAgentMessage({
+      id: 'm_expand',
+      content: '账目已理清，@用户 请拍板。',
+      mentions: ['user'],
+      humanMentions: ['u1'],
+    })
+    useSessionStore.setState({
+      currentId: 's1',
+      byId: new Map([[msg.id, msg]]),
+      order: [msg.id],
+    } as never)
+    const { container } = render(<MessageItem messageId="m_expand" />)
+    // 正文 chip 展示具体人（data-mention 保留原 token 锚点）
+    expect(container.querySelector('[data-mention="用户"]')?.textContent).toBe('@张三')
+    // 交接条口径一致（同一数据源）
+    expect(document.querySelector('[data-handoff-targets]')?.textContent).toBe('张三')
   })
 })

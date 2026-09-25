@@ -17,6 +17,7 @@ import type {
   NotifyListResponse,
   OpEvent,
   Plan,
+  ReactionSummary,
   ReviewRecord,
   ScheduledTask,
   Session,
@@ -41,6 +42,7 @@ import { usePlanStore } from './plan-store'
 import { useRunStore } from './run-store'
 import { useScheduleStore } from './schedule-store'
 import { useSessionStore } from './session-store'
+import { useSpaceStore } from './space-store'
 import { useTaskStore } from './task-store'
 import { useUiStore } from './ui-store'
 
@@ -69,6 +71,8 @@ let baseTitle = 'Owli Team'
 let pollMs = 8000
 /** M79-AB：是否曾成功连接（区分首次建连与断线重连——重连需 REST 权威补偿） */
 let everConnected = false
+/** 审批未读对账：本端因审批挂起加过未读的 approval id 集（resolved 时精确回退） */
+const approvalBadgePending = new Set<string>()
 
 /** M79-W：跨会话消息到达触发的列表权威对账（防抖合并：预览 / 排序 / 服务端未读数） */
 let sessionsResyncTimer: ReturnType<typeof setTimeout> | undefined
@@ -199,6 +203,20 @@ function toastForInbox(item: InboxItem): string | undefined {
   }
 }
 
+/**
+ * P4：通知空间化分级——「生活空间」的 inbox 推送在晚间静默（仅入箱，不弹 toast / 系统通知）。
+ * 晚间口径：20:00–07:00（本地）；空间未装配 / 会话未知一律不静默（行为与旧版一致）。
+ */
+export function inboxPushSilenced(item: InboxItem, now: Date = new Date()): boolean {
+  if (!item.sessionId) return false
+  const session = useSessionStore.getState().sessions.find((s) => s.id === item.sessionId)
+  const spaceId = session?.spaceId ?? 'default'
+  const space = useSpaceStore.getState().spaces.find((x) => x.id === spaceId)
+  if (space?.kind !== 'life') return false
+  const hour = now.getHours()
+  return hour >= 20 || hour < 7
+}
+
 function systemNotify(title: string, body: string): void {
   if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return
   try {
@@ -305,6 +323,8 @@ export function handleNotify(env: NotifyEnvelope): void {
     }
 
     // M10：审批事件兜底 —— SSE 建立前的 approval:requested 不丢（upsert 幂等）
+    // 审批是协作链路唯一「永久挂起等人」的状态：非当前会话或页面隐藏时计未读
+    // （favicon 角标 + 隐藏标题闪烁由 syncBadge 驱动），resolved 后回退（仅回退本端加过的那笔）
     case 'notify:approval-requested':
     case 'notify:approval-resolved': {
       if (handledBySse) break // 当前可见的流已处理同一事件
@@ -313,7 +333,26 @@ export function handleNotify(env: NotifyEnvelope): void {
         useRunStore.setState((s) => ({
           approvals: [...s.approvals.filter((a) => a.id !== approval.id), approval].slice(-20),
         }))
-        if (env.type === 'notify:approval-requested') toast(`模型请求审批：${approval.action}`)
+        if (env.type === 'notify:approval-requested') {
+          toast(`模型请求审批：${approval.action}`)
+          if (!visible) systemNotify('模型请求审批', `${sessionTitle(env.sessionId)}：${approval.action}`)
+          if ((!sameSession || !visible) && !approvalBadgePending.has(approval.id)) {
+            if (approvalBadgePending.size > 50) approvalBadgePending.clear() // 防泄漏兜底
+            approvalBadgePending.add(approval.id)
+            const next = { ...useWsStore.getState().unread }
+            next[env.sessionId] = (next[env.sessionId] ?? 0) + 1
+            useWsStore.setState({ unread: next })
+            syncBadge(next)
+          }
+        } else if (approvalBadgePending.delete(approval.id)) {
+          const prev = useWsStore.getState().unread
+          const count = prev[env.sessionId] ?? 0
+          if (count > 0) {
+            const next = { ...prev, [env.sessionId]: count - 1 }
+            useWsStore.setState({ unread: next })
+            syncBadge(next)
+          }
+        }
       }
       break
     }
@@ -371,6 +410,28 @@ export function handleNotify(env: NotifyEnvelope): void {
         toast(`${sessionTitle(env.sessionId)}：${preview}`)
         if (!visible) systemNotify('Owli Team', `${sessionTitle(env.sessionId)}：${preview}`)
       }
+      break
+    }
+
+    case 'notify:reaction': {
+      // M80-B：表情回应全量替换帧——mine 本地推导（广播帧 mine=false；userIds.includes(本人)）
+      const messageId = env.payload.messageId as string | undefined
+      const list = (env.payload.reactions as ReactionSummary[] | undefined) ?? []
+      if (!messageId) break
+      const myId = useAuthStore.getState().user?.id
+      const projected = list.map((r) => ({ ...r, mine: !!myId && r.userIds.includes(myId) }))
+      if (sameSession) useSessionStore.getState().patchMessage(messageId, { reactions: projected })
+      break
+    }
+
+    case 'notify:read-receipt': {
+      // M80-C 对等双向：本人关闭开关 → 不消费他人已读帧（与服务端空投影双保险）
+      if (!useAuthStore.getState().readReceiptsOn) break
+      // M80-C：成员已读水位推进（会话主题帧；单调推进，仅当前会话落地）
+      const uid = env.payload.userId as string | undefined
+      const seq = env.payload.lastReadSeq as number | undefined
+      if (!uid || typeof seq !== 'number') break
+      useSessionStore.getState().applyReadReceipt(env.sessionId, uid, seq)
       break
     }
 
@@ -580,7 +641,8 @@ export function handleNotify(env: NotifyEnvelope): void {
         void useSessionStore.getState().loadSessions()
       }
       const text = toastForInbox(item)
-      if (text) {
+      // P4：生活空间晚间静默（仍入箱并刷新列表；不弹 toast / 系统通知）
+      if (text && !inboxPushSilenced(item)) {
         toast(text)
         if (!visible) systemNotify('Owli Team', text)
       }

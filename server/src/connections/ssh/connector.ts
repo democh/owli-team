@@ -13,6 +13,7 @@ import { Client } from 'ssh2'
 import type { ClientChannel, ConnectConfig } from 'ssh2'
 import type { SshAuthMethod, SshExecResultDto } from '@multi-agent/shared'
 import { cfgNumber, cfgString } from '../db/types.js'
+import { getLogger } from '../../logger.js'
 
 const DEFAULT_READY_TIMEOUT_MS = 20_000
 const DEFAULT_KEEPALIVE_MS = 15_000
@@ -22,6 +23,24 @@ function expandHome(p: string): string {
   if (p === '~') return os.homedir()
   if (p.startsWith('~/')) return path.join(os.homedir(), p.slice(2))
   return p
+}
+
+/**
+ * 主机指纹归一化为 sha256 hex（无冒号小写）。
+ * 支持两种输入格式：OpenSSH 标准 `SHA256:<base64>`（ssh-keygen -l 输出）与 hex（可带冒号）。
+ */
+function normalizeFingerprint(raw: string): string | undefined {
+  const value = raw.trim()
+  if (!value) return undefined
+  if (/^SHA256:/i.test(value)) {
+    try {
+      return Buffer.from(value.slice(7), 'base64').toString('hex').toLowerCase()
+    } catch {
+      return undefined
+    }
+  }
+  const hex = value.replace(/:/g, '').toLowerCase()
+  return /^[0-9a-f]{64}$/.test(hex) ? hex : undefined
 }
 
 /** 连接 config / secret → ssh2 ConnectConfig（认证方式缺失或凭据不全时抛中文错误） */
@@ -39,6 +58,21 @@ export function resolveConnectConfig(
     username,
     readyTimeout: cfgNumber(config, 'readyTimeoutMs', DEFAULT_READY_TIMEOUT_MS),
     keepaliveInterval: cfgNumber(config, 'keepaliveIntervalMs', DEFAULT_KEEPALIVE_MS),
+  }
+  // 主机密钥指纹校验（可选；防 MITM）：config.hostFingerprint 支持 `SHA256:<base64>` 或 sha256 hex
+  const fingerprintRaw = cfgString(config, 'hostFingerprint')
+  if (fingerprintRaw) {
+    const expected = normalizeFingerprint(fingerprintRaw)
+    if (!expected) {
+      throw new Error('主机指纹格式无效：请使用 `SHA256:<base64>`（ssh-keygen -l 输出）或 64 位 hex')
+    }
+    base.hostHash = 'sha256'
+    base.hostVerifier = (hashedKey: string) => {
+      const actual = hashedKey.replace(/:/g, '').toLowerCase()
+      if (actual === expected) return true
+      getLogger().error({ host, port }, 'SSH 主机指纹不匹配，已拒绝连接（疑似中间人攻击或主机重装）')
+      return false
+    }
   }
   const authMethod = (cfgString(config, 'authMethod') ?? 'password') as SshAuthMethod
   if (authMethod === 'password') {

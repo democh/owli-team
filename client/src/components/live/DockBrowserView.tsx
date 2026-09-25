@@ -24,7 +24,7 @@ export function DockBrowserView(): React.JSX.Element {
   const imgRef = React.useRef<HTMLImageElement>(null)
   const wrapRef = React.useRef<HTMLDivElement>(null)
   // M79-AF：只读共享（viewer）→ 接管 / 归还 / 启动 / 画面输入全部只读（服务端另有写闸门兜底）
-  const isViewer = useSessionStore((s) => s.sessions.find((x) => x.id === s.currentId)?.role) === 'viewer'
+  const isViewer = useSessionStore((s) => s.current?.role) === 'viewer'
   const input = useBrowserFrameInput(wrapRef, imgRef, !isViewer)
 
   // 懒加载：直播窗独立于右栏打开时也能就位（与右栏共用的数据源）

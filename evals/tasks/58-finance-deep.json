@@ -1,0 +1,16 @@
+{
+  "id": "finance-deep",
+  "name": "财务法务：报税季测算 × 申报 × 合同 × 合规",
+  "participants": ["finance", "tax", "legal", "compliance"],
+  "prompt": "发起报税季合规检查：@周正 汇总账目口径与测算，@郑清 输出税种与申报清单，@卢明 审阅合同风险条款，@钟律 做合规检查；收尾汇总风险清单与待办。",
+  "maxTurns": 7,
+  "assertions": [
+    { "type": "artifact_exists", "path": "docs/财务测算-合同.md" },
+    { "type": "artifact_exists", "path": "docs/税务清单-合同.md" },
+    { "type": "artifact_exists", "path": "docs/合同审阅-合同.md" },
+    { "type": "artifact_exists", "path": "docs/合规检查-合同.md" },
+    { "type": "turns_lte", "value": 6 },
+    { "type": "no_loop" },
+    { "type": "run_end_reason", "value": "completed" }
+  ]
+}

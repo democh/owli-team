@@ -169,41 +169,53 @@ export function SessionList({ onSelect }: SessionListProps): React.JSX.Element {
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      {/* M79-C：左栏页签（会话 | 联系人；仅多用户模式渲染） */}
+      {/* M79-C：左栏页签（会话 | 联系人；仅多用户模式渲染）。
+          样式（2026-09-23 视觉收口）：行高 h-11 与主区页签行等高（顶带分隔线跨栏贯通）；页签改用
+          主区同款分段控件语言（灰轨道 + 白色激活块），与下方浅蓝筛选 chip 区分层级（页签 = 视图切换 /
+          chip = 列表过滤）；「新建会话」＋ 并入页签行右端（仅会话页签），不再单占一行标题。 */}
       {multiUser && (
-        <div className="flex h-9 shrink-0 items-center gap-1 border-b px-2">
-          {(['sessions', 'contacts'] as const).map((tab) => (
-            <button
-              key={tab}
-              type="button"
-              className={cn(
-                'flex items-center gap-1 rounded-full px-2.5 py-1 text-[12px] transition-colors',
-                leftTab === tab ? 'bg-primary/10 font-medium text-primary' : 'text-muted-foreground hover:text-foreground',
-              )}
-              onClick={() => useUiStore.getState().setLeftTab(tab)}
-            >
-              {tab === 'sessions' ? '会话' : '联系人'}
-              {tab === 'contacts' && pendingCount > 0 && (
-                <Badge
-                  variant="destructive"
-                  className="h-4 min-w-4 justify-center px-1 text-[10px]"
-                  aria-label={`${pendingCount} 条好友请求`}
-                >
-                  {pendingCount > 99 ? '99+' : pendingCount}
-                </Badge>
-              )}
-            </button>
-          ))}
+        <div className="flex h-11 shrink-0 items-center gap-1 border-b px-2">
+          <div className="inline-flex h-8 items-center gap-0.5 rounded-md bg-muted/80 p-0.5 shadow-inner">
+            {(['sessions', 'contacts'] as const).map((tab) => (
+              <button
+                key={tab}
+                type="button"
+                className={cn(
+                  'inline-flex h-full items-center gap-1 whitespace-nowrap rounded-[5px] px-2.5 text-[12.5px] font-medium transition-all',
+                  leftTab === tab ? 'bg-card text-primary shadow-sm' : 'text-muted-foreground hover:text-foreground',
+                )}
+                onClick={() => useUiStore.getState().setLeftTab(tab)}
+              >
+                {tab === 'sessions' ? '会话' : '联系人'}
+                {tab === 'contacts' && pendingCount > 0 && (
+                  <Badge
+                    variant="destructive"
+                    className="h-4 min-w-4 justify-center px-1 text-[10px]"
+                    aria-label={`${pendingCount} 条好友请求`}
+                  >
+                    {pendingCount > 99 ? '99+' : pendingCount}
+                  </Badge>
+                )}
+              </button>
+            ))}
+          </div>
+          {leftTab === 'sessions' && (
+            <Button variant="ghost" size="icon-sm" className="ml-auto" title="新建会话" onClick={openCreate}>
+              <Plus className="size-4" />
+            </Button>
+          )}
         </div>
       )}
       {multiUser && leftTab === 'contacts' ? (
         <ContactsPanel onSelectSession={onSelect} />
       ) : (
         <>
+      {/* 兼容模式（单用户，无页签）：保留「会话 N + 新建」头部 */}
+      {!multiUser && (
       <div className="flex h-11 shrink-0 items-center justify-between border-b px-3">
         <span className="text-[13px] font-semibold">
           会话
-          {sessions.length > 0 && <span className="ml-1.5 text-[11px] font-normal text-muted-foreground">{sessions.length}</span>}
+          {sessions.length > 0 && <span className="ml-1.5 text-[11px] font-normal text-muted-foreground">{visibleSessions.length}</span>}
         </span>
         <div className="flex items-center gap-0.5">
           <Button variant="ghost" size="icon-sm" title="新建会话" onClick={openCreate}>
@@ -211,10 +223,12 @@ export function SessionList({ onSelect }: SessionListProps): React.JSX.Element {
           </Button>
         </div>
       </div>
+      )}
 
-      {/* M79-F 修订：筛选 chip（团队 / 聊天；仅多用户模式）——不设「全部」项：默认选中第一个，点选过滤 / 再点取消回全部 */}
+      {/* M79-F 修订：筛选 chip（团队 / 聊天；仅多用户模式）——不设「全部」项：默认选中第一个，点选过滤 / 再点取消回全部。
+          与搜索同属一个无内部分隔线的工具区块；过滤后计数右对齐于本行（口径 = visibleSessions）。 */}
       {multiUser && (
-        <div className="flex shrink-0 items-center gap-1 border-b px-2 py-1">
+        <div className="flex shrink-0 items-center gap-1 px-2 pt-2 pb-1">
           {(
             [
               ['team', '团队'],
@@ -235,6 +249,9 @@ export function SessionList({ onSelect }: SessionListProps): React.JSX.Element {
               {label}
             </button>
           ))}
+          {sessions.length > 0 && (
+            <span className="ml-auto text-[11px] tabular-nums text-muted-foreground">{visibleSessions.length} 个会话</span>
+          )}
         </div>
       )}
 
@@ -508,6 +525,7 @@ export function SessionList({ onSelect }: SessionListProps): React.JSX.Element {
           </div>
         </DialogContent>
       </Dialog>
+
     </div>
   )
 }

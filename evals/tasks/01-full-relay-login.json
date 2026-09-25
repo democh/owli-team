@@ -16,6 +16,7 @@
     { "type": "no_loop" },
     { "type": "turns_lte", "value": 8 },
     { "type": "run_end_reason", "value": "completed" },
-    { "type": "token_budget_ok" }
+    { "type": "token_budget_ok" },
+    { "type": "message_no_banned_words", "values": ["综上所述", "总而言之", "赋能", "抓手", "颗粒度", "希望对你有帮助", "如有问题随时提问"] }
   ]
 }

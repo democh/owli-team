@@ -1,0 +1,17 @@
+{
+  "id": "wealth",
+  "name": "财富管理：财务体检 × 保障 × 大额决策",
+  "participants": ["wealth", "insurance-planner", "big-ticket-advisor"],
+  "prompt": "帮我做一轮个人财务体检：@钱程 盘收支与目标储蓄，@保宁 检视保障缺口（先保障后投资），@慎衡 就一笔大额支出给决策清单；收尾汇总三条优先动作。",
+  "maxTurns": 6,
+  "assertions": [
+    { "type": "artifact_exists", "path": "docs/理财方案-财务.md" },
+    { "type": "artifact_exists", "path": "docs/保障规划-财务.md" },
+    { "type": "artifact_exists", "path": "docs/大额决策-财务.md" },
+    { "type": "handoff_targets", "values": ["insurance-planner"] },
+    { "type": "turns_lte", "value": 5 },
+    { "type": "no_loop" },
+    { "type": "run_end_reason", "value": "completed" },
+    { "type": "message_no_banned_words", "values": ["综上所述", "总而言之", "赋能", "抓手", "颗粒度", "希望对你有帮助", "如有问题随时提问"] }
+  ]
+}

@@ -14,10 +14,11 @@
  * 循环依赖解法：Engine 先建 → 本服务引用 engine.launch / activeRunOf 闭包 → engine.setScheduleService
  * 回填（沿用 streamHub 先例；本文件不 import engine，依赖为函数类型）。
  */
-import type { ChatMessage, NotifyType, ScheduleActionKind, ScheduleNotifyAction, ScheduleSpec, ScheduledTask } from '@multi-agent/shared'
+import type { ChatMessage, NotifyType, RitualDeclaration, RitualSubscription, ScheduleActionKind, ScheduleNotifyAction, ScheduleSpec, ScheduledTask } from '@multi-agent/shared'
 import { isValidTimezone, nextScheduleAt, serverTimezone, validateScheduleSpec } from '@multi-agent/shared'
 import type { AppConfig } from '../config.js'
 import { getLogger } from '../logger.js'
+import type { RitualStore } from '../store/rituals.js'
 import type { ScheduleStore } from '../store/schedules.js'
 import type { SessionStore } from '../store/sessions.js'
 
@@ -34,6 +35,16 @@ export interface ScheduleServiceDeps {
   launch: (sessionId: string, userMessageId: string) => { runId: string }
   /** 会话忙判定（engine.activeRunOf 闭包） */
   isBusy: (sessionId: string) => boolean
+  /** P4：仪式订阅存储（缺省 = 未装配，tick 跳过仪式处理、订阅接口 503） */
+  rituals?: RitualStore
+  /** P4：场景声明解析（sceneId → ritual 声明 + 编制链 + 归属场景；缺省 = 无仪式能力） */
+  resolveRitual?: (sceneId: string) => { declaration: RitualDeclaration; chain: string[]; sceneId: string } | undefined
+  /** P5：系统仪式解析（ritualId → 声明 + 编制链 + 归属场景；缺省 = 无系统仪式能力） */
+  resolveSystemRitual?: (
+    ritualId: string,
+  ) => { declaration: RitualDeclaration; chain: string[]; sceneId: string } | undefined
+  /** P4：到点生成会话并注入 opener（建会话 + 落 opener 用户消息；返回 null = 生成失败） */
+  spawnRitualSession?: (sub: RitualSubscription) => { sessionId: string; messageId: string } | null
 }
 
 export interface ScheduleCreateRequest {
@@ -67,6 +78,8 @@ export interface ScheduleOpResult {
 
 const TITLE_MAX = 80
 const INSTRUCTION_MAX = 2_000
+/** P4：仪式订阅每用户上限（订阅量级个位数；防误点/滥用） */
+const RITUAL_MAX_PER_USER = 10
 
 export class ScheduleService {
   private timer?: ReturnType<typeof setInterval>
@@ -112,6 +125,14 @@ export class ScheduleService {
           getLogger().error({ taskId: task.id, err: (err as Error).message }, '定时任务触发失败（下轮重试）')
         }
       }
+      // P4：仪式订阅到期处理（与定时任务同轮；单条失败不影响其他订阅）
+      for (const sub of this.deps.rituals?.listDue(new Date().toISOString()) ?? []) {
+        try {
+          this.fireRitual(sub)
+        } catch (err) {
+          getLogger().error({ ritualId: sub.id, err: (err as Error).message }, '仪式订阅触发失败（下轮重试）')
+        }
+      }
     } finally {
       this.ticking = false
     }
@@ -121,6 +142,12 @@ export class ScheduleService {
 
   list(sessionId: string): ScheduledTask[] {
     return this.deps.schedules.listBySession(sessionId)
+  }
+
+  /** P5：跨会话「今日安排」聚合（未来 `hours` 小时内的启用任务；调用方按会话可见性过滤） */
+  listUpcoming(hours = 24): ScheduledTask[] {
+    const until = new Date(Date.now() + hours * 3_600_000).toISOString()
+    return this.deps.schedules.listUpcoming(until)
   }
 
   get(id: string): ScheduledTask | undefined {
@@ -254,6 +281,167 @@ export class ScheduleService {
     const task = this.deps.schedules.get(id)
     if (!task) return { ok: false, error: '定时任务不存在' }
     return this.fire(task, { manual: true })
+  }
+
+  // ---------- P4：仪式订阅 ----------
+
+  /**
+   * 订阅仪式（幂等：同来源已订阅返回既有；声明缺失 / cron 非法 / 超上限一律拒绝）。
+   * source='scene'（缺省）：target = 场景 id（`_group.yaml` 声明）；
+   * source='system'：target = 系统仪式 id（内置清单，如 daily-review；与场景键命名空间独立）。
+   */
+  subscribeRitual(
+    userId: string,
+    target: string,
+    opts: { spaceId?: string; source?: 'scene' | 'system' } = {},
+  ): { ok: boolean; error?: string; subscription?: RitualSubscription } {
+    const { cfg, rituals, resolveRitual, resolveSystemRitual } = this.deps
+    if (!cfg.scheduleEnabled) return { ok: false, error: '定时任务未启用（SCHEDULE_ENABLED=false）' }
+    if (!rituals) return { ok: false, error: '仪式订阅未装配' }
+    const source = opts.source ?? 'scene'
+    const resolution = source === 'system' ? resolveSystemRitual?.(target) : resolveRitual?.(target)
+    if (!resolution) {
+      return {
+        ok: false,
+        error: source === 'system' ? `系统仪式「${target}」不存在` : `场景「${target}」不存在或未声明仪式模板`,
+      }
+    }
+    const ref = source === 'system' ? { ritualId: target } : { sceneId: target }
+    const existing = rituals.findByUserRef(userId, ref)
+    if (existing) return { ok: true, subscription: existing } // 幂等：重复订阅不重复建
+    if (rituals.countByUser(userId) >= RITUAL_MAX_PER_USER) {
+      return { ok: false, error: `仪式订阅已达上限（${RITUAL_MAX_PER_USER} 个）` }
+    }
+    const { declaration, chain, sceneId } = resolution
+    const validation = validateScheduleSpec(
+      { kind: 'cron', expr: declaration.cron, tz: declaration.timezone },
+      { defaultTz: this.defaultTimezone(), minGapMs: cfg.scheduleMinGapMs },
+    )
+    if (!validation.ok || !validation.next) return { ok: false, error: validation.error ?? '仪式 cron 非法' }
+    const members = [...new Set((declaration.members ?? chain).map((id) => id.trim()).filter(Boolean))]
+    const subscription = rituals.create({
+      userId,
+      sceneId,
+      ...(source === 'system' ? { ritualId: target } : {}),
+      title: declaration.title.trim(),
+      cron: declaration.cron.trim(),
+      timezone: validation.timezone ?? this.defaultTimezone(),
+      opener: declaration.opener.trim(),
+      members,
+      spaceId: opts.spaceId && opts.spaceId !== 'default' ? opts.spaceId : undefined,
+      nextRunAt: validation.next.toISOString(),
+    })
+    return { ok: true, subscription }
+  }
+
+  /** 本人订阅清单（未装配 = 空数组，前端隐藏入口） */
+  listRituals(userId: string): RitualSubscription[] {
+    return this.deps.rituals?.listByUser(userId) ?? []
+  }
+
+  /** 退订（仅本人；跨用户视为不存在） */
+  unsubscribeRitual(userId: string, id: string): { ok: boolean; error?: string } {
+    const rituals = this.deps.rituals
+    if (!rituals) return { ok: false, error: '仪式订阅未装配' }
+    if (!rituals.remove(userId, id)) return { ok: false, error: '订阅不存在' }
+    return { ok: true }
+  }
+
+  /** 编辑订阅（启停 / 改 cron）；仅本人；cron 变更与「恢复」均重校验并重算 next（避免恢复即引爆历史时刻） */
+  updateRitual(
+    userId: string,
+    id: string,
+    patch: { enabled?: boolean; cron?: string },
+  ): { ok: boolean; error?: string; subscription?: RitualSubscription } {
+    const { cfg, rituals } = this.deps
+    if (!rituals) return { ok: false, error: '仪式订阅未装配' }
+    const cur = rituals.get(id)
+    if (!cur || cur.userId !== userId) return { ok: false, error: '订阅不存在' }
+    if (patch.enabled === undefined && patch.cron === undefined) {
+      return { ok: false, error: '无可更新字段（enabled / cron）' }
+    }
+    let cron = cur.cron
+    let timezone = cur.timezone
+    let nextRunAt = cur.nextRunAt
+    if (patch.cron !== undefined) {
+      const trimmed = patch.cron.trim()
+      if (!trimmed) return { ok: false, error: 'cron 不能为空' }
+      const validation = validateScheduleSpec(
+        { kind: 'cron', expr: trimmed, tz: cur.timezone },
+        { defaultTz: this.defaultTimezone(), minGapMs: cfg.scheduleMinGapMs },
+      )
+      if (!validation.ok || !validation.next) return { ok: false, error: validation.error ?? 'cron 非法' }
+      cron = trimmed
+      timezone = validation.timezone ?? timezone
+      nextRunAt = validation.next.toISOString()
+    } else if (patch.enabled === true && !cur.enabled) {
+      const validation = validateScheduleSpec(
+        { kind: 'cron', expr: cron, tz: timezone },
+        { defaultTz: this.defaultTimezone(), minGapMs: cfg.scheduleMinGapMs },
+      )
+      if (!validation.ok || !validation.next) return { ok: false, error: validation.error ?? 'cron 非法' }
+      nextRunAt = validation.next.toISOString()
+    }
+    const updated = rituals.update(id, { enabled: patch.enabled, cron, timezone, nextRunAt })
+    if (!updated) return { ok: false, error: '订阅不存在' }
+    return { ok: true, subscription: updated }
+  }
+
+  /** 仪式到期触发：补跑窗口外的跳过（只推进 next 不引爆）；「生成会话 + 注入 opener」后进入协作运行 */
+  private fireRitual(sub: RitualSubscription): void {
+    const { cfg, rituals, spawnRitualSession } = this.deps
+    if (!rituals) return
+    const now = new Date()
+    const next = nextScheduleAt(
+      { kind: 'cron', expr: sub.cron, tz: sub.timezone },
+      now,
+      this.defaultTimezone(),
+    )?.toISOString()
+    // 补跑窗口：延迟超窗口按跳过只推进（防停机恢复后半夜补开一堆仪式会话）
+    if (sub.nextRunAt) {
+      const dueMs = Date.parse(sub.nextRunAt)
+      if (Number.isFinite(dueMs) && now.getTime() - dueMs > cfg.scheduleCatchupMs) {
+        rituals.settle(sub.id, {
+          lastRunAt: now.toISOString(),
+          nextRunAt: next,
+          error: '错过触发（超出补跑窗口），已跳过',
+        })
+        getLogger().warn({ ritualId: sub.id }, '仪式订阅错过触发（超出补跑窗口）')
+        return
+      }
+    }
+    if (!spawnRitualSession) {
+      rituals.settle(sub.id, { lastRunAt: now.toISOString(), nextRunAt: next, error: 'spawn 未装配' })
+      return
+    }
+    let spawned: { sessionId: string; messageId: string } | null = null
+    try {
+      spawned = spawnRitualSession(sub)
+    } catch (err) {
+      rituals.settle(sub.id, { lastRunAt: now.toISOString(), nextRunAt: next, error: (err as Error).message })
+      getLogger().error({ ritualId: sub.id, err: (err as Error).message }, '仪式订阅生成会话异常')
+      return
+    }
+    if (!spawned) {
+      rituals.settle(sub.id, { lastRunAt: now.toISOString(), nextRunAt: next, error: '生成会话失败' })
+      return
+    }
+    try {
+      const { runId } = this.deps.launch(spawned.sessionId, spawned.messageId)
+      rituals.settle(sub.id, { lastRunAt: now.toISOString(), nextRunAt: next, sessionId: spawned.sessionId })
+      getLogger().info(
+        { ritualId: sub.id, sessionId: spawned.sessionId, runId },
+        '仪式订阅已触发（已生成会话并启动协作）',
+      )
+    } catch (err) {
+      rituals.settle(sub.id, {
+        lastRunAt: now.toISOString(),
+        nextRunAt: next,
+        sessionId: spawned.sessionId,
+        error: (err as Error).message,
+      })
+      getLogger().error({ ritualId: sub.id, err: (err as Error).message }, '仪式订阅启动协作失败（会话已生成）')
+    }
   }
 
   // ---------- 触发内核 ----------

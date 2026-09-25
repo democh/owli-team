@@ -1,0 +1,16 @@
+{
+  "id": "ops",
+  "name": "运营行政：SOP × 会议 × 招聘 × 供应链",
+  "participants": ["ops", "assistant", "recruiter", "supply"],
+  "prompt": "帮我搭运营中枢：@齐安 梳理流程 SOP，@沐晨 出会议与行政事务安排，@罗宾 给招聘渠道与外包对接方案，@何舟 梳理供应链与采购口径；收尾汇总为运营手册。",
+  "maxTurns": 7,
+  "assertions": [
+    { "type": "artifact_exists", "path": "docs/运营SOP-这个需求.md" },
+    { "type": "artifact_exists", "path": "docs/会议纪要-这个需求.md" },
+    { "type": "artifact_exists", "path": "docs/招聘方案-这个需求.md" },
+    { "type": "artifact_exists", "path": "docs/供应链方案-这个需求.md" },
+    { "type": "turns_lte", "value": 6 },
+    { "type": "no_loop" },
+    { "type": "run_end_reason", "value": "completed" }
+  ]
+}

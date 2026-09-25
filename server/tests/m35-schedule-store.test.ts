@@ -258,4 +258,19 @@ describe('M35 存储：健壮性与级联', () => {
     expect(row?.schedule_id).toBe(task.id)
     db.close()
   })
+
+  it('P5：listUpcoming 仅返回窗口内的启用任务（含排序；停用排除）', () => {
+    const { db, store, sessionId } = setup()
+    const soon = createTask(store, sessionId, new Date(Date.now() + 3_600_000).toISOString())
+    const later = createTask(store, sessionId, new Date(Date.now() + 20 * 3_600_000).toISOString())
+    const far = createTask(store, sessionId, new Date(Date.now() + 30 * 3_600_000).toISOString())
+    const paused = createTask(store, sessionId, new Date(Date.now() + 2 * 3_600_000).toISOString())
+    store.update(paused.id, { enabled: false })
+
+    const until = new Date(Date.now() + 24 * 3_600_000).toISOString()
+    const list = store.listUpcoming(until)
+    expect(list.map((t) => t.id)).toEqual([soon.id, later.id])
+    expect(list.some((t) => t.id === far.id)).toBe(false)
+    db.close()
+  })
 })

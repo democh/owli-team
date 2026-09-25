@@ -131,6 +131,7 @@
 | `BAIDU_SEARCH_API_URL` | 千帆 web_search 端点 | 官方 API 地址（一般无需修改） |
 | `WEB_SEARCH_ENGINES` | 空（内置 `baidu,bing,sogou,so360`） | 免 Key 引擎降级链（逗号分隔；被风控/冷却的引擎自动切换到下一个；见 ADR 0184） |
 | `HTTP_USER_AGENT` | 空 | 联网工具浏览器 UA 覆盖（留空 = 内置 Chrome 桌面版） |
+| `HTTP_UA_POOL` | 空 | 追加 UA 池（每行一个；与内置池合并后按站点散列选择；用于刷新内置池未跟上的新浏览器版本） |
 | `HTTP_MIN_INTERVAL_MS` | `1200` | 同域名最小请求间隔（反爬限速；`0` = 不限速） |
 | `HTTP_TIMEOUT_MS` | `15000` | 单次联网请求超时（毫秒） |
 | `ARTIFACT_MAX_BYTES` | `524288` | 交付件文本内联上限（超出引导下载） |
@@ -364,6 +365,8 @@ npm run e2e:reset -- e2e-r0 e2e-r1       # 清理指定 slug（严格校验 e2e-
 | 会话内容可见性 | **owner ∪ 共享成员为唯一事实源**：admin 无会话内容旁路（详情 / 列表 / 搜索 / WS 订阅与可见集一律 404 或过滤；仅孤儿行兜底与 `__` 全局主题属 admin）——无需也不提供 `DM_ADMIN_VISIBLE` 类开关（m79-privacy.test.ts 固化） |
 | 成员编制权限 | `POST/DELETE/PATCH /api/sessions/:id/members*`：team（含历史缺省 kind）与 direct **仅 owner**；group 放宽 editor（混编群可自行拉 agent）；viewer / 非成员由会话守卫 403 / 404 |
 | 头像存储 | 图片头像落 `data/avatars/<userId>-<ts>.<ext>`（随 data 目录进入备份面；上限 2MB；仅 PNG/JPEG/WebP 魔数放行）；换图 / 改色块 / 删号自动清理旧文件；读取走 `/api/avatars/:file`（登录域内 + 白名单 + immutable） |
+| 已读回执（M80-C） | 默认对外展示（设置页可关）；关闭 = **对等双向不可见**（不投影 / 不广播 + 请求者空投影 + 客户端门）；本人多端 `notify:read-state` 同步不受影响；admin 无豁免（沿用无内容旁路口径） |
+| 表情回应（M80-B） | 多用户模式功能（兼容模式隐藏入口、API 拒绝）；同消息同用户 ≤8 种软限（`429`）；agent 消息可挂、不进 LLM 上下文；变更广播 `notify:reaction` 全量替换帧 |
 | 排障 | 好友请求「没实时到」→ 查该用户是否在线（`/api/ws/stats`）与该连接是否被踢；收件箱缺失 → `GET /api/inbox?since=0` 核对 seq 游标 |
 
 **多实例部署（M79-L）**：设 `NOTIFY_BUS=db` 并给每个实例分配唯一 `INSTANCE_ID`（缺省 `hostname:pid`；编排建议显式指定稳定值）。要点：① 跨实例通知延迟上限 = `NOTIFY_BUS_POLL_MS`（默认 400ms）；② 总线行保留 `NOTIFY_BUS_RETENTION_MINUTES`（默认 10 分钟，维护轮 30s 清理）；③ presence 为最终一致（实例 30s 心跳 + stale 60s 忽略）：实例死亡后其对应用户的在线态在 ≤2 分钟窗口内收敛；④ 实例重启不重放历史通知（客户端重连 resync + REST 权威层补齐——与单实例重连语义一致）；⑤ 观测：`GET /api/ws/stats` 的 `bus` 段（mode/instance/published/received）；⑥ 默认 `NOTIFY_BUS=memory` 时本机制零开销、行为与单实例现状逐字节一致。

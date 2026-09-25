@@ -20,7 +20,7 @@ import path from 'node:path'
 import YAML from 'yaml'
 import { z } from 'zod'
 import type { AgentDefinition, AgentGroup, RosterPreset, SoulMeta, StageLayout, StagePanel } from '@multi-agent/shared'
-import { DEFAULT_CHAIN, STAGE_LAYOUTS, STAGE_PANELS, baseAgentId, soulIdOfMember } from '@multi-agent/shared'
+import { DEFAULT_CHAIN, STAGE_LAYOUTS, STAGE_PANELS, baseAgentId, soulIdOfMember, validateScheduleSpec } from '@multi-agent/shared'
 
 /** 角色 front-matter 校验（§13.1 / §25）：失败时给出精确报错 */
 export const AgentFrontMatterSchema = z.object({
@@ -99,6 +99,17 @@ export const AgentGroupSchema = z.object({
   order: z.number().default(100),
   /** M52：场景工作区形态（可选；未声明即 stream，向后兼容） */
   stage: StageSchema.optional(),
+  /** P4：仪式化订阅声明（可选；cron 合法性在订阅时由调度层 validateScheduleSpec 终验） */
+  ritual: z
+    .object({
+      title: z.string().min(1, 'ritual.title 不能为空').max(80),
+      cron: z.string().min(1, 'ritual.cron 不能为空'),
+      timezone: z.string().optional(),
+      opener: z.string().min(1, 'ritual.opener 不能为空').max(2000),
+      members: z.array(z.string().min(1)).optional(),
+      description: z.string().max(200).optional(),
+    })
+    .optional(),
 })
 
 /** 快速组队预设校验（_presets.yaml 单条；成员存在性由 validate() 跨引用检查） */
@@ -350,6 +361,21 @@ export class PromptLibrary {
           for (const id of ids ?? []) {
             if (!this.agents.has(id)) {
               problems.push(`场景 ${group.id} 的 stage.seats 指向不存在的角色 "${id}"`)
+            }
+          }
+        }
+        // P4：ritual 声明校验（cron 合法性 + 成员跨引用；声明存在时才检查）
+        if (group.ritual) {
+          const ritualCheck = validateScheduleSpec(
+            { kind: 'cron', expr: group.ritual.cron, tz: group.ritual.timezone },
+            { defaultTz: 'UTC', minGapMs: 0 },
+          )
+          if (!ritualCheck.ok) {
+            problems.push(`场景 ${group.id} 的 ritual.cron 非法：${ritualCheck.error ?? '无法解析'}`)
+          }
+          for (const member of group.ritual.members ?? []) {
+            if (!this.agents.has(member)) {
+              problems.push(`场景 ${group.id} 的 ritual.members 指向不存在的角色 "${member}"`)
             }
           }
         }

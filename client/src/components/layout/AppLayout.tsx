@@ -39,7 +39,8 @@ import { memberViews } from '../../lib/members'
 import { cn } from '../../lib/utils'
 import { useAgentStore } from '../../stores/agent-store'
 import { useAuthStore } from '../../stores/auth-store'
-import { useSessionStore } from '../../stores/session-store'
+import { useSessionStore, useCurrentSession } from '../../stores/session-store'
+import { useSpaceStore } from '../../stores/space-store'
 import { useUiStore, type MainTab } from '../../stores/ui-store'
 import { useWsStore } from '../../stores/ws-store'
 import { attachActiveRunFor } from '../../stores/run-store'
@@ -218,9 +219,8 @@ export function LeftPanelEdgeHandle(): React.JSX.Element {
 /** 底部成员条（窄屏）：横向 @ 快捷入口 + 团队抽屉开关；M77：按成员实例渲染（分身 = 名字·灵魂名） */
 function BottomMemberBar({ onOpenTeam }: { onOpenTeam: () => void }): React.JSX.Element {
   const agents = useAgentStore((s) => s.agents)
-  const sessions = useSessionStore((s) => s.sessions)
   const currentId = useSessionStore((s) => s.currentId)
-  const session = sessions.find((s) => s.id === currentId)
+  const session = useCurrentSession()
   const members = React.useMemo(() => memberViews(agents, session), [agents, session])
   // M79-S：纯人聊天隐藏「团队」抽屉入口（人类成员条保留——@ 点名仍需要）
   const humanOnlyChat =
@@ -263,6 +263,21 @@ function toPanelSize(px: number, maxPct: number): number {
   return Math.min(maxPct, (px / viewport) * 100)
 }
 
+/** 三栏比例 localStorage 键（拖动结果跨刷新保留） */
+const PANE_LAYOUT_KEY = 'ma:panel-layout:v1'
+
+function loadPaneLayout(): number[] | null {
+  try {
+    const raw = localStorage.getItem(PANE_LAYOUT_KEY)
+    if (!raw) return null
+    const arr = JSON.parse(raw) as unknown
+    if (!Array.isArray(arr) || arr.length !== 3 || arr.some((n) => typeof n !== 'number' || n <= 0)) return null
+    return arr as number[]
+  } catch {
+    return null
+  }
+}
+
 export function AppLayout(): React.JSX.Element {
   const mainTab = useUiStore((s) => s.mainTab)
   const setMainTab = useUiStore((s) => s.setMainTab)
@@ -278,7 +293,7 @@ export function AppLayout(): React.JSX.Element {
   // M79-S：纯人聊天（人物会话且无 agent 编制）隐藏右栏——与 Composer AI 状态条同口径；
   // 不修改用户偏好（切走恢复原态），入口（头部按钮 / 窄屏团队按钮）一并隐藏
   const layoutAgents = useAgentStore((s) => s.agents)
-  const currentSession = useSessionStore((s) => s.sessions.find((x) => x.id === s.currentId))
+  const currentSession = useCurrentSession()
   const humanOnlyChat =
     !!currentSession &&
     (currentSession.kind === 'direct' || currentSession.kind === 'group') &&
@@ -290,8 +305,34 @@ export function AppLayout(): React.JSX.Element {
   const sessionMin = toPanelSize(160, 15)
   const [sessionDrawer, setSessionDrawer] = React.useState(false)
   const [teamDrawer, setTeamDrawer] = React.useState(false)
-  /** 三栏比例记忆（右栏收起 / 展开原位恢复；收起期间的拖动按比例折叠回三栏，展开无跳变） */
-  const paneLayout = React.useRef<number[] | null>(null)
+  /** 三栏比例记忆（右栏收起 / 展开原位恢复；收起期间的拖动按比例折叠回三栏，展开无跳变；
+   *  持久化 localStorage——刷新后布局不丢；拖动中高频 onLayout 防抖 500ms 落盘） */
+  const paneLayout = React.useRef<number[] | null>(loadPaneLayout())
+  const paneSaveTimerRef = React.useRef<ReturnType<typeof setTimeout>>()
+  const persistPaneLayout = React.useCallback((): void => {
+    if (paneSaveTimerRef.current) clearTimeout(paneSaveTimerRef.current)
+    paneSaveTimerRef.current = setTimeout(() => {
+      paneSaveTimerRef.current = undefined
+      try {
+        if (paneLayout.current) localStorage.setItem(PANE_LAYOUT_KEY, JSON.stringify(paneLayout.current))
+      } catch {
+        /* 隐私模式等场景静默降级 */
+      }
+    }, 500)
+  }, [])
+  React.useEffect(
+    () => () => {
+      if (paneSaveTimerRef.current) {
+        clearTimeout(paneSaveTimerRef.current)
+        try {
+          if (paneLayout.current) localStorage.setItem(PANE_LAYOUT_KEY, JSON.stringify(paneLayout.current))
+        } catch {
+          /* 忽略 */
+        }
+      }
+    },
+    [],
+  )
 
   const handleSelect = React.useCallback(async (id: string): Promise<void> => {
     await useSessionStore.getState().selectSession(id)
@@ -300,9 +341,10 @@ export function AppLayout(): React.JSX.Element {
     await attachActiveRunFor(id)
   }, [])
 
-  // 启动引导：角色/技能元数据 + 会话列表 → WS 初始化 → 自动选中第一个会话
+  // 启动引导：角色/技能元数据 + 空间元数据（记忆面板用）+ 会话列表 → WS 初始化 → 自动选中第一个会话
   React.useEffect(() => {
     void useAgentStore.getState().load()
+    void useSpaceStore.getState().loadSpaces()
     void useSessionStore
       .getState()
       .loadSessions()
@@ -316,7 +358,7 @@ export function AppLayout(): React.JSX.Element {
       .catch(() => undefined)
   }, [handleSelect])
 
-  // Alt+1..9 切换会话（§20.2）
+  // Alt+1..9 切换会话（§20.2；与左栏可见列表同口径）
   React.useEffect(() => {
     const onKeyDown = (e: KeyboardEvent): void => {
       if (!e.altKey || e.metaKey || e.ctrlKey || e.shiftKey) return
@@ -531,6 +573,7 @@ export function AppLayout(): React.JSX.Element {
               onLayout={(layout) => {
                 if (layout.length === 3) {
                   paneLayout.current = layout
+                  persistPaneLayout()
                 } else if (layout.length === 2) {
                   // 左右任一收起：主区兼得的合并份额按原三栏比例拆还，展开时回到原位（不跳变）；
                   // 无记忆（刷新后）以挂载默认三栏为基准——口径须与下方 Panel defaultSize 一致（S, 100−S−26, 26）
@@ -546,6 +589,7 @@ export function AppLayout(): React.JSX.Element {
                     const rest = prev[1] + prev[2]
                     paneLayout.current = [s0, (s1 * prev[1]) / rest, (s1 * prev[2]) / rest]
                   }
+                  persistPaneLayout()
                 }
               }}
             >

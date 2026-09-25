@@ -1,0 +1,15 @@
+{
+  "id": "travel",
+  "name": "出行旅行：行程 × 签证 × 在地体验",
+  "participants": ["travel", "visa-advisor", "local-curator"],
+  "prompt": "帮我规划一次出行：@牧野 编排行程路线与预算，@通境 给证件签证清单与时间节点，@寻巷 补充在地体验与小众玩法；收尾汇总为出行手册。",
+  "maxTurns": 6,
+  "assertions": [
+    { "type": "artifact_exists", "path": "docs/行程计划-这个需求.md" },
+    { "type": "artifact_exists", "path": "docs/签证清单-这个需求.md" },
+    { "type": "artifact_exists", "path": "docs/在地体验-这个需求.md" },
+    { "type": "turns_lte", "value": 5 },
+    { "type": "no_loop" },
+    { "type": "run_end_reason", "value": "completed" }
+  ]
+}

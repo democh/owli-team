@@ -1,0 +1,15 @@
+{
+  "id": "moot-court",
+  "name": "模拟法庭：合同纠纷庭审对抗 × 模拟判决",
+  "participants": ["plaintiff-counsel", "defense-counsel", "presiding-judge"],
+  "prompt": "组织一场合同纠纷模拟庭审（程序正义框架，虚构案情）：@申言 立原告主张与举证清单，@析辩 逐条抗辩并质证，@端衡 归纳争点并出具模拟判决书。",
+  "maxTurns": 6,
+  "assertions": [
+    { "type": "artifact_exists", "path": "docs/原告意见-合同.md" },
+    { "type": "artifact_exists", "path": "docs/被告答辩-合同.md" },
+    { "type": "artifact_exists", "path": "docs/模拟判决-合同.md" },
+    { "type": "turns_lte", "value": 5 },
+    { "type": "no_loop" },
+    { "type": "run_end_reason", "value": "completed" }
+  ]
+}

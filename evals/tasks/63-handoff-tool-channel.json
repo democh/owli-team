@@ -1,0 +1,14 @@
+{
+  "id": "handoff-tool-channel",
+  "name": "转交探针：接力走 handoff 工具通道（真实模型）",
+  "participants": ["pm", "architect", "frontend"],
+  "prompt": "请 @费利 明确一个小需求（登录页错误提示的体验优化）的边界与验收，然后按你的判断把接力交给下一位（需要谁接手就交棒给谁）；最后一位汇总收尾交还我。",
+  "maxTurns": 6,
+  "real": true,
+  "assertions": [
+    { "type": "handoff_channel_tool_min", "value": 0.8 },
+    { "type": "turns_lte", "value": 6 },
+    { "type": "no_loop" },
+    { "type": "run_end_reason", "value": "completed" }
+  ]
+}

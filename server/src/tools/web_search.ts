@@ -29,7 +29,7 @@ const MAX_DETAIL_CHARS = 4_000
 /** 抓取模式响应体上限：SERP 含大量内联脚本（现代站点实测最高约 1MB，超过 antiBotFetch
  *  默认 512KB），检索场景需容忍；2MB 仍可防止超大响应拖垮内存 */
 const HTML_MODE_MAX_BYTES = 2 * 1024 * 1024
-/** 引擎 Cookie 预热缓存时长 */
+/** 引擎预热节流时长（30 分钟内同一 引擎+用户 只预热一次） */
 const COOKIE_TTL_MS = 30 * 60_000
 
 /** 千帆「百度搜索」API 约束：query ≤ 72 字符（汉字计 2）——超长按权重截断 */
@@ -65,14 +65,6 @@ interface ApiSearchResponse {
 
 // ---------- 免 Key 模式：引擎降级链 ----------
 
-/** 引擎 Cookie 预热缓存（进程内共享；仅为反爬降级，非登录态） */
-const cookieCache = new Map<string, { value: string; expiresAt: number }>()
-
-/** 测试辅助：清空 cookie 缓存（用例隔离） */
-export function resetSearchCookieCache(): void {
-  cookieCache.clear()
-}
-
 /** 引擎链解析：runtime 覆写（engines / engineUrls / htmlUrl）→ 内置默认；未知 id 忽略 */
 function resolveChain(ctx: ToolRuntime): SearchEngine[] {
   const ids: readonly string[] = ctx.webSearch.engines?.length ? ctx.webSearch.engines : DEFAULT_ENGINE_ORDER
@@ -90,13 +82,31 @@ function resolveChain(ctx: ToolRuntime): SearchEngine[] {
   return chain.length > 0 ? chain : DEFAULT_ENGINE_ORDER.map((id) => ENGINE_REGISTRY[id])
 }
 
-/** 预热入口页拿 cookie（失败降级为不携带；TTL 内按引擎复用） */
-async function warmupCookie(engine: SearchEngine, ctx: ToolRuntime): Promise<string> {
+/** Cookie 罐归属键（多用户隔离：优先触发者，其次会话属主；兼容模式缺省全局桶） */
+function cookieKeyOf(ctx: ToolRuntime): string | undefined {
+  return ctx.triggerUserId ?? ctx.userId
+}
+
+/**
+ * 预热入口页：让反爬层的 Cookie 罐（http.ts，按用户分桶）捕获 Set-Cookie。
+ * 后续 SERP 请求由罐按域/路径/过期语义自动回传——不再手工拼 cookie 头
+ * （修复双套 Cookie 机制并存、手工拼接绕过域/路径/过期语义的问题）。
+ * warmedAt 30 分钟节流，避免每次搜索多打一次入口页；失败静默降级（不预热直接搜）。
+ */
+const warmedAt = new Map<string, number>()
+
+/** 测试辅助：清空预热节流状态（用例隔离） */
+export function resetSearchCookieCache(): void {
+  warmedAt.clear()
+}
+
+async function warmupSession(engine: SearchEngine, ctx: ToolRuntime): Promise<void> {
+  const key = `${engine.id}:${cookieKeyOf(ctx) ?? ''}`
   const now = Date.now()
-  const hit = cookieCache.get(engine.id)
-  if (hit && hit.expiresAt > now) return hit.value
+  if ((warmedAt.get(key) ?? 0) + COOKIE_TTL_MS > now) return
+  warmedAt.set(key, now)
   try {
-    const res = await antiBotFetch({
+    await antiBotFetch({
       url: `${new URL(engine.baseUrl).origin}/`,
       readBody: false,
       signal: ctx.signal,
@@ -104,16 +114,12 @@ async function warmupCookie(engine: SearchEngine, ctx: ToolRuntime): Promise<str
       timeoutMs: ctx.httpTimeoutMs,
       minIntervalMs: ctx.httpMinIntervalMs,
       maxRetries: 1,
+      cookieKey: cookieKeyOf(ctx),
+      uaPoolExtra: ctx.httpUaPoolExtra,
     })
-    const value = res.setCookies
-      .map((c) => c.split(';')[0] ?? '')
-      .filter((c) => c.length > 0)
-      .join('; ')
-    if (value) cookieCache.set(engine.id, { value, expiresAt: now + COOKIE_TTL_MS })
-    return value
   } catch (err) {
     if ((err as Error).name === 'AbortError') throw err
-    return ''
+    warmedAt.delete(key) // 失败不占用节流槽，下次搜索重试预热
   }
 }
 
@@ -132,7 +138,7 @@ async function searchViaEngines(
   const skips: string[] = []
   for (const engine of chain) {
     try {
-      const cookie = engine.warmup ? await warmupCookie(engine, ctx) : ''
+      if (engine.warmup) await warmupSession(engine, ctx)
       const origin = new URL(engine.baseUrl).origin
       const res = await antiBotFetch({
         url: engine.buildUrl(engine.baseUrl, params.query, params.count),
@@ -141,9 +147,10 @@ async function searchViaEngines(
         timeoutMs: ctx.httpTimeoutMs,
         minIntervalMs: ctx.httpMinIntervalMs,
         maxBytes: HTML_MODE_MAX_BYTES,
+        cookieKey: cookieKeyOf(ctx),
+        uaPoolExtra: ctx.httpUaPoolExtra,
         headers: {
           referer: `${origin}/`,
-          ...(cookie ? { cookie } : {}),
         },
       })
       const items = engine.parse(res.text)
@@ -182,6 +189,8 @@ async function searchViaApi(params: { query: string; count: number }, ctx: ToolR
     minIntervalMs: ctx.httpMinIntervalMs,
     maxRetries: 2,
     accept: 'application/json',
+    cookieKey: cookieKeyOf(ctx),
+    uaPoolExtra: ctx.httpUaPoolExtra,
     headers: {
       authorization: `Bearer ${ctx.webSearch.apiKey}`,
       'content-type': 'application/json',

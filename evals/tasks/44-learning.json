@@ -1,0 +1,15 @@
+{
+  "id": "learning",
+  "name": "学习成长：路径 × 练习 × 书单",
+  "participants": ["tutor", "language", "reading"],
+  "prompt": "帮我规划三个月的学习：@裴知 拆目标与学习路径，@洛语 排每日语言练习，@舒卷 出分阶段书单与输出检验；收尾汇总为阶段计划。",
+  "maxTurns": 6,
+  "assertions": [
+    { "type": "artifact_exists", "path": "docs/学习计划-这个需求.md" },
+    { "type": "artifact_exists", "path": "docs/语言练习-这个需求.md" },
+    { "type": "artifact_exists", "path": "docs/书单-这个需求.md" },
+    { "type": "turns_lte", "value": 5 },
+    { "type": "no_loop" },
+    { "type": "run_end_reason", "value": "completed" }
+  ]
+}

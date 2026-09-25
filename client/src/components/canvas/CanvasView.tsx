@@ -223,7 +223,7 @@ function CanvasStage(): React.JSX.Element {
   const currentId = useSessionStore((s) => s.currentId)
   // M79-AH：只读共享（viewer）→ 画布进入浏览态（拖拽 / 连接 / 删除键 / 右键 / 双击 / 拖放禁用；
   // 编辑入口由 canvas-store 闸门 + 服务端 PUT 写守卫双重兜底）
-  const readOnly = useSessionStore((s) => s.sessions.find((x) => x.id === s.currentId)?.role) === 'viewer'
+  const readOnly = useSessionStore((s) => s.current?.role) === 'viewer'
   const doc = useCanvasStore((s) => s.doc)
   const loading = useCanvasStore((s) => s.loading)
   const load = useCanvasStore((s) => s.load)

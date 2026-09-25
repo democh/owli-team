@@ -10,9 +10,13 @@ worktrees/
 evals/reports/
 # Playwright（E2E）
 test-results/
+test-results-*/
 playwright-report/
 blob-report/
 
 # Python（金融桥 pycache）
 __pycache__/
 *.pyc
+
+# 临时脚本（截图/抓取探针；scripts/ 下未跟踪的 tmp-*）
+scripts/tmp-*.mjs

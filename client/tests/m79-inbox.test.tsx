@@ -47,8 +47,9 @@ beforeEach(() => {
   fetchMock.mockImplementation((url: string) => {
     const u = String(url)
     if (u.includes('/messages')) return Promise.resolve(jsonResponse({ messages: [] }))
-    if (/\/api\/sessions\/[^/?]+$/.test(u)) {
-      const id = u.split('/').pop()
+    // 会话详情：兼容分页参数（?limit=…&before=…）
+    if (/\/api\/sessions\/[^/?]+(?:\?.*)?$/.test(u)) {
+      const id = u.split('?')[0].split('/').pop()
       return Promise.resolve(jsonResponse({ session: { id, title: '会话', participantIds: [] }, messages: [], humanNames: {}, humanProfiles: {} }))
     }
     if (u === '/api/friends') return Promise.resolve(jsonResponse({ friends: [] }))

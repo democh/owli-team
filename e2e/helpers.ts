@@ -40,9 +40,6 @@ export const AGENT_NAME: Record<string, string> = {
   'plaintiff-counsel': '申言',
   'defense-counsel': '析辩',
   'presiding-judge': '端衡',
-  'sim-host': '掌局',
-  'market-referee': '市衡',
-  'review-coach': '温故',
   'socratic-host': '叩问',
   'thought-experimenter': '设境',
   'ethics-moderator': '议善',
@@ -95,6 +92,11 @@ export const AGENT_NAME: Record<string, string> = {
   supply: '何舟',
   fundraiser: '江源',
   ir: '何洛',
+  'dd-analyst': '卫衡',
+  // M-new：心理支持
+  'emotion-companion': '听澜',
+  'mindfulness-guide': '安屿',
+  'psycho-educator': '知澄',
   // v14：全域扩展（生活 6 场景 + 职能角色）
   fitness: '马骁',
   nutrition: '陶然',
@@ -140,17 +142,12 @@ export const AGENT_NAME: Record<string, string> = {
   sre: '江屿',
   // M50：空场景（通用助手）
   general: '通用助手',
-  // M51-A：辩论场 / 谈判桌
-  affirmative: '立言',
-  negative: '砺锋',
-  evidence: '昭实',
-  judge: '明断',
+  // M51-A：谈判桌
   negotiator: '谭成',
   counterpart: '祁弈',
   tactician: '苏纵',
   // M51-B：议题圆桌
   moderator: '齐观',
-  'fact-checker': '尚真',
   stakeholder: '方衡',
   'policy-advisor': '允中',
   // M51-C：游戏工坊 / 创作工作室 / 职业发展

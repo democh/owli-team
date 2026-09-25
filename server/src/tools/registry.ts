@@ -88,6 +88,8 @@ export interface ToolRuntime {
   }
   /** 联网工具浏览器 UA 覆盖（空 = 内置 Chrome 桌面版） */
   httpUserAgent: string
+  /** 追加 UA 池（HTTP_UA_POOL；与内置池合并） */
+  httpUaPoolExtra?: string[]
   /** 联网工具同域名最小请求间隔（毫秒，反爬限速；0 = 不限速） */
   httpMinIntervalMs: number
   /** 联网工具单次请求超时（毫秒） */
@@ -479,7 +481,12 @@ export class ToolRegistry {
     } catch (err) {
       // 中断（用户停止 / 超时联动）不做失败重试，直接上抛
       if (isToolAbortError(err) || signal?.aborted) throw err
-      // 失败重试 1 次（§21.2）
+      // 写类工具不自动重试：错误可能发生在「服务端已生效但响应失败」之后
+      // （如远程写入成功但连接断开），盲目重试会造成重复副作用；交由模型按语义决定是否重来
+      if (!cacheable) {
+        return { ok: false, summary: `工具失败：${(err as Error).message}` }
+      }
+      // 只读工具失败重试 1 次（§21.2；幂等，重复执行无副作用）
       try {
         return cacheIfEligible(await run())
       } catch (retryErr) {

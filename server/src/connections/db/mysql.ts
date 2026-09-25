@@ -21,6 +21,7 @@ import {
   type DbQueryResult,
   type DbSchemaSnapshot,
 } from './types.js'
+import { wrapSelectWithLimit } from './guard.js'
 
 interface MySqlModule {
   createPool: (config: PoolOptions) => MySqlPool
@@ -66,13 +67,15 @@ class MySqlHandle implements DbHandle {
         await conn.query('START TRANSACTION READ ONLY')
         inTx = true
       }
-      const [rows, fields] = await conn.query({ sql, values, timeout: opts.timeoutMs })
+      // 行数下推：SELECT/WITH 包 LIMIT maxRows+1 由库端截断（防大结果集整包拉进内存）；+1 行仅作截断探测
+      const wrapped = wrapSelectWithLimit(sql, opts.maxRows)
+      const [rows, fields] = await conn.query({ sql: wrapped ?? sql, values, timeout: opts.timeoutMs })
       if (inTx) await conn.query('ROLLBACK')
       inTx = false
       if (Array.isArray(rows)) {
         const data = rows as Array<Record<string, unknown>>
-        const rowCount = data.length
-        const limited = rowCount > opts.maxRows ? data.slice(0, opts.maxRows) : data
+        const overLimit = data.length > opts.maxRows
+        const limited = overLimit ? data.slice(0, opts.maxRows) : data
         return {
           columns: (fields as FieldPacket[] | undefined)?.map((f) => f.name) ?? Object.keys(data[0] ?? {}),
           rows: limited.map((row) => {
@@ -80,8 +83,8 @@ class MySqlHandle implements DbHandle {
             for (const [key, value] of Object.entries(row)) out[key] = sanitizeRowValue(value)
             return out
           }),
-          rowCount,
-          truncated: rowCount > opts.maxRows,
+          rowCount: limited.length,
+          truncated: overLimit,
           durationMs: Date.now() - started,
         }
       }

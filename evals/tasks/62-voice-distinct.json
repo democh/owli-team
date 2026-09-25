@@ -1,0 +1,18 @@
+{
+  "id": "voice-distinct",
+  "name": "声纹探针：同题三角色文风区分度（真实模型）",
+  "participants": ["facilitator", "ideator", "challenger"],
+  "prompt": "同一道题请三位依次各答两三句（不要互相商议）：远程办公对初创团队是利大于弊吗？@梅森 先立正反框架并表态，@卢娜 @维克多 各自给出你的立场与理由。",
+  "maxTurns": 4,
+  "real": true,
+  "assertions": [
+    { "type": "message_no_banned_words" },
+    { "type": "turns_lte", "value": 4 },
+    { "type": "run_end_reason", "value": "completed" },
+    {
+      "type": "judge",
+      "rubric": "遮住角色名后仍能辨认三位发言者：切入角度、用词习惯与句式应明显不同（主持人的结构感 / 点子者的跳脱 / 质疑者的尖锐），且都像人话而非模板腔。1-10 评分（10 = 三位难以混淆）。",
+      "minScore": 6
+    }
+  ]
+}

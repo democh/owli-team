@@ -64,7 +64,9 @@ describe('M25.1 迁移 v6/v7', () => {
     const indexes = db
       .all<{ name: string }>('SELECT name FROM sqlite_master WHERE type = ? AND tbl_name = ?', 'index', 'memory')
       .map((r) => r.name)
-    expect(indexes).toContain('idx_memory_unique_scoped')
+    // P2（迁移 v29）：唯一性维度并入空间域（COALESCE 表达式索引），旧索引废弃
+    expect(indexes).toContain('idx_memory_unique_scoped_v2')
+    expect(indexes).not.toContain('idx_memory_unique_scoped')
     expect(indexes).not.toContain('idx_memory_unique')
     const versions = db.all<{ version: number }>('SELECT version FROM schema_migrations').map((r) => Number(r.version))
     expect(versions).toEqual(expect.arrayContaining([6, 7]))

@@ -13,6 +13,8 @@ export const createSessionSchema = z.object({
   souls: z.record(z.string().min(1), z.string().min(1)).optional(),
   /** M46-2：串行执行（缺省开启；显式 false = 允许场景并行成波） */
   serial: z.boolean({ message: 'serial 需为布尔值' }).optional(),
+  /** 所属空间（spaces.id；缺省 = 我的空间；存在性由路由层校验） */
+  spaceId: z.string().min(1, 'spaceId 非法').max(64).optional(),
 })
 
 /** M33：消息附件（客户端上传后随消息提交；服务端另做存在性与 uploads/ 前缀校验） */
@@ -47,10 +49,17 @@ export const renameSessionSchema = z
     serial: z.boolean({ message: 'serial 需为布尔值' }).optional(),
     /** M79-E：触发策略（auto = 无 @ 消息交给平台路由（现状）/ mention = 仅点名唤起） */
     routeMode: z.enum(['auto', 'mention'], { message: 'routeMode 需为 auto / mention' }).optional(),
+    /** 所属空间（spaces.id；'default' = 移回我的空间） */
+    spaceId: z.string().min(1, 'spaceId 非法').max(64).optional(),
   })
   .refine(
-    (v) => v.title !== undefined || v.planFirst !== undefined || v.serial !== undefined || v.routeMode !== undefined,
-    'title、planFirst、serial 或 routeMode 至少提供一个',
+    (v) =>
+      v.title !== undefined ||
+      v.planFirst !== undefined ||
+      v.serial !== undefined ||
+      v.routeMode !== undefined ||
+      v.spaceId !== undefined,
+    'title、planFirst、serial、routeMode 或 spaceId 至少提供一个',
   )
 
 export const resumeSessionSchema = z.object({
@@ -87,6 +96,11 @@ export const confirmSchema = z.object({
 /** 编辑用户消息（编辑重发前修正内容） */
 export const editMessageSchema = z.object({
   content: z.string().trim().min(1, '消息内容不能为空').max(20_000, '消息过长（上限 20000 字符）'),
+})
+
+/** M80-B：表情回应（emoji 字符；形态合法性由 isEmojiLike 复核） */
+export const reactionSchema = z.object({
+  emoji: z.string().trim().min(1, 'emoji 必填').max(32, 'emoji 过长'),
 })
 
 /** 从某条消息 fork 新会话 */
@@ -167,3 +181,24 @@ export const planResolveSchema = z.object({
   decision: z.enum(['approve', 'reject'], { message: 'decision 必须是 approve / reject' }),
   feedback: z.string().max(4000, 'feedback 过长（上限 4000 字符）').optional(),
 })
+
+// ---------- 空间（Space）CRUD ----------
+
+export const createSpaceSchema = z.object({
+  name: z.string().trim().min(1, '空间名不能为空').max(40, '空间名过长'),
+  kind: z.enum(['work', 'life', 'personal', 'custom'], { message: 'kind 需为 work / life / personal / custom' }).optional(),
+  icon: z.string().trim().min(1).max(40, 'icon 过长').optional(),
+})
+
+export const patchSpaceSchema = z
+  .object({
+    name: z.string().trim().min(1, '空间名不能为空').max(40, '空间名过长').optional(),
+    icon: z.string().trim().max(40, 'icon 过长').optional(),
+    sort: z.number().int().min(0).max(9999).optional(),
+    /** P3：空间默认灵魂（agentId → soulId；null = 清除全部绑定） */
+    soulOverrides: z.record(z.string().min(1), z.string().min(1)).nullable().optional(),
+  })
+  .refine(
+    (v) => v.name !== undefined || v.icon !== undefined || v.sort !== undefined || v.soulOverrides !== undefined,
+    'name、icon、sort 或 soulOverrides 至少提供一个',
+  )

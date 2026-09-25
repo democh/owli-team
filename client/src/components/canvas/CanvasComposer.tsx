@@ -17,11 +17,12 @@ import { cn } from '../../lib/utils'
 import { useAgentStore } from '../../stores/agent-store'
 import { useCanvasStore } from '../../stores/canvas-store'
 import { useRunStore } from '../../stores/run-store'
-import { useSessionStore } from '../../stores/session-store'
+import { useSessionStore, useCurrentSession } from '../../stores/session-store'
 import { useUiStore } from '../../stores/ui-store'
 import { Button } from '../ui/button'
 import { AgentAvatar } from '../agents/AgentAvatar'
 import { Markdown } from '../chat/Markdown'
+import { MessageContext } from '../chat/md-ext/message-context'
 
 /** 浮层内展示的最近消息条数 */
 const PREVIEW_LIMIT = 14
@@ -39,9 +40,11 @@ function draftKey(sessionId?: string): string | undefined {
 
 export function CanvasComposer(): React.JSX.Element {
   const currentId = useSessionStore((s) => s.currentId)
-  const sessions = useSessionStore((s) => s.sessions)
   const order = useSessionStore((s) => s.order)
   const byId = useSessionStore((s) => s.byId)
+  // M79：人类定向目标展示名（正文 @用户 / @user 泛称 chip 就地展开为具体人）
+  const humanNames = useSessionStore((s) => s.humanNames)
+  const humanProfiles = useSessionStore((s) => s.humanProfiles)
   const agents = useAgentStore((s) => s.agents)
   const statuses = useAgentStore((s) => s.statuses)
   const active = useRunStore((s) => s.active)
@@ -57,7 +60,7 @@ export function CanvasComposer(): React.JSX.Element {
   /** M31 修订：画布选中节点数（引用选中 chip） */
   const selectedCount = useCanvasStore((s) => s.selectedIds.length)
 
-  const session = sessions.find((s) => s.id === currentId)
+  const session = useCurrentSession()
   // M77：成员实例投影（id = 成员键、name = 标签）——召唤条按实例展示、插入 `@名字·灵魂名`（点名到具体分身）
   const pool = React.useMemo(() => {
     const inSession = memberViews(agents, session).map((m) => ({ ...m.agent, id: m.key, name: m.label }))
@@ -225,6 +228,10 @@ export function CanvasComposer(): React.JSX.Element {
               const key = m.memberKey ?? m.agentId
               const agent = key ? agents.find((a) => a.id === baseAgentId(key)) : undefined
               const streaming = m.status === 'streaming'
+              // M79：本条消息的人类定向目标展示名（@用户 泛称 chip 展开；无数据则不展开）
+              const humanLabels = (m.humanMentions ?? [])
+                .map((id) => humanProfiles[id]?.name ?? humanNames[id])
+                .filter((x): x is string => !!x)
               return (
                 <div key={m.id} className="flex items-start gap-1.5">
                   {m.role === 'user' ? (
@@ -242,7 +249,15 @@ export function CanvasComposer(): React.JSX.Element {
                       {streaming && <Loader2 className="size-2.5 animate-spin text-primary" aria-hidden />}
                     </div>
                     <div className="max-h-28 overflow-hidden text-[11.5px] leading-5 text-foreground/85">
-                      <Markdown content={m.content || (streaming ? '正在酝酿…' : '')} streaming={streaming} />
+                      <MessageContext.Provider
+                        value={{
+                          messageId: m.id,
+                          sessionId: m.sessionId,
+                          ...(humanLabels.length > 0 ? { humanLabels } : {}),
+                        }}
+                      >
+                        <Markdown content={m.content || (streaming ? '正在酝酿…' : '')} streaming={streaming} />
+                      </MessageContext.Provider>
                     </div>
                   </div>
                 </div>

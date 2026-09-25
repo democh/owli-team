@@ -8,14 +8,15 @@
 import * as React from 'react'
 import { toast } from 'sonner'
 import { Check, Layers, Loader2, Search, Sparkles, Users, X, Zap } from 'lucide-react'
-import type { AgentDefinition, Session } from '@multi-agent/shared'
-import { BLANK_SCENE_ID, baseAgentId } from '@multi-agent/shared'
-import { apiPatch } from '../../lib/api'
+import type { AgentDefinition, AgentGroup, Session } from '@multi-agent/shared'
+import { BLANK_SCENE_ID, DEFAULT_SPACE_ID, baseAgentId } from '@multi-agent/shared'
+import { apiPatch, apiPost } from '../../lib/api'
 import { useAgentStore } from '../../stores/agent-store'
 import { useAuthStore } from '../../stores/auth-store'
 import { useFriendsStore } from '../../stores/friends-store'
 import { useSessionStore } from '../../stores/session-store'
 import { useShareStore } from '../../stores/share-store'
+import { useSpaceStore } from '../../stores/space-store'
 import { useMediaQuery } from '../../lib/hooks'
 import { resolveIcon } from '../../lib/avatar-icons'
 import { encodeParticipation, participationOf } from '../../lib/members'
@@ -212,7 +213,14 @@ export function CreateSessionDialog({
     try {
       // M46：souls 仅保留最终编制（取消勾选的成员不携带灵魂覆盖）
       const pickedSouls = Object.fromEntries(Object.entries(souls).filter(([id]) => picked.includes(id)))
-      const session = await useSessionStore.getState().createSession(picked, titleInput.trim() || undefined, pickedSouls)
+      // 空间归属：default 之外的当前空间才随行（缺省 = 我的空间；default 不入 body，保持既有契约）
+      const spaceId = useSpaceStore.getState().currentId
+      const session = await useSessionStore.getState().createSession(
+        picked,
+        titleInput.trim() || undefined,
+        pickedSouls,
+        spaceId === DEFAULT_SPACE_ID ? undefined : spaceId,
+      )
       // M79-O：协作成员（真人）一步邀请（editor；失败不阻塞会话创建，汇总提示）
       let invited = 0
       const failed: string[] = []
@@ -388,14 +396,14 @@ export function CreateSessionDialog({
                   .map((id) => agents.find((a) => a.id === id))
                   .filter((a): a is NonNullable<typeof a> => Boolean(a))
                 return (
+                  <div key={g.id} className="flex items-start gap-1">
                   <button
-                    key={g.id}
                     type="button"
                     aria-label={`组队来源：${g.name}`}
                     aria-pressed={on}
                     onClick={() => pickSource({ kind: 'scene', id: g.id })}
                     className={cn(
-                      'w-full rounded-lg border px-2 py-1.5 text-left transition-all',
+                      'w-full flex-1 rounded-lg border px-2 py-1.5 text-left transition-all',
                       on ? 'border-primary/45 bg-primary/[0.05] shadow-sm' : 'hover:border-primary/25 hover:bg-accent/40',
                     )}
                     style={on ? undefined : { borderColor: `${g.theme[0]}55` }}
@@ -439,6 +447,7 @@ export function CreateSessionDialog({
                       </span>
                     )}
                   </button>
+                  </div>
                 )
               })}
             </div>

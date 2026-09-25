@@ -11,7 +11,7 @@ import { labelOfMemberKey } from '../../lib/members'
 import { useAgentStore } from '../../stores/agent-store'
 import { useRunStore } from '../../stores/run-store'
 import { useSceneStore } from '../../stores/scene-store'
-import { useSessionStore } from '../../stores/session-store'
+import { useSessionStore, useCurrentSession } from '../../stores/session-store'
 import { useUiStore } from '../../stores/ui-store'
 import { SceneContext, type SceneCtx } from './context'
 import { STAGE_CONTAINERS, STAGE_PANEL_COMPONENTS } from './registry'
@@ -32,7 +32,7 @@ export function SceneStage({
   children: React.ReactNode
 }): React.JSX.Element {
   const currentId = useSessionStore((s) => s.currentId)
-  const session = useSessionStore((s) => s.sessions.find((x) => x.id === s.currentId))
+  const session = useCurrentSession()
   const agents = useAgentStore((s) => s.agents)
   const waitingIds = useRunStore((s) => s.queue)
   const narrow = useMediaQuery(NARROW_QUERY)

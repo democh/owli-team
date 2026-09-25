@@ -97,6 +97,8 @@ export class NotifyHub {
     private readonly getSocialDeps?: () => {
       inbox?: { markReadUpTo(userId: string, upTo: number): number }
       reads?: { set(userId: string, sessionId: string, seq: number): number }
+      /** M80-C：已读对外展示开关（true = 已读水位向会话成员广播；缺省 = 不广播，行为与 M79 一致） */
+      showReadReceipts?: (userId: string) => boolean
     },
     /** M79-A：在线状态钩子（连接建立 / 关闭；缺省 = 不跟踪） */
     private readonly presenceHooks?: { onConnect?: (userId: string) => void; onDisconnect?: (userId: string) => void },
@@ -456,6 +458,14 @@ export class NotifyHub {
             { sessionId: msg.sessionId, lastReadSeq: effective, ts: Date.now() },
             { excludeClientId: client.id },
           )
+          // M80-C：已读对外展示（会话主题广播；对等原则——关闭开关者其水位不投影他人）
+          if (this.getSocialDeps?.()?.showReadReceipts?.(client.user.id)) {
+            this.publish({
+              type: 'notify:read-receipt',
+              sessionId: msg.sessionId,
+              payload: { sessionId: msg.sessionId, userId: client.user.id, lastReadSeq: effective },
+            })
+          }
           break
         }
         case 'inbox-ack': {

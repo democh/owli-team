@@ -64,6 +64,8 @@ interface MemoryRow {
   owner_id: string
   /** M57：用户维度（access 归属；global scope 即用户 id，其余 scope 从来源会话推导） */
   user_id?: string | null
+  /** 空间域（spaces.id；NULL = 跨域共享全局记忆） */
+  space_id?: string | null
   session_id: string | null
   kind: string
   content: string
@@ -105,6 +107,7 @@ function rowToItem(row: MemoryRow): MemoryItem {
     scope: row.scope as MemoryScope,
     ownerId: row.owner_id,
     userId: row.user_id ?? undefined,
+    spaceId: row.space_id ?? undefined,
     kind: row.kind as MemoryKind,
     content: row.content,
     source: row.source ?? undefined,
@@ -151,6 +154,8 @@ export interface MemoryUpsertExtra {
   status?: MemoryStatus
   /** M57：用户维度（多用户隔离；单用户兼容模式缺省 = NULL） */
   userId?: string
+  /** 空间域（P2：显式指定；缺省时按 sourceSessionId 经 spaceOf 解析器推导；NULL = 跨域共享） */
+  spaceId?: string | null
 }
 
 export interface MemoryListFilter {
@@ -159,6 +164,8 @@ export interface MemoryListFilter {
   limit?: number
   /** M57：用户维度过滤（多用户隔离；缺省 = 不过滤） */
   userId?: string
+  /** P2：空间域过滤（'shared' = 仅跨域共享条目；具体空间 id = 该空间 + 跨域共享） */
+  spaceId?: string
 }
 
 /** M25 管理查询过滤（跨 scope 列表接口） */
@@ -173,6 +180,8 @@ export interface MemoryQueryFilter {
   offset?: number
   /** M57：用户维度过滤（多用户隔离；缺省 = 不过滤） */
   userId?: string
+  /** P2：空间域过滤（'shared' = 仅跨域共享条目；具体空间 id = 该空间 + 跨域共享） */
+  spaceId?: string
 }
 
 /**
@@ -206,6 +215,8 @@ export class MemoryStore {
     private readonly db: AppDb,
     /** M25：写入即入嵌入队列（休眠时仅积累，启用后消费）；测试/无嵌入场景可省略 */
     private readonly queue?: EmbedQueueStore,
+    /** P2：空间域解析器（sourceSessionId → spaceId；缺省 = 不推导，记忆跨域共享，行为与旧版一致） */
+    private readonly spaceOf?: (sessionId: string) => string | undefined,
   ) {}
 
   // ---------- 读取 ----------
@@ -331,6 +342,13 @@ export class MemoryStore {
       where.push('user_id = ?')
       params.push(filter.userId)
     }
+    // P2：空间域过滤（'shared' = 仅跨域共享；否则 = 同空间 + 跨域共享）
+    if (filter.spaceId === 'shared') {
+      where.push('space_id IS NULL')
+    } else if (filter.spaceId) {
+      where.push('(space_id = ? OR space_id IS NULL)')
+      params.push(filter.spaceId)
+    }
     params.push(Math.max(1, Math.min(filter.limit ?? 200, 1000)))
     const tail = filter.offset ? ' LIMIT ? OFFSET ?' : ' LIMIT ?'
     if (filter.offset) params.push(Math.max(0, filter.offset))
@@ -381,12 +399,16 @@ export class MemoryStore {
     const text = content.trim()
     if (!text) return undefined
     const hash = hashOf(kind, text)
+    // P2：空间域推导——显式指定优先；否则按来源会话解析；解析不到 = NULL（跨域共享全局记忆）
+    const sourceSid = extra.sourceSessionId ?? (scope === 'session' ? ownerId : undefined)
+    const spaceId = extra.spaceId !== undefined ? extra.spaceId : sourceSid ? (this.spaceOf?.(sourceSid) ?? null) : null
     const existing = this.db.get<MemoryRow>(
-      'SELECT * FROM memory WHERE scope = ? AND owner_id = ? AND kind = ? AND hash = ?',
+      "SELECT * FROM memory WHERE scope = ? AND owner_id = ? AND kind = ? AND hash = ? AND COALESCE(space_id, '') = COALESCE(?, '')",
       scope,
       ownerId,
       kind,
       hash,
+      spaceId,
     )
     if (existing) return { item: rowToItem(existing), added: false }
     const now = new Date().toISOString()
@@ -395,6 +417,7 @@ export class MemoryStore {
       scope,
       owner_id: ownerId,
       user_id: extra.userId ?? null,
+      space_id: spaceId,
       // 仅 session scope 落 session_id（FK 级联）；agent/project/global 在源会话删除后仍存活
       session_id: scope === 'session' ? ownerId : null,
       kind,
@@ -417,14 +440,15 @@ export class MemoryStore {
     }
     this.db.tx(() => {
       this.db.run(
-        `INSERT INTO memory (id, scope, owner_id, user_id, session_id, kind, content, hash, source, importance, entities,
+        `INSERT INTO memory (id, scope, owner_id, user_id, space_id, session_id, kind, content, hash, source, importance, entities,
            status, supersedes, superseded_by, valid_from, valid_to, source_session_id, source_run_id, hits, last_used_at,
            created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         row.id,
         row.scope,
         row.owner_id,
         row.user_id ?? null,
+        row.space_id ?? null,
         row.session_id,
         row.kind,
         row.content,
@@ -477,6 +501,16 @@ export class MemoryStore {
     const changes = this.db.run('UPDATE memory SET status = ?, updated_at = ? WHERE id = ?', status, new Date().toISOString(), id)
       .changes
     if (changes > 0 && status === 'active') this.queue?.enqueue(id)
+    return changes > 0 ? this.get(id) : undefined
+  }
+
+  /**
+   * P5 前置：提升为跨域共享（空间私有 → 全局记忆；space_id 置 NULL，幂等）。
+   * 权限与审计在路由层（仅条目归属者；`memory.elevate` 审计留痕）。
+   */
+  elevateToShared(id: string): MemoryItem | undefined {
+    const changes = this.db.run('UPDATE memory SET space_id = NULL, updated_at = ? WHERE id = ?', new Date().toISOString(), id)
+      .changes
     return changes > 0 ? this.get(id) : undefined
   }
 

@@ -71,6 +71,9 @@ export const webFetchTool = {
         timeoutMs: ctx.httpTimeoutMs,
         minIntervalMs: ctx.httpMinIntervalMs,
         maxBytes: MAX_BYTES,
+        // M57：Cookie 罐按触发者分桶（多用户同站点会话不串号）
+        cookieKey: ctx.triggerUserId ?? ctx.userId,
+        uaPoolExtra: ctx.httpUaPoolExtra,
       })
       // 任意重定向目标均可返回（无白名单；仅报告最终 host）
       const finalHost = new URL(res.finalUrl).hostname

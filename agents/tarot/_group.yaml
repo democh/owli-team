@@ -20,6 +20,11 @@ agenda:
     prompt: 换个角度重新抽一组牌对照看（保持问题边界一致，同主题不同侧面）：
   - label: 术语与文化
     prompt: 讲讲塔罗的历史脉络与常见误读（附来源与出处）：
+ritual:
+  title: 每日塔罗
+  cron: "0 22 * * *"
+  opener: 帮我抽今天的每日一牌：用三张牌阵解读今天的主题、提醒与行动建议。
+  description: 每晚 22:00 自动开一局塔罗研习
 stage:
   layout: dock
   panel: chartboard

@@ -138,6 +138,8 @@ export const ICON_REGISTRY: Record<string, LucideIcon> = {
   'piggy-bank': PiggyBank,
   utensils: Utensils,
   house: House,
+  // 空间（Space）：「我的」内置图标名对齐（迁移 v27 种子 icon='home'）
+  home: House,
   'paw-print': PawPrint,
   baby: Baby,
   brain: Brain,

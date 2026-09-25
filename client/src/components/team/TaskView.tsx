@@ -25,7 +25,7 @@ import { apiPatch } from '../../lib/api'
 import { memberDisplayList } from '../../lib/members'
 import { useAgentStore } from '../../stores/agent-store'
 import { usePlanStore } from '../../stores/plan-store'
-import { useSessionStore } from '../../stores/session-store'
+import { useSessionStore, useCurrentSession } from '../../stores/session-store'
 import { useTaskStore } from '../../stores/task-store'
 import { useUiStore } from '../../stores/ui-store'
 import { cn } from '../../lib/utils'
@@ -360,7 +360,7 @@ function MemberBoard({ members, plans }: { members: AgentDefinition[]; plans: Pl
 
 export function TaskView(): React.JSX.Element {
   const currentId = useSessionStore((s) => s.currentId)
-  const session = useSessionStore((s) => s.sessions.find((x) => x.id === s.currentId))
+  const session = useCurrentSession()
   const tasks = useTaskStore((s) => s.tasks)
   const boundSessionId = useTaskStore((s) => s.sessionId)
   const loading = useTaskStore((s) => s.loading)

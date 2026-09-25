@@ -42,6 +42,8 @@ import { ReviewStore } from './store/reviews.js'
 import { RunEventStore } from './store/run-events.js'
 import { RunStore } from './store/runs.js'
 import { ScheduleStore } from './store/schedules.js'
+import { RitualStore } from './store/rituals.js'
+import { findSystemRitual } from './schedule/system-rituals.js'
 import { createConnectionUseGuard } from './connections/access.js'
 import { createUserLabelResolver } from './context/user-label.js'
 import { ByokProvider } from './llm/byok.js'
@@ -52,6 +54,7 @@ import { MaterialStore } from './store/materials.js'
 import { QuotaStore } from './store/quotas.js'
 import { SessionMemberStore } from './store/session-members.js'
 import { SessionStore } from './store/sessions.js'
+import { SpaceStore } from './store/spaces.js'
 import { SkillLibrary } from './store/skills.js'
 import { SummaryStore } from './store/summaries.js'
 import { TaskStore } from './store/tasks.js'
@@ -63,6 +66,7 @@ import { NotifyHub } from './ws.js'
 import { InboxStore } from './store/inbox.js'
 import type { InboxAddInput } from './store/inbox.js'
 import { SessionReadsStore } from './store/session-reads.js'
+import { ReactionStore } from './store/reactions.js'
 import { FriendStore } from './store/friends.js'
 import { SessionHideStore } from './store/session-hides.js'
 import { PresenceTracker } from './realtime/presence.js'
@@ -73,6 +77,7 @@ import { PresenceInstanceStore } from './store/presence-instances.js'
 import { sessionHumans } from './orchestration/humans.js'
 // M26：资产控制台（唯一写盘通道：zod 校验 → 原子写 → 回收站软删除）
 import { AssetManager } from './assets/manager.js'
+import { AssetGenerator } from './assets/generator.js'
 import { MCP_TOPIC, type NotifyType } from '@multi-agent/shared'
 // M22：连接中心（凭据加密 / 连接存储 / 审计 / 数据库 / 浏览器 / 帧流）
 import { SecretVault } from './connections/crypto.js'
@@ -134,6 +139,8 @@ if (pending.length > 0) {
 const prompts = new PromptLibrary({ agentsDir: cfg.agentsDir, promptsDir: cfg.promptsDir })
 const skills = new SkillLibrary(cfg.skillsDir)
 const sessions = new SessionStore(db)
+// 空间（Space）存储（迁移 v27 落种内置三空间；构造时 ensureBuiltins 校正）
+const spaceStore = new SpaceStore(db)
 // M6：项目层 + 工作区服务（artifact 工作区根由 WorkspaceService 解析：sandbox/repo/worktree）
 const projects = new ProjectStore(db, cfg.allowedRoots)
 const workspace = new WorkspaceService({ cfg, sessions, projects })
@@ -142,12 +149,14 @@ const artifacts = new ArtifactStore(cfg.workspaceDir, (sid) => workspace.resolve
 const versions = new ArtifactVersionStore(db)
 // M25：嵌入队列（写入即入队；worker 未启动时仅积累，启用后消费）
 const embedQueue = new EmbedQueueStore(db)
-const memory = new MemoryStore(db, embedQueue)
+// P2：记忆域隔离——写入时按来源会话解析空间域（解析不到 = 跨域共享全局记忆）
+const memory = new MemoryStore(db, embedQueue, (sid) => sessions.getSession(sid)?.spaceId ?? 'default')
 const summaries = new SummaryStore(db)
 const taskStore = new TaskStore(db)
 const runStore = new RunStore(db)
 // M35：定时任务存储（迁移 v11；会话删除级联清理）
 const scheduleStore = new ScheduleStore(db)
+const ritualStore = new RitualStore(db)
 const usageStore = new UsageStore(db, cfg.llmPricing)
 const metricsStore = new ToolMetricsStore(db)
 // M9：运行轨迹（trace / 指标）与消息反馈
@@ -176,6 +185,8 @@ const mcpSeeds = parseMcpServerSeeds(cfg.mcpServers)
 // M79-A：收件箱 / 已读存储（用户主题投递的权威层；WS `read` 帧与 REST 路由共用）
 const inboxStore = new InboxStore(db)
 const sessionReads = new SessionReadsStore(db)
+// M80-B：消息表情回应
+const reactionStore = new ReactionStore(db)
 // M79-C：好友关系存储 + 在线状态（用户主题扇出）
 const friendStore = new FriendStore(db)
 // M79-D：会话隐藏（DM「删除」语义）
@@ -186,7 +197,7 @@ let presenceInstances: PresenceInstanceStore | undefined
 const notify = new NotifyHub(
   cfg,
   () => ({ auth, access }),
-  () => ({ inbox: inboxStore, reads: sessionReads }),
+  () => ({ inbox: inboxStore, reads: sessionReads, showReadReceipts: (userId) => users.getPrefs(userId).showReadReceipts !== false }),
   {
     // M79-L：连接计数同步写跨实例表（db 模式；countOf 为写表时的本地引用计数）
     onConnect: (userId) => {
@@ -243,6 +254,9 @@ const llmProviderRouter = new LlmProviderRouter({
   createFor: ({ baseUrl, apiKey }) => createProvider({ ...cfg, llmBaseUrl: baseUrl, llmApiKey: apiKey }),
 })
 provider = llmProviderRouter
+
+// Agent Studio：资产生成器（描述 → 草稿；不落盘，落盘走既有控制台创建链路）
+const assetGen = new AssetGenerator({ provider, cfg, prompts, skills })
 // M57：多用户装配（账号 / 登录会话 / API Key / 访问控制；无账号时保持单用户兼容模式）
 const users = new UserStore(db)
 const authSessions = new AuthSessionStore(db)
@@ -513,6 +527,40 @@ const scheduleService = new ScheduleService({
   notify,
   launch: (sessionId, userMessageId) => engine.launch(sessionId, userMessageId),
   isBusy: (sessionId) => Boolean(engine.activeRunOf(sessionId)),
+  // P4：仪式订阅（场景声明解析 + 到点生成会话并注入 opener）
+  rituals: ritualStore,
+  resolveRitual: (sceneId) => {
+    const group = prompts.groups().find((x) => x.id === sceneId)
+    return group?.ritual ? { declaration: group.ritual, chain: group.chain, sceneId: group.id } : undefined
+  },
+  resolveSystemRitual: (ritualId) => {
+    const item = findSystemRitual(ritualId)
+    if (!item) return undefined
+    const group = prompts.groups().find((x) => x.id === item.sceneId)
+    return { declaration: item.declaration, chain: group?.chain ?? [], sceneId: item.sceneId }
+  },
+  spawnRitualSession: (sub) => {
+    try {
+      const now = new Date()
+      const day = `${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+      const session = sessions.create(sub.members, `${sub.title} · ${day}`, {
+        ownerId: sub.userId === 'local' ? undefined : sub.userId,
+        spaceId: sub.spaceId,
+      })
+      const message = sessions.appendMessage({
+        sessionId: session.id,
+        role: 'user',
+        userId: session.ownerId,
+        content: sub.opener,
+        mentions: [],
+        status: 'complete',
+      })
+      return message.id ? { sessionId: session.id, messageId: message.id } : null
+    } catch {
+      // 失败不抛（service 层记录 settle 错误并推进 next，避免同轮重试风暴）
+      return null
+    }
+  },
 })
 engine.setScheduleService(scheduleService)
 
@@ -558,6 +606,8 @@ app.use(
     feedback: feedbackStore,
     projects,
     workspace,
+    // 空间（Space）：工作生活一体的一级信息架构（迁移 v27）
+    spaces: spaceStore,
     members: sessionMembers,
     // M57 P3：配额服务（用量接口 / 强制点）
     quotas: quotaService,
@@ -583,6 +633,8 @@ app.use(
     // M79-A：收件箱 / 已读（/inbox、/sessions/:id/read、会话列表 unreadCount）
     inbox: inboxStore,
     reads: sessionReads,
+    // M80-B：表情回应（/sessions/:id/messages/:mid/reactions）
+    reactions: reactionStore,
     // M79-C：好友（/friends、/users/search）+ 收件箱投递 + 在线状态
     friends: friendStore,
     deliverInbox,
@@ -603,6 +655,7 @@ app.use(
     embeddings,
     // M26：资产控制台（唯一写盘通道 + 工具中心）
     assets,
+    assetGen,
     tools,
     // M27：MCP（服务器管理 / 生命周期 / 工具目录 / 会话绑定）
     mcp: mcpStore,

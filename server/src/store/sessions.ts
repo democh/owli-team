@@ -47,6 +47,8 @@ interface SessionRow {
   waiting_on?: string | null
   /** M79-E：人类定向（userIds JSON；NULL = 无） */
   human_mentions?: string | null
+  /** 所属空间（spaces.id；NULL / 'default' = 我的空间） */
+  space_id?: string | null
   workspace_dir: string | null
   created_at: string
   updated_at: string
@@ -135,6 +137,8 @@ function rowToSession(row: SessionRow): Session {
     planFirst: row.plan_first ? true : undefined,
     serial: row.serial ? true : undefined,
     projectId: row.project_id ?? undefined,
+    // 空间归属（default / NULL 为缺省，不落字段保持零差异）
+    ...(row.space_id && row.space_id !== 'default' ? { spaceId: row.space_id } : {}),
     workspaceDir: row.workspace_dir ?? undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -343,6 +347,8 @@ export class SessionStore {
       kind?: 'team' | 'direct' | 'group'
       /** M79-D：私聊唯一键（仅 kind='direct'；并发竞态由唯一索引兜底） */
       dmKey?: string
+      /** 所属空间（spaces.id；缺省 = 我的空间） */
+      spaceId?: string
     } = {},
   ): Session {
     const ts = nowIso()
@@ -357,13 +363,14 @@ export class SessionStore {
       // M46-2：默认串行（逐位出场，便于跟进查看）；显式 serial: false 才关闭
       serial: opts.serial === false ? undefined : true,
       projectId: opts.projectId,
+      ...(opts.spaceId && opts.spaceId !== 'default' ? { spaceId: opts.spaceId } : {}),
       workspaceDir: opts.workspaceDir,
       createdAt: ts,
       updatedAt: ts,
     }
     this.db.run(
-      `INSERT INTO sessions (id, project_id, title, participant_ids, member_souls, workspace_dir, plan_first, serial, owner_id, kind, dm_key, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO sessions (id, project_id, title, participant_ids, member_souls, workspace_dir, plan_first, serial, owner_id, kind, dm_key, space_id, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       session.id,
       session.projectId ?? null,
       session.title,
@@ -375,6 +382,7 @@ export class SessionStore {
       session.ownerId ?? null,
       opts.kind ?? 'team',
       opts.dmKey ?? null,
+      session.spaceId ?? 'default',
       ts,
       ts,
     )
@@ -413,6 +421,17 @@ export class SessionStore {
     entry.session.projectId = projectId
     entry.metaDirty = true
     this.scheduleSave(id)
+  }
+
+  /** 变更会话所属空间（undefined / 'default' = 回到我的空间） */
+  setSpace(id: string, spaceId: string | undefined): Session | undefined {
+    const entry = this.entry(id)
+    if (!entry) return undefined
+    entry.session.spaceId = spaceId && spaceId !== 'default' ? spaceId : undefined
+    entry.session.updatedAt = nowIso()
+    entry.metaDirty = true
+    this.scheduleSave(id)
+    return entry.session
   }
 
   setParticipants(id: string, participantIds: string[]): Session | undefined {
@@ -661,7 +680,7 @@ export class SessionStore {
     // 审核 M-1：先落库成功再清脏标记（tx 失败时脏数据保留，避免静默丢写；下次触发重试）
     this.db.tx(() => {
       this.db.run(
-        `UPDATE sessions SET title = ?, participant_ids = ?, member_souls = ?, project_id = ?, workspace_dir = ?, plan_first = ?, serial = ?, owner_id = ?, route_mode = ?, waiting_on = ?, updated_at = ?
+        `UPDATE sessions SET title = ?, participant_ids = ?, member_souls = ?, project_id = ?, workspace_dir = ?, plan_first = ?, serial = ?, owner_id = ?, route_mode = ?, waiting_on = ?, space_id = ?, updated_at = ?
          WHERE id = ?`,
         session.title,
         JSON.stringify(session.participantIds),
@@ -673,6 +692,7 @@ export class SessionStore {
         session.ownerId ?? null,
         session.routeMode ?? 'auto',
         session.waitingOn && session.waitingOn.length > 0 ? JSON.stringify(session.waitingOn) : null,
+        session.spaceId ?? 'default',
         session.updatedAt,
         session.id,
       )

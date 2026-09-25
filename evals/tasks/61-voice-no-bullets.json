@@ -1,0 +1,18 @@
+{
+  "id": "voice-no-bullets",
+  "name": "声纹探针：生活闲聊不堆分点（真实模型）",
+  "participants": ["coach"],
+  "prompt": "最近总忍不住熬夜刷手机，白天又累又自责。不用给我列清单，就随便跟我聊聊这件事。",
+  "maxTurns": 3,
+  "real": true,
+  "assertions": [
+    { "type": "message_no_banned_words" },
+    { "type": "message_bullet_ratio_lte", "value": 0.3 },
+    { "type": "run_end_reason", "value": "completed" },
+    {
+      "type": "judge",
+      "rubric": "这是一段日常闲聊回复：应为连贯口语的短段落（允许少量分点），有具体观察或追问、像朋友说话；无「综上所述 / 首先其次再其次」类模板腔、无清单式说教、无工具口吻。1-10 评分（10 = 完全像真人闲聊）。",
+      "minScore": 6
+    }
+  ]
+}

@@ -1,5 +1,5 @@
 {
-  "ts": "2026-09-19T09-36-53",
+  "ts": "2026-09-22T16-23-26",
   "mode": "mock",
   "tasks": {
     "full-relay-login": {
@@ -62,9 +62,6 @@
     "blank-scene": {
       "ok": true
     },
-    "debate": {
-      "ok": true
-    },
     "negotiation": {
       "ok": true
     },
@@ -96,6 +93,81 @@
       "ok": true
     },
     "parallel-guard": {
+      "ok": true
+    },
+    "interior": {
+      "ok": true
+    },
+    "metaphysics-transit-synastry": {
+      "ok": true
+    },
+    "fengshui": {
+      "ok": true
+    },
+    "metaphysics-daliuren-qimen": {
+      "ok": true
+    },
+    "health": {
+      "ok": true
+    },
+    "home": {
+      "ok": true
+    },
+    "wealth": {
+      "ok": true
+    },
+    "personal": {
+      "ok": true
+    },
+    "learning": {
+      "ok": true
+    },
+    "travel": {
+      "ok": true
+    },
+    "relationship": {
+      "ok": true
+    },
+    "legal-personal": {
+      "ok": true
+    },
+    "ops": {
+      "ok": true
+    },
+    "tarot": {
+      "ok": true
+    },
+    "trpg": {
+      "ok": true
+    },
+    "philosophy": {
+      "ok": true
+    },
+    "creator": {
+      "ok": true
+    },
+    "ecommerce": {
+      "ok": true
+    },
+    "funding-dd": {
+      "ok": true
+    },
+    "writing": {
+      "ok": true
+    },
+    "moot-court": {
+      "ok": true
+    },
+    "wellness-mind": {
+      "ok": true
+    },
+    "finance-deep": {
+      "ok": true
+    },
+    "sales": {
+      "ok": true
+    },
+    "academic": {
       "ok": true
     }
   }

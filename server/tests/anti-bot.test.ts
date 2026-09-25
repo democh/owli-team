@@ -15,6 +15,7 @@ import {
   browserHeaders,
   decodeBody,
   detectBlockPage,
+  effectivePool,
   resetAntiBotState,
 } from '../src/tools/http.js'
 
@@ -370,6 +371,43 @@ describe('http：antiBotFetch 反爬行为', () => {
       const res = await antiBotFetch({ url: `${base}/x`, minIntervalMs: 0, maxRetries: 0 })
       expect(res.ok).toBe(true)
       expect(res.text).toBe('')
+    } finally {
+      await closeServer(server)
+    }
+  })
+})
+
+describe('http：UA 池合并与 Cookie 分桶（加固批）', () => {
+  it('effectivePool：追加 UA 前置合并（trim / 空行剔除）；空输入回退内置池', () => {
+    const builtin = effectivePool()
+    expect(builtin.length).toBeGreaterThanOrEqual(4)
+    const merged = effectivePool(['  Custom/1.0  ', '', 'Safari/26.0'])
+    expect(merged.length).toBe(builtin.length + 2)
+    expect(merged[0].ua).toBe('Custom/1.0')
+    expect(merged[0].secFetch).toBe(true) // 非 Safari 结尾 → Chromium 语义
+    expect(merged.find((p) => p.ua === 'Safari/26.0')?.secFetch).toBe(false)
+    expect(effectivePool([])).toBe(builtin)
+  })
+
+  it('Cookie 罐按 cookieKey 分桶：不同用户同站点互不串号', async () => {
+    let n = 0
+    const seen: Array<string | undefined> = []
+    const server = http.createServer((req, res) => {
+      seen.push(req.headers.cookie)
+      n += 1
+      res.setHeader('set-cookie', `sid=C${n}; Path=/`)
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
+      res.end('ok')
+    })
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+    const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`
+    try {
+      await antiBotFetch({ url: `${base}/a`, minIntervalMs: 0, maxRetries: 0, cookieKey: 'u1' })
+      await antiBotFetch({ url: `${base}/b`, minIntervalMs: 0, maxRetries: 0, cookieKey: 'u2' })
+      await antiBotFetch({ url: `${base}/c`, minIntervalMs: 0, maxRetries: 0, cookieKey: 'u1' })
+      expect(seen[0]).toBeUndefined() // u1 首访：无 Cookie
+      expect(seen[1] ?? '').not.toContain('sid=') // u2 独立桶：不携带他人的会话
+      expect(seen[2] ?? '').toContain('sid=C1') // u1 复访：自动回传自己的 Cookie
     } finally {
       await closeServer(server)
     }

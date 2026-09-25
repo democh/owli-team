@@ -91,7 +91,7 @@ export function MessageActions({
   const rootRef = React.useRef<HTMLDivElement>(null)
   // M79-AF：写项展示 gating（服务端为准；兼容模式 role/userId 缺省 → 全放行零变化）
   const myUserId = useAuthStore((s) => s.user?.id)
-  const myRole = useSessionStore((s) => s.sessions.find((x) => x.id === s.currentId)?.role)
+  const myRole = useSessionStore((s) => s.current?.role)
 
   // M9：打开菜单时同步已有反馈状态
   const feedbackTargetId = message?.id

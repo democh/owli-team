@@ -61,6 +61,8 @@ export type AuditAction =
   | 'session.share-update'
   | 'session.share-remove'
   | 'session.share-leave'
+  /** P5 前置：空间私有记忆提升为跨域共享（全局记忆） */
+  | 'memory.elevate'
   // M79-C：好友（请求 / 接受 / 拒绝 / 解除 / 拉黑 / 解除拉黑）
   | 'friend.request'
   | 'friend.accept'

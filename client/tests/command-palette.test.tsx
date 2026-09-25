@@ -82,7 +82,7 @@ describe('CommandPalette 扩充命令（M13）', () => {
       const method = init?.method ?? 'GET'
       if (url === '/api/sessions' && method === 'POST') return jsonResponse({ session: makeSession('s9', '新会话') })
       if (url === '/api/sessions') return jsonResponse({ sessions: [makeSession('s9', '新会话')] })
-      if (url === '/api/sessions/s9') return jsonResponse({ messages: [], latestRun: null })
+      if (url.startsWith('/api/sessions/s9')) return jsonResponse({ messages: [], latestRun: null })
       if (url === '/api/runs/active') return jsonResponse({ runs: [] })
       return jsonResponse({})
     })

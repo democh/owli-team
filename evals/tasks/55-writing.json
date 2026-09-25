@@ -1,0 +1,16 @@
+{
+  "id": "writing",
+  "name": "创作工作室：选题 × 成稿 × 定稿 × 出版",
+  "participants": ["storyline", "author", "editor", "publisher"],
+  "prompt": "推进一部长文创作：@曲径 做选题策划与大纲，@文藻 主笔成稿，@锦言 编辑定稿（文字规范与节奏），@书远 给出版路径与材料清单；收尾汇总创作计划。",
+  "maxTurns": 7,
+  "assertions": [
+    { "type": "artifact_exists", "path": "docs/选题大纲-这个需求.md" },
+    { "type": "artifact_exists", "path": "docs/文稿-这个需求.md" },
+    { "type": "artifact_exists", "path": "docs/定稿-这个需求.md" },
+    { "type": "artifact_exists", "path": "docs/出版方案-这个需求.md" },
+    { "type": "turns_lte", "value": 6 },
+    { "type": "no_loop" },
+    { "type": "run_end_reason", "value": "completed" }
+  ]
+}

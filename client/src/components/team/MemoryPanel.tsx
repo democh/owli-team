@@ -16,6 +16,7 @@ import {
   BrainCircuit,
   Check,
   DatabaseZap,
+  Globe,
   Loader2,
   Pencil,
   Plus,
@@ -30,7 +31,8 @@ import { baseAgentId } from '@multi-agent/shared'
 import { apiDelete, apiGet, apiPatch, apiPost } from '../../lib/api'
 import { cn } from '../../lib/utils'
 import { useAgentStore } from '../../stores/agent-store'
-import { useSessionStore } from '../../stores/session-store'
+import { useSessionStore, useCurrentSession } from '../../stores/session-store'
+import { useSpaceStore } from '../../stores/space-store'
 import { useUiStore } from '../../stores/ui-store'
 import { Badge } from '../ui/badge'
 import { Button } from '../ui/button'
@@ -81,11 +83,17 @@ const STATUS_LABEL: Record<MemoryStatus, string> = {
 
 export function MemoryPanel(): React.JSX.Element {
   const currentId = useSessionStore((s) => s.currentId)
-  const session = useSessionStore((s) => (s.currentId ? s.sessions.find((x) => x.id === s.currentId) : undefined))
+  const session = useCurrentSession()
   const agents = useAgentStore((s) => s.agents)
   const insertToComposer = useUiStore((s) => s.insertToComposer)
 
   const [scope, setScope] = React.useState<MemoryScope>('session')
+  // P2：空间域（随左栏空间切换；空 = 未装配空间能力不过滤）
+  const spaces = useSpaceStore((s) => s.spaces)
+  const currentSpace = useSpaceStore((s) => s.currentId)
+  /** P2 审计：仅看跨域共享（全局）记忆（服务端 spaceId=shared 语义） */
+  const [auditShared, setAuditShared] = React.useState(false)
+  const spaceId = spaces.length > 0 ? (auditShared ? 'shared' : currentSpace) : ''
   const [statusFilter, setStatusFilter] = React.useState<MemoryStatus | 'all'>('active')
   const [kindFilter, setKindFilter] = React.useState<MemoryKind | 'all'>('all')
   const [items, setItems] = React.useState<MemoryItem[]>([])
@@ -145,9 +153,9 @@ export function MemoryPanel(): React.JSX.Element {
   const ownerUsable =
     owner.length > 0 && (scope !== 'session' || Boolean(currentId)) && (scope !== 'project' || Boolean(session?.projectId))
 
-  const currentKey = `${scope}|${owner}|${statusFilter}|${kindFilter}`
+  const currentKey = `${scope}|${owner}|${statusFilter}|${kindFilter}|${spaceId}`
   const load = React.useCallback(async (): Promise<void> => {
-    const key = `${scope}|${owner}|${statusFilter}|${kindFilter}`
+    const key = `${scope}|${owner}|${statusFilter}|${kindFilter}|${spaceId}`
     if (!owner) {
       setItems([])
       setBoundKey(key)
@@ -158,6 +166,8 @@ export function MemoryPanel(): React.JSX.Element {
       const params = new URLSearchParams({ scope, owner })
       if (statusFilter !== 'all') params.set('status', statusFilter)
       if (kindFilter !== 'all') params.set('kind', kindFilter)
+      // P2：空间域过滤（当前空间 + 跨域共享；面板随左栏空间切换）
+      if (spaceId) params.set('spaceId', spaceId)
       const res = await apiGet<{ memory: MemoryItem[] }>(`/api/memories?${params.toString()}`)
       setItems(res.memory)
       setBoundKey(key)
@@ -167,7 +177,7 @@ export function MemoryPanel(): React.JSX.Element {
     } finally {
       setLoading(false)
     }
-  }, [scope, owner, statusFilter, kindFilter])
+  }, [scope, owner, statusFilter, kindFilter, spaceId])
 
   React.useEffect(() => {
     setSearch(null)
@@ -234,6 +244,17 @@ export function MemoryPanel(): React.JSX.Element {
   }
 
   // ---------- M25：状态流转 / 审核 / supersede / 重建 ----------
+
+  /** P5 前置：提升为跨域共享（全局记忆）——仅私人条目；服务端留审计；就地重载列表 */
+  const elevateItem = async (item: MemoryItem): Promise<void> => {
+    try {
+      await apiPost(`/api/memories/${item.id}/elevate`, {})
+      toast('已提升为跨域共享（全局记忆）')
+      void load()
+    } catch (err) {
+      toast.error((err as Error).message)
+    }
+  }
 
   const setStatus = async (id: string, status: MemoryStatus, okText: string): Promise<void> => {
     try {
@@ -351,6 +372,29 @@ export function MemoryPanel(): React.JSX.Element {
             {s.label}
           </button>
         ))}
+        {/* P2：空间域可见化 + 跨空间审计——记忆按空间隔离，跨域共享条目（无空间标签）对全空间可见 */}
+        {spaceId && (
+          <span
+            className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground"
+            title={
+              auditShared
+                ? '跨空间审计：仅显示跨域共享（全局）记忆——各空间的私有记忆不在此列出'
+                : '记忆按空间隔离：此处仅显示当前空间与跨域共享的记忆'
+            }
+          >
+            空间·{auditShared ? '跨域共享' : (spaces.find((s) => s.id === spaceId)?.name ?? spaceId)}
+          </span>
+        )}
+        {spaces.length > 0 && (
+          <button
+            type="button"
+            className="rounded-full px-1.5 py-0.5 text-[10px] text-primary/80 transition-colors hover:bg-primary/10 hover:text-primary"
+            title={auditShared ? '返回当前空间视图' : '跨空间记忆审计：一键查看哪些记忆是跨域共享（全局）的'}
+            onClick={() => setAuditShared((v) => !v)}
+          >
+            {auditShared ? '返回当前空间' : '仅看跨域共享'}
+          </button>
+        )}
         <span className="ml-auto max-w-[45%] truncate text-[10.5px] text-muted-foreground/80" title={owner}>
           {scope === 'agent'
             ? participantIds.length > 0
@@ -594,6 +638,16 @@ export function MemoryPanel(): React.JSX.Element {
                           className="rounded p-1 text-muted-foreground/70 hover:bg-accent/70 hover:text-foreground"
                         >
                           <Archive className="size-3" />
+                        </button>
+                      )}
+                      {item.status === 'active' && item.spaceId && !auditShared && (
+                        <button
+                          type="button"
+                          title="提升为跨域共享（全局记忆，全空间可见；留审计）"
+                          onClick={() => void elevateItem(item)}
+                          className="rounded p-1 text-muted-foreground/70 hover:bg-primary/10 hover:text-primary"
+                        >
+                          <Globe className="size-3" />
                         </button>
                       )}
                       <button

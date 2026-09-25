@@ -1,0 +1,18 @@
+{
+  "id": "soul-consistency",
+  "name": "灵魂探针：同角双魂同台文风可辨（真实模型）",
+  "participants": ["ideator~wild", "ideator~zen"],
+  "prompt": "同一道创意题，两位请各自独立作答（不要互相商议）：给一家社区图书馆设计一场吸引年轻人的夜间活动。",
+  "maxTurns": 4,
+  "real": true,
+  "assertions": [
+    { "type": "message_no_banned_words" },
+    { "type": "turns_lte", "value": 4 },
+    { "type": "run_end_reason", "value": "completed" },
+    {
+      "type": "judge",
+      "rubric": "两位是同一角色的不同人格（狂野派 / 禅意派）：遮住署名仍能区分——敢冒险的直给脑洞 vs 克制内省的生活感方案；文风与各自人格一致、互不串味，且都像真人在聊想法。1-10 评分（10 = 人格边界清晰不混淆）。",
+      "minScore": 6
+    }
+  ]
+}

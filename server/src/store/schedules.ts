@@ -168,6 +168,19 @@ export class ScheduleStore {
       .map(rowToSchedule)
   }
 
+  /** P5：未来窗口内的启用任务（跨会话「今日安排」聚合用；调用方按会话可见性过滤） */
+  listUpcoming(untilIsoStr: string, limit = 50): ScheduledTask[] {
+    return this.db
+      .all<ScheduleRow>(
+        `SELECT * FROM scheduled_tasks
+         WHERE enabled = 1 AND next_run_at IS NOT NULL AND next_run_at <= ?
+         ORDER BY next_run_at ASC LIMIT ?`,
+        untilIsoStr,
+        limit,
+      )
+      .map(rowToSchedule)
+  }
+
   update(id: string, patch: ScheduleUpdatePatch): ScheduledTask | undefined {
     const current = this.get(id)
     if (!current) return undefined

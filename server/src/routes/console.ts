@@ -288,6 +288,34 @@ export function createConsoleRouter(deps: ApiDeps): Router {
     res.json({ tools })
   })
 
+  // ---------- Agent Studio：AI 生成（草稿不落盘，落盘走既有创建链路；未装配 503） ----------
+
+  const GenerateAgentSchema = z.object({
+    description: z.string().min(1).max(2000),
+    sceneHint: z.string().max(40).optional(),
+  })
+  const GenerateSkillSchema = z.object({ requirement: z.string().min(1).max(2000) })
+
+  router.post('/console/generate/agent', (req, res) => {
+    if (!deps.assetGen) return res.status(503).json({ error: '资产生成器未装配' })
+    const parsed = GenerateAgentSchema.safeParse(req.body ?? {})
+    if (!parsed.success) return sendParseError(res, parsed.error.issues[0])
+    void deps.assetGen
+      .generateAgent(parsed.data.description, { sceneHint: parsed.data.sceneHint })
+      .then((result) => res.json(result))
+      .catch((err) => res.status(502).json({ error: `生成失败：${(err as Error).message}` }))
+  })
+
+  router.post('/console/generate/skill', (req, res) => {
+    if (!deps.assetGen) return res.status(503).json({ error: '资产生成器未装配' })
+    const parsed = GenerateSkillSchema.safeParse(req.body ?? {})
+    if (!parsed.success) return sendParseError(res, parsed.error.issues[0])
+    void deps.assetGen
+      .generateSkill(parsed.data.requirement)
+      .then((result) => res.json(result))
+      .catch((err) => res.status(502).json({ error: `生成失败：${(err as Error).message}` }))
+  })
+
   // ---------- 校验聚合 ----------
 
   router.post('/console/validate', (_req, res) => {

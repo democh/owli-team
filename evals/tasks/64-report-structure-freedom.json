@@ -1,0 +1,18 @@
+{
+  "id": "report-structure-freedom",
+  "name": "报告探针：体例服务内容（不强制每章结论句；真实模型）",
+  "participants": ["lead", "analyst"],
+  "prompt": "写一份「小团队如何选择知识库工具」的速览级研究报告：结构由你按内容需要自定（不必每章都用结论句收尾），给出可追溯的判断依据与取舍；由 @雷蒙 收口落盘 docs/知识库选型-研判.md。",
+  "maxTurns": 8,
+  "real": true,
+  "assertions": [
+    { "type": "artifact_exists", "path": "docs/知识库选型-研判.md" },
+    { "type": "min_chars", "path": "docs/知识库选型-研判.md", "value": 800 },
+    { "type": "message_no_banned_words" },
+    {
+      "type": "judge",
+      "rubric": "报告体例服务内容：章节按论证需要自然组织（不机械套模板），有具体取舍理由与依据标注；全文无「综上所述 / 总而言之」类套话收尾；不像 AI 模板生成。1-10 评分（10 = 专家随笔式的自然专业文风）。",
+      "minScore": 6
+    }
+  ]
+}

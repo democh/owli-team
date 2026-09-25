@@ -16,7 +16,7 @@
 import * as React from 'react'
 import { ChevronDown, Columns2, Gavel, Swords } from 'lucide-react'
 import { useAgentStore } from '../../stores/agent-store'
-import { useSessionStore } from '../../stores/session-store'
+import { useSessionStore, useCurrentSession } from '../../stores/session-store'
 import { useUiStore } from '../../stores/ui-store'
 import { cn } from '../../lib/utils'
 import { baseAgentId } from '@multi-agent/shared'
@@ -42,7 +42,7 @@ const GRID_SCENES = new Set(['marketing', 'health'])
 
 export function WaveGroup({ ids }: { ids: string[] }): React.JSX.Element {
   const agents = useAgentStore((s) => s.agents)
-  const session = useSessionStore((s) => s.sessions.find((x) => x.id === s.currentId))
+  const session = useCurrentSession()
   const quiet = useUiStore((s) => s.quietMode)
   const ctx = useSceneCtx()
   const [open, setOpen] = React.useState(true)

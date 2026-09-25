@@ -247,6 +247,9 @@ test('M79：好友 → 私聊 → 群聊 → 邀请实时化 → 触发策略', 
     await expect(bobPage.getByRole('button', { name: '停止' })).toHaveCount(0, { timeout: 90_000 })
     // M79-U：bob 触发的回合收尾经 WS 补投到 admin（同会话 upsert；此前需刷新才可见）
     await expect(messageBubble(page, '我这边告一段落')).toBeVisible({ timeout: 15_000 })
+    // M79-AA 补漏：正文 @用户 泛称 chip 就地展开为具体定向人（与交接条同源 humanMentions）
+    const closeoutBubble = page.locator('[id^="msg-"]', { hasText: '我这边告一段落' }).last()
+    await expect(closeoutBubble.locator('[data-mention="用户"]')).toContainText(BOB_NAME)
 
     // ---------- 4d. M79-V：run 流断流自愈（拦截一次 → 自动重连/刷新兜底，无需刷新） ----------
     let streamHits = 0

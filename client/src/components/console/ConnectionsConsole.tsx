@@ -93,6 +93,8 @@ interface FormState {
   privateKey: string
   passphrase: string
   allowExec: boolean
+  /** SSH 主机密钥指纹（可选，防 MITM；SHA256:<base64> 或 64 位 hex） */
+  hostFingerprint: string
   /** M25 嵌入（embedding）：OpenAI 兼容端点 + 模型凭据 */
   baseUrl: string
   model: string
@@ -124,6 +126,7 @@ const EMPTY_FORM: FormState = {
   privateKey: '',
   passphrase: '',
   allowExec: false,
+  hostFingerprint: '',
   baseUrl: '',
   model: '',
   apiKey: '',
@@ -156,6 +159,7 @@ function formOf(connection?: ConnectionDefinition): FormState {
     authMethod: c.authMethod === 'key' ? 'key' : c.authMethod === 'agent' ? 'agent' : 'password',
     privateKeyPath: str('privateKeyPath'),
     allowExec: c.allowExec === true,
+    hostFingerprint: str('hostFingerprint'),
     // M25 嵌入：dim / batchSize / timeoutMs 留空 = 服务端默认（dim 空 = 探测）
     baseUrl: str('baseUrl'),
     model: str('model'),
@@ -202,6 +206,7 @@ function payloadOf(kind: ConnectionKind, form: FormState): { config: Record<stri
       allowExec: form.allowExec,
     }
     if (form.authMethod === 'key' && form.privateKeyPath.trim()) config.privateKeyPath = form.privateKeyPath.trim()
+    if (form.hostFingerprint.trim()) config.hostFingerprint = form.hostFingerprint.trim()
     // 凭据：留空 = 不修改（服务端 secret 字段缺省即保留旧值）
     const secret: Record<string, unknown> = {}
     if (form.authMethod === 'password' && form.password) secret.password = form.password
@@ -600,6 +605,16 @@ function ConnectionForm({
             />
             <span>允许 Agent 执行命令（ssh_exec）</span>
           </label>
+
+          <Field label="主机指纹" hint="（可选，防中间人攻击；ssh-keygen -l 输出的 SHA256:… 或 64 位 hex）">
+            <Input
+              className="h-7 font-mono text-[11.5px]"
+              value={form.hostFingerprint}
+              spellCheck={false}
+              placeholder="SHA256:…"
+              onChange={(e) => patch({ hostFingerprint: e.target.value })}
+            />
+          </Field>
         </>
       )}
 

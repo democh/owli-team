@@ -64,6 +64,8 @@ export function createMemoriesRouter(deps: ApiDeps): Router {
       offset: asNumber(req.query.offset),
       // M57：仅本人命名空间（global 按用户分桶；历史 NULL 归属行不返回——安全侧默认）
       userId: scopeUserIdOf(req),
+      // P2：空间域过滤（spaceId=<id> = 该空间 + 跨域共享；spaceId=shared = 仅跨域共享）
+      spaceId: asString(req.query.spaceId),
     })
     res.json({ memory: items })
   })
@@ -139,6 +141,24 @@ export function createMemoriesRouter(deps: ApiDeps): Router {
     if (!item) return res.status(404).json({ error: '记忆不存在' })
     // 流转回 active（候选审核通过）→ 加速嵌入消费
     if (status === 'active') void deps.memories.poke()
+    res.json({ item })
+  })
+
+  /** P5 前置：提升为跨域共享（全局记忆）——仅条目归属者；已全局的拒绝；留审计 */
+  router.post('/memories/:id/elevate', (req, res) => {
+    const existing = deps.memory.get(req.params.id)
+    if (!existing || !ownedByUser(req, existing)) return res.status(404).json({ error: '记忆不存在' })
+    if (!existing.spaceId) return res.status(400).json({ error: '该记忆已是跨域共享（全局）' })
+    const item = deps.memory.elevateToShared(req.params.id)
+    if (!item) return res.status(404).json({ error: '记忆不存在' })
+    deps.audit?.record({
+      actor: 'user',
+      userId: userOf(req)?.id,
+      action: 'memory.elevate',
+      resourceType: 'memory',
+      resourceId: item.id,
+      detail: { from: existing.spaceId },
+    })
     res.json({ item })
   })
 

@@ -1,0 +1,16 @@
+{
+  "id": "legal-personal",
+  "name": "个人法务：合同纠纷维权路径 × 劳动口径 × 条款审查",
+  "participants": ["rights-advisor", "labor-advisor", "contract-checker"],
+  "prompt": "我遇到一份合同纠纷：@持正 先做时效状态与四路对比（协商/投诉/仲裁/诉讼），@守薪 若涉用工给仲裁口径与材料清单，@审微 审合同风险条款；收尾汇总维权方案与证据清单。",
+  "maxTurns": 6,
+  "assertions": [
+    { "type": "artifact_exists", "path": "docs/维权方案-合同.md" },
+    { "type": "artifact_exists", "path": "docs/劳动争议-合同.md" },
+    { "type": "artifact_exists", "path": "docs/合同审查-合同.md" },
+    { "type": "handoff_targets", "values": ["labor-advisor", "contract-checker"] },
+    { "type": "turns_lte", "value": 5 },
+    { "type": "no_loop" },
+    { "type": "run_end_reason", "value": "completed" }
+  ]
+}

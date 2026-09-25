@@ -41,6 +41,11 @@ const changePasswordSchema = z.object({
 const prefsSchema = z
   .object({
     notifyPollMs: z.number().int().min(500).max(60_000).optional(),
+    // M79：隐私（可被搜索 / 接收好友申请）——M79 期间由好友路由直接落库，此处补齐白名单
+    searchable: z.boolean().optional(),
+    allowFriendRequests: z.boolean().optional(),
+    // M80-C：向他人展示我的已读状态（对等原则；缺省 = true）
+    showReadReceipts: z.boolean().optional(),
   })
   .strict()
 

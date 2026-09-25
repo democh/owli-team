@@ -166,8 +166,17 @@ export class DbConnectionManager {
     const fingerprint = this.fingerprintOf(connection, secret)
     const cached = this.handles.get(connection.id)
     if (cached && cached.fingerprint === fingerprint) {
-      cached.lastUsedAt = Date.now()
-      return cached.handle
+      // 损坏句柄（SQLite 超时终止 worker 等）不命中缓存：关闭后走重建
+      if (cached.handle.isBroken?.() !== true) {
+        cached.lastUsedAt = Date.now()
+        return cached.handle
+      }
+      this.handles.delete(connection.id)
+      try {
+        await cached.handle.close()
+      } catch {
+        // 损坏句柄关闭失败无妨
+      }
     }
     const pending = this.inflight.get(connection.id)
     if (pending) return pending

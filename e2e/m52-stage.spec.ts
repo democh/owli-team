@@ -3,7 +3,7 @@
  * 1) M52-A · 传统数术（dock + chartboard）：M58 无数据不渲染工作区（有数据后出现）；
  *    「切回纯列表」开关回退 stream，再点恢复；
  * 2) M52-A · 窄屏（<900px）：M58 无数据不渲染（含抽屉）；有产出后底部抽屉出现（默认收起），展开后面板可见；
- * 3) M52-B · 四形态点亮走查：roundtable（议题圆桌）/ arena（辩论场，含回合轴推进）/
+ * 3) M52-B · 四形态点亮走查：roundtable（议题圆桌）/ arena（谈判桌，含回合轴推进）/
  *    dock·board（创作工作室）/ dock·coach（职业发展）；
  * 4) M52-B · arena 窄屏降级：单流 + 席位横条（左右席栏与中轴席位不渲染）；
  * 5) M52-C · 既有场景接入逐场景走查：C1 研讨域（头脑风暴 / 深度研究 / 商业战略，roundtable·pool）/
@@ -89,11 +89,11 @@ test('M52-B · roundtable（议题圆桌）：席位环 + 议程条 + 无产物�
   await expect(dialog).toBeHidden()
   await expect(page.getByPlaceholder(COMPOSER_PLACEHOLDER)).toBeVisible()
 
-  // 形态：席位环（4 位成员逐一在环上）+ 议程条（4 条 agenda）
+  // 形态：席位环（3 位成员逐一在环上）+ 议程条（4 条 agenda）
   await expect(page.locator('.scene-rt')).toBeVisible()
   const ring = page.locator('.scene-seat-ring')
   await expect(ring).toBeVisible()
-  for (const name of ['齐观', '尚真', '方衡', '允中']) {
+  for (const name of ['齐观', '方衡', '允中']) {
     await expect(ring.getByText(name)).toBeVisible()
   }
   const agenda = page.locator('.scene-agenda')
@@ -105,28 +105,25 @@ test('M52-B · roundtable（议题圆桌）：席位环 + 议程条 + 无产物�
   await expect(page.getByText('研讨产物将汇聚在这里')).toHaveCount(0)
 })
 
-test('M52-B · arena（辩论场）：计分板 + 左右席 + 发消息后回合轴推进', async ({ page }) => {
+test('M52-B · arena（谈判桌）：计分板 + 左右席 + 发消息后回合轴推进', async ({ page }) => {
   await openApp(page)
-  await createSession(page, { scene: '辩论场', title: `E2E-M52B-辩论-${Date.now()}` })
+  await createSession(page, { scene: '谈判桌', title: `E2E-M52B-谈判-${Date.now()}` })
 
-  // 静态结构：计分板（未开赛）+ 左右席栏 + 中轴（裁判 / 证据官席位）
+  // 静态结构：左右席栏 + 中轴（教练席位）；谈判桌未配计分板部件（scoreboard 为辩论专属，随场景下线）
   await expect(page.locator('.scene-arena')).toBeVisible()
-  await expect(page.locator('.scene-scoreboard')).toBeVisible()
-  await expect(page.getByText('未开赛')).toBeVisible()
   await expect(page.locator('.scene-arena-left')).toBeVisible()
   await expect(page.locator('.scene-arena-right')).toBeVisible()
   const center = page.locator('.scene-arena-center')
   await expect(center).toBeVisible()
-  await expect(center.getByText('明断')).toBeVisible()
+  await expect(center.getByText('苏纵')).toBeVisible()
 
   // M52-D：左右席发言流已挂载（空态提示，两侧留白不再空白）
   await expect(page.locator('.scene-arena-left .scene-side-empty')).toHaveText('该席发言将显示在这里')
   await expect(page.locator('.scene-arena-right .scene-side-empty')).toHaveText('该席发言将显示在这里')
 
-  // 发消息 → 回合推进（计分板轮次计数，运行中即推进）→ 回合轴出现 → 全链收束
-  await sendMessage(page, '辩一辩：远程办公利大于弊吗？正反双方逐轮交锋，证据官挂证据，裁判终局裁决。')
-  await expect(page.locator('.scene-sb-note')).toContainText(/第 \d+ 轮/, { timeout: 60_000 })
-  await expect(page.locator('.scene-arena-track')).toBeVisible()
+  // 发消息 → 回合推进 → 回合轴出现 → 全链收束
+  await sendMessage(page, '@谭成 @祁弈 就这单采购谈一轮：先各自出价，再逐轮让步看能否成交。')
+  await expect(page.locator('.scene-arena-track')).toBeVisible({ timeout: 60_000 })
   // M60（§81）：live 通道——run 收束前侧栏条目已实时入流（流式描边 data-streaming）
   await expect(
     page
@@ -135,7 +132,7 @@ test('M52-B · arena（辩论场）：计分板 + 左右席 + 发消息后回合
   ).toBeVisible()
   await expectYourTurn(page)
 
-  // M52-D：该席发言投影进侧栏（左立言 / 右砺锋，含轮次徽标）
+  // M52-D：该席发言投影进侧栏（左谭成 / 右祁弈，含轮次徽标）
   const leftItem = page.locator('.scene-arena-left .scene-side-item').first()
   const rightItem = page.locator('.scene-arena-right .scene-side-item').first()
   await expect(leftItem).toBeVisible()
@@ -201,7 +198,7 @@ test('M52-B · arena 窄屏：单流 + 席位横条（左右席栏 / 中轴席�
   await expect(sessDrawer).toBeVisible()
   await sessDrawer.getByTitle('新建会话').click()
   const dialog = page.getByRole('dialog', { name: '新建会话' })
-  await dialog.getByRole('button', { name: '组队来源：辩论场' }).click()
+  await dialog.getByRole('button', { name: '组队来源：谈判桌' }).click()
   await expect(dialog.getByText(/已选 \d+ 位/)).toBeVisible()
   await dialog.getByPlaceholder('会话标题（可选，默认自动生成）').fill(`E2E-M52B-窄屏-${Date.now()}`)
   await dialog.getByRole('button', { name: '创建并进入' }).click()

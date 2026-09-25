@@ -54,8 +54,8 @@
 | --- | --- | --- | --- |
 | GET | `/api/sessions` | 会话列表（含消息数 / 最后摘要） | `{ sessions: Session[] }` |
 | POST | `/api/sessions` | 新建会话（M46：`participantIds` 空数组 → 填充全局唯一调度官；资产缺失 `400`） | `201 { session }` |
-| GET | `/api/sessions/:id` | 会话详情（含全部消息与最近 Run 快照） | `{ session, messages, latestRun, project }` |
-| PATCH | `/api/sessions/:id` | 重命名 / 切换「规划先行」`planFirst`（M24）/ 「串行执行」`serial`（M46-2，缺省开启） | `{ session }` |
+| GET | `/api/sessions/:id` | 会话详情（含全部消息与最近 Run 快照；`?limit=`/`?before=` 游标分页——最近 N 条 / 该 seq 之前的更早一页，limit ≤ 500，缺省全量） | `{ session, messages, latestRun, project, memberReads, hasMore?, totalCount?, memberStats? }` |
+| PATCH | `/api/sessions/:id` | 重命名 / 切换「规划先行」`planFirst`（M24）/ 「串行执行」`serial`（M46-2，缺省开启）/ **空间归属 `spaceId`**（P1；与改名同口径仅属主，校验存在性 + `notify:session-meta` 广播） | `{ session }` |
 | DELETE | `/api/sessions/:id?deleteWorkspace=&keepWorktree=` | 删除会话；默认连工作区删除，worktree 会话默认丢弃（需保留传 `keepWorktree=true`） | `{ ok, deleteWorkspace, worktreeDiscarded }` |
 | POST | `/api/sessions/:id/resume` | 断点继续（以 `interrupted` 快照启动新 Run） | `201 { runId, queue, queued }` |
 | GET | `/api/sessions/:id/tasks` | 任务清单（`write_todos` 落库，跨 Run 继承） | `{ tasks: TaskItem[] }` |
@@ -67,12 +67,13 @@
 **POST /api/sessions 请求体**：
 
 ```json
-{ "participantIds": ["pm", "architect"], "souls": { "architect": "wild" }, "title": "可选标题", "projectId": "可选项目" }
+{ "participantIds": ["pm", "architect"], "souls": { "architect": "wild" }, "title": "可选标题", "projectId": "可选项目", "spaceId": "可选空间（缺省 = 我的空间；default 不随行）" }
 ```
 
 - `participantIds` 去重（M77：条目为**成员键** —— 经典 = `agentId`（存量兼容）、分身 = `agentId~soulId`；同角有效灵魂去重、无 souls 不可分身、同角 ≤ 4 实例，违者 `400`）；未知角色 `400`（M46：可省略或空数组 `[]` → 服务端填充全局唯一 `dispatch: true` 调度官，资产缺失 `400`）；指定 `projectId` 时先准备项目工作区（worktree 创建失败会回滚会话）；
 - `souls` 可选：创建时即指定经典成员的灵魂覆盖（键必须 ∈ 经典成员键、值必须为该角色可用 soul，否则 `400`；**分身键不得出现在 souls**——分身灵魂内嵌在成员键中）；落库为 `Session.memberSouls`（`Record<memberKey, soulId>`），未指定成员走角色默认灵魂。
 - **M16 成员事件语义（ADR 30）**：添加 / 移出 / 换灵魂三写操作均落一条 `role:'system'` 成员事件消息（`turnIndex: -1`，不进 LLM 窗口）并广播 `notify:members-changed`（payload = `{ session, message }`）；运行中加入的成员从下一回合 roster 即时生效。
+- **M80-C 已读水位投影**：详情返回 `memberReads: Array<{ userId, lastReadSeq }>`（仅开启 `showReadReceipts` 的活跃成员；**请求者自身关闭 → 空投影**——对等双向；ADR 0208）；分页响应同口径；分页附 `hasMore` / `totalCount` / 全量战绩 `memberStats`（前端只加载最近一页时统计仍为全量口径）。
 
 ### 3.1 计划与评审（M24）
 
@@ -95,7 +96,9 @@
 | --- | --- | --- | --- |
 | POST | `/api/sessions/:id/messages` | **双形态**：启动新 Run 或插话（见下） | `201 { message, runId, queue }` 或 `201 { message, injected: true, position, runId }` |
 | PATCH | `/api/sessions/:id/messages/:messageId` | 编辑用户消息内容（运行中 `400`） | `{ message }` |
-| DELETE | `/api/sessions/:id/messages/:messageId` | 删除用户消息（运行中 `400`） | `{ ok }` |
+| DELETE | `/api/sessions/:id/messages/:messageId` | 删除用户消息（运行中 `400` ） | `{ ok }` |
+| PUT | `/api/sessions/:id/messages/:messageId/reactions` | **M80-B**：挂表情回应（`{ emoji }`；幂等 toggle；写级成员，viewer `403`；兼容模式拒绝；同消息同用户 ≤8 种，超限 `429`；`isEmojiLike` 校验） | `{ reactions }` |
+| DELETE | `/api/sessions/:id/messages/:messageId/reactions?emoji=` | 摘除本人回应（仅本人；query 传参） | `{ reactions }` |
 | POST | `/api/sessions/:id/fork` | 从某条消息 fork 新会话（复制截至该条的历史） | `201 { session, copied }` |
 | POST | `/api/sessions/:id/uploads` | 文件 / 图片上传到 `workspace/<sid>/uploads/` | `201 { path, size }` |
 | POST | `/api/sessions/:id/attachments` | **M33 附件直传**（raw 二进制 ≤200MB，无 base64 膨胀；托盘附件通道） | `201 { attachment }` |
@@ -111,6 +114,8 @@
 **M33 附件直传（attachments）**：raw 二进制上传（`Content-Type` 任意，无 base64 膨胀）；文件名经 `x-file-name`（URL 编码）传递，媒体元数据经 `x-file-metadata`（JSON `{ durationMs, width, height }`，非法值静默丢弃）可选传递。类型白名单五类（图片 / 视频 / 音频 / Office 与 PDF 等文档 / 压缩包），可执行与脚本类拒绝（`400`）；图片尺寸服务端解析文件头（覆盖客户端元数据，不可伪造），视频时长取客户端读取的媒体元数据；落盘 `uploads/<ts36>-<name>`（成为普通交付件并广播 `artifact:updated`），响应 `201 { attachment: MessageAttachment }`（`path / name / kind / mime / size / width? / height? / durationMs? / uploadedAt`）。
 
 **消息携带附件（M33）**：`POST /api/sessions/:id/messages` 的 body 可附 `attachments`（≤10 个；纯附件消息允许 `content` 为空）；服务端校验每个 `path` 以 `uploads/` 开头且文件真实存在（防伪造路径，`400`）。附件随用户消息持久化（消息接口回传 `attachments`）；图片附件在上下文装配时按护栏（全窗 ≤6 / 单条 ≤4 / 单图 ≤8MB）注入多模态 `image_url`，Office / PDF 附件由 `read_file` 自动提取文本（见 design.md §48）。
+
+**M80 表情回应投影**：消息随行 `reactions: Array<{ emoji, count, userIds, mine }>`（`mine` 按请求者投影；批量聚合）；变更广播 `notify:reaction` 全量替换帧（`mine` 由客户端按 `userIds` 本地推导）。纯人类元数据：不进 LLM 上下文、不触发 Run、不计未读；agent 消息同样可挂。
 
 ## 5. 上下文与记忆（M2 / M25）
 
@@ -130,12 +135,13 @@
 
 | 方法 | 路径 | 说明 | 关键返回 |
 | --- | --- | --- | --- |
-| GET | `/api/memories?scope=&owner=&kind=&status=&q=&limit=&offset=` | 跨 scope 列表（`status` 缺省不过滤、`all` 同义；`q` = 内容子串过滤；limit 默认 200 / 上限 1000） | `{ memory: MemoryItem[] }` |
+| GET | `/api/memories?scope=&owner=&kind=&status=&q=&spaceId=&limit=&offset=` | 跨 scope 列表（`status` 缺省不过滤、`all` 同义；`q` = 内容子串过滤；**`spaceId=<id>`** = 该空间 + 跨域共享、**`spaceId=shared`** = 仅跨域共享（缺省不过滤——P2 记忆域）；limit 默认 200 / 上限 1000） | `{ memory: MemoryItem[] }` |
 | GET | `/api/memories/stats` | 运行状态（后端 sqlite-vec/js / 扩展版本 / 模型 / 维度 / 队列积压 / 命中率） | `{ stats }` |
 | POST | `/api/memories/reindex` | 后台重建（body `{ force? }`；`force=true` 丢弃 vec0 镜像从 BLOB 重灌；失败条目一并重试） | `{ result: { ok, model, dim, removed, requeued } }`；休眠时 `400` |
 | POST | `/api/memories/recall` | 语义召回调试（评分明细；绕过召回开关，休眠 / 超时仍静默跳过） | `{ outcome: { items: RecalledMemory[], candidates, skipped? } }` |
 | POST | `/api/memories/:id/supersede` | 时间有效性替代（body `{ newId }`；仅同 scope 同 owner；旧条目 → `superseded`） | `{ item }` |
 | PATCH | `/api/memories/:id/status` | 状态流转（候选审核 `active / archived / candidate`；转 `active` 触发嵌入补账） | `{ item }` |
+| POST | `/api/memories/:id/elevate` | **P5 前置**：提升为跨域共享（全局记忆，`space_id` 置 NULL；已全局拒绝）；仅条目归属者；审计 `memory.elevate` | `{ item }` |
 
 - **recall 请求体**：`{ "query": "...", "sessionId?", "agentId?", "projectId?", "topK?": 8, "minScore?": 0.25, "budgetTokens?": 600 }`；评分 = `scope 权重 × (0.50·余弦相似 + 0.15·keyword + 0.10·entity + 0.15·importance + 0.10·recency)`；
 - **embedding 连接**：凭据经连接中心 kind=`embedding`（SecretVault 加密，`secretSet` 标记，明文永不回传）；未配置连接且 env 无 `EMBEDDING_*` 时整模块休眠（零网络零影响）；
@@ -325,6 +331,8 @@ M26 图形化管理面（ActivityRail + Agent / Skill 管理，决策见 ADR 50�
 | POST | `/api/console/groups` | 新建场景（写 `_group.yaml`；已存在 `409`） | `{ group }` |
 | GET | `/api/console/tools` | 工具注册表元数据 + 分类 + 各角色白名单使用情况 | `{ tools: ConsoleToolInfo[] }` |
 | POST | `/api/console/validate` | 资产校验聚合（front-matter 解析 / 语义 + skills 目录结构扫描） | `{ issues: ValidationIssue[] }` |
+| POST | `/api/console/generate/agent` | **Agent Studio**：按描述生成 Agent 草稿（六段人设 / 场景 / 技能建议；**不落盘**，未装配 `503`） | `{ draft, issues, attempts, model }` |
+| POST | `/api/console/generate/skill` | **Agent Studio**：按诉求生成 Skill 草稿（**不落盘**，未装配 `503`） | `{ draft, issues, attempts, model }` |
 
 - `ConsoleToolInfo`：`{ name, description, category, readOnly, paramCount, usedByAgents, origin, server?, tier }`；分类为服务端内置映射（文件检索 / 联网 / 业务 / Git / 执行 / 连接自动化 / 记忆协作 / 范式 / 其它）；`origin: 'builtin' | 'mcp'`（M27：MCP 工具附 `server` = 服务器 slug，控制台显示来源徽章）；`tier: 'core' | 'deferred'`（M28：渐进披露层级——常驻 / 按需发现）；
 - `ValidationIssue`：`{ level: 'error' | 'warning', path, message }`；聚合失败不 500（异常转 issue）。
@@ -422,6 +430,7 @@ M28 扩展（§13.5 / §13.6）：`mcp.json` 文件直配（生态标准 `mcpSer
 | POST | `/api/schedules/:id/run` | 立即执行一次（不推进原定节奏；会话忙时 `400`） | `{ task, runId?, messageId?, skipped? }` |
 | POST | `/api/schedules/:id/pause` | 暂停（保留配置可恢复） | `{ task }` |
 | POST | `/api/schedules/:id/resume` | 恢复（重算 next 并重置失败计数） | `{ task }` |
+| GET | `/api/schedules/upcoming?hours=24` | **P5**：跨会话「今日安排」聚合（未来窗口内的启用任务；按会话可见性过滤，与 `/runs/active` 同口径） | `{ tasks: Array<{ id, sessionId, sessionTitle?, title, kind, nextRunAt }> }` |
 
 - 规格 `ScheduleSpec`：`{ kind:'once', at }`（ISO 含偏移，须为未来）或 `{ kind:'cron', expr }`（5 段「分 时 日 月 周」，支持 `*` / `n` / `a-b` / `a,b,c` / `*/n`）；可选 `tz`（IANA，缺省 = 服务器默认时区）；
 - 触发语义：**run** 注入 `@target instruction` 用户消息（带 `scheduleId`，前端渲染「定时」徽章）并启动运行；**remind** 落 system 事件条（不进上下文，零 token）；忙时自动触发跳过留痕（`skipped-busy`）、超出补跑窗口（`SCHEDULE_CATCHUP_MS`）的错过触发记 `skipped-missed`、连续失败达阈值（`SCHEDULE_FAIL_LIMIT`，默认 3）自动暂停；
@@ -518,7 +527,7 @@ Agent 侧对应四工具 `canvas_read` / `canvas_write` / `media_generate` / `me
 | POST | `/api/auth/logout` | 登出（撤销当前令牌，幂等） | `{ ok: true }`（清 cookie） |
 | GET | `/api/auth/me` | 当前用户（客户端权限显隐依据；单用户兼容模式返回合成管理员） | `{ user, isAdmin, needsSetup, authRequired, multiUser }` |
 | POST | `/api/auth/password` | 自助改密（校验原密码；吊销其它会话，当前会话保留） | `{ ok: true }` |
-| GET/PUT | `/api/auth/preferences` | 个人偏好（`user_prefs`；与系统级 settings.json 分离） | `{ preferences }` |
+| GET/PUT | `/api/auth/preferences` | 个人偏好（`user_prefs`；与系统级 settings.json 分离；`searchable` / `allowFriendRequests` / `showReadReceipts`（M80-C，默认开）等） | `{ preferences }` |
 | GET | `/api/users` | 账号清单（admin） | `{ users: UserInfo[] }` |
 | POST | `/api/users` | 创建账号（admin；邀请制，未给密码则生成且仅返回一次） | `201 { user, initialPassword? }` |
 | PATCH | `/api/users/:id` | 显示名 / 角色 / 状态（admin；禁用即时吊销全部会话） | `{ user }` |
@@ -638,7 +647,7 @@ per-user 私人素材库（跨会话复用上传 / 收藏的图片 / 视频 / �
 | --- | --- | --- | --- |
 | GET | `/api/inbox?since=&limit=` | 本人 | 收件箱增量（`{ items, cursor, unreadCount }`；actorName 随行投影） |
 | POST | `/api/inbox/read` | 本人 | 单项 / 整段已读（`{ ids? }` 或 `{ upTo }`） |
-| POST | `/api/sessions/:id/read` | 读级（viewer 亦可） | 会话已读上报（`{ seq }`；单调推进 + 本人其他端 `notify:read-state` 广播） |
+| POST | `/api/sessions/:id/read` | 读级（viewer 亦可） | 会话已读上报（`{ seq }`；单调推进 + 本人其他端 `notify:read-state` 广播；**M80-C**：开关开 → 会话主题广播 `notify:read-receipt`，关闭者不广播且自身空投影——对等双向） |
 | GET | `/api/ws/stats` | admin | 实时通道观测（连接 / 活跃用户 / 队列水位 / evictions / resyncs） |
 | GET | `/api/me`（等价 `/api/auth/me`）· PATCH `/api/auth/profile` | 本人 | 画像维护（`displayName / headline / bio / avatar`；null = 清除） |
 | GET | `/api/users/search?q=` | 成员 | 用户搜索（隐私开关：searchable=false 仅精确 username；排除自己 / 停用 / 拉黑对；30 次/分） |
@@ -656,7 +665,33 @@ per-user 私人素材库（跨会话复用上传 / 收藏的图片 / 视频 / �
 | GET | `/api/avatars/:file` | 登录用户 | 头像文件读取（文件名白名单防穿越；`immutable` 长缓存；缺失 404 → 客户端回退首字） |
 | `notify:presence` | — | 好友 ∪ 同会话成员 | 收件人 = 好友 ∪ 主体所属会话的属主与全部人类成员（`createPresenceRecipients`；去重 / 排除本人 / 无关联不可见；ADR 0197） |
 
-WS 新帧（`/ws`）：`notify:inbox` / `notify:read-state` / `notify:presence` / `notify:friends-changed` / `notify:session-meta` / `resync` / `error(code=conn_evicted|acl-changed)`；客户端 `read` / `inbox-ack`。详见 ADR 0188–0198。
+WS 新帧（`/ws`）：`notify:inbox` / `notify:read-state` / `notify:presence` / `notify:friends-changed` / `notify:session-meta` / `notify:read-receipt`（M80-C）/ `notify:reaction`（M80-B）/ `resync` / `error(code=conn_evicted|acl-changed)`；客户端 `read` / `inbox-ack`。详见 ADR 0188–0198、0206–0208。
+
+## 25. 空间（Space，工作生活一体 P1–P3）
+
+| 方法 | 路径 | 说明 | 关键返回 |
+| --- | --- | --- | --- |
+| GET | `/api/spaces` | 空间清单（内置「我的 / 工作 / 生活」+ 自建；按 sort） | `{ spaces: Space[] }` |
+| POST | `/api/spaces` | 创建空间（`{ name, kind?, icon? }`；kind 缺省 custom；sort 递增） | `201 { space }` |
+| PATCH | `/api/spaces/:id` | 改名 / 图标 / 排序 / 默认灵魂（`soulOverrides`：agentId → soulId，`null` 清除；内置可改展示元数据、不可改 kind） | `{ space }` |
+| DELETE | `/api/spaces/:id` | 删除自建空间（**内置拒绝**；关联会话经外键置空回「我的」） | `{ ok, sessionsDetached }` |
+
+- 会话归属：`Session.spaceId` 缺省 / `'default'` 不落字段（存量零迁移）；`POST /api/sessions` 可带 `spaceId`；`PATCH /api/sessions/:id { spaceId }` 与改名同口径（多用户仅属主）+ `notify:session-meta`；fork 继承源会话空间；
+- 记忆域（P2）：`GET /api/memories?spaceId=`（见 §5.1）；召回谓词 = 同空间 ∪ 跨域共享；
+- 默认灵魂（P3）：`soulOverrides` 在会话创建 / 成员入编时作为默认值解析（显式选择优先；分身键内嵌跳过）；
+- 边界：空间为个人级视图层实体（多用户模式暂全实例共享，用户级隔离留待后续批次）；决策见 ADR 0209–0211。
+
+## 26. 仪式订阅（P4-A，工作生活一体）
+
+| 方法 | 路径 | 说明 | 返回 |
+| --- | --- | --- | --- |
+| GET | `/api/rituals` | 本人订阅清单（多用户按登录用户；兼容模式 'local'） | `{ rituals: RitualSubscription[] }` |
+| POST | `/api/rituals` | 订阅场景仪式（`{ sceneId, spaceId? }`；title / cron / opener / members 从 `_group.yaml` 声明服务端解析并快照；同场景幂等；上限 10/用户） | `201 { ritual }` |
+| DELETE | `/api/rituals/:id` | 退订（仅本人；跨用户 404） | `{ ok: true }` |
+| PATCH | `/api/rituals/:id` | 编辑订阅（`{ enabled?, cron? }`；cron 变更与「恢复」均重校验并重算 next；仅本人） | `{ ritual }` |
+
+- 到点行为（调度 tick 同轮）：建会话（标题 `${title} · MM-DD`，编制 = 订阅快照 members，空编制走 PRS）+ 落 opener 用户消息 → 启动协作运行；补跑窗口 / 失败留痕同 M35（`scheduled_tasks`）；
+- 客户端入口：新建会话对话框场景卡「订阅 / 已订阅」toggle（仅声明 `ritual` 的场景）；声明为 cron 5 段表达式；决策见 ADR 0215。
 
 ## 附录 A：SSE 运行事件速查
 

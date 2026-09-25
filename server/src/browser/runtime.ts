@@ -130,6 +130,15 @@ function cleanupLaunchedProfile(backend: BrowserBackend, profileDir: string): vo
   else clearStaleActivePort(profileDir)
 }
 
+/** 会话截图目录清理（browserStepShots 每个动作一张 JPEG，会话关闭后不再有需要，防磁盘只增不减） */
+function removeScreenshotDir(cfg: AppConfig, browserSessionId: string): void {
+  try {
+    fs.rmSync(path.join(cfg.browserScreenshotDir, browserSessionId), { recursive: true, force: true })
+  } catch {
+    // 清理失败无妨（目录可能不存在 / 被占用）
+  }
+}
+
 export class BrowserRuntime {
   private readonly sessions = new Map<string, BrowserSession>()
   /** 业务会话 → 当前浏览器会话（一个业务会话同时一个浏览器） */
@@ -352,6 +361,7 @@ export class BrowserRuntime {
         this.profileDirs.delete(id)
         this.releasePageOwnership(endpoint, id)
         this.releaseLease(id)
+        removeScreenshotDir(this.deps.cfg, id)
         // M62：重连耗尽（自启实例大概率已死）→ 校验归属后清理进程 / 目录；远程与复用实例不动
         if (child && profileDir) {
           void (async () => {
@@ -579,6 +589,7 @@ export class BrowserRuntime {
     this.profileDirs.delete(browserSessionId)
     this.releasePageOwnership(session.endpoint, browserSessionId)
     this.releaseLease(browserSessionId)
+    removeScreenshotDir(this.deps.cfg, browserSessionId)
     this.deps.db.run(
       "UPDATE browser_sessions SET closed_at = ?, state = 'closed', close_reason = ? WHERE id = ?",
       new Date().toISOString(),

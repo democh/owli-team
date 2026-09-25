@@ -9,6 +9,7 @@ import type { AgentGroup, ConsoleAgentDetail, ConsoleSkillDetail } from '@multi-
 import { ActivityRail } from '../src/components/console/ActivityRail'
 import { AgentConsole } from '../src/components/console/AgentConsole'
 import { AgentEditor } from '../src/components/console/AgentEditor'
+import { SkillConsole } from '../src/components/console/SkillConsole'
 import { SkillEditor } from '../src/components/console/SkillEditor'
 import { ValidateBanner } from '../src/components/console/ValidateBanner'
 import { TooltipProvider } from '../src/components/ui/tooltip'
@@ -285,5 +286,101 @@ describe('M26：ValidateBanner', () => {
     await userEvent.click(screen.getByRole('button', { name: /重新校验/ }))
     await waitFor(() => expect(useConsoleStore.getState().issues).toEqual([]))
     expect(await screen.findByRole('button', { name: /资产校验通过/ })).toBeTruthy()
+  })
+})
+
+describe('M26+：Agent Studio AI 生成', () => {
+  const DRAFT = {
+    id: 'bot-x',
+    name: '测试角色',
+    role: '测试岗',
+    title: 'Test Bot',
+    description: '一句话职责',
+    capabilities: ['能力一'],
+    group: 'development',
+    avatar: { icon: 'sparkles', gradient: ['#111111', '#222222'] as [string, string] },
+    handoff: ['pm'],
+    skills: ['prd-authoring'],
+    temperature: 0.5,
+    body: '## 职责\n\n生成正文。\n\n## 专业判断\n\n生成正文。',
+  }
+
+  it('AgentConsole：AI 生成 → 填入新建向导（step2 预填 id / name / 正文）', async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = []
+    fetchMock.mockImplementation((url: string, init?: RequestInit) => {
+      calls.push({ url, init })
+      if (url === '/api/console/generate/agent' && init?.method === 'POST') {
+        return Promise.resolve(
+          jsonResponse({
+            draft: DRAFT,
+            issues: ['「协作接口」段过短（1 字，需 ≥60）'],
+            attempts: 2,
+            model: 'test-model',
+          }),
+        )
+      }
+      if (url === '/api/console/groups') return Promise.resolve(jsonResponse({ groups: [GROUP] }))
+      return Promise.resolve(defaultFetch(url))
+    })
+    render(<AgentConsole />)
+
+    await userEvent.click(screen.getByRole('button', { name: 'AI 生成' }))
+    await userEvent.type(screen.getByLabelText('角色描述'), '做一个测试角色')
+    await userEvent.click(screen.getByRole('button', { name: '生成' }))
+
+    // 结果区：名称 / issues / 轮次
+    expect(await screen.findByText(/已生成/)).toBeTruthy()
+    expect(screen.getByText('「协作接口」段过短（1 字，需 ≥60）')).toBeTruthy()
+    expect(screen.getByText(/第 2 轮通过/)).toBeTruthy()
+
+    await userEvent.click(screen.getByRole('button', { name: '填入新建向导' }))
+    // 向导 step2：id / name 已预填
+    await waitFor(() => expect(screen.getByDisplayValue('bot-x')).toBeTruthy())
+    expect(screen.getByDisplayValue('测试角色')).toBeTruthy()
+    // POST 只提交描述（草稿不落盘）
+    const post = calls.find((c) => c.url === '/api/console/generate/agent' && c.init?.method === 'POST')
+    expect(JSON.parse(String(post!.init!.body))).toEqual({ description: '做一个测试角色' })
+  })
+
+  it('SkillConsole：AI 生成 → 直接创建（POST /skills 带生成正文与标签）', async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = []
+    fetchMock.mockImplementation((url: string, init?: RequestInit) => {
+      calls.push({ url, init })
+      if (url === '/api/console/generate/skill' && init?.method === 'POST') {
+        return Promise.resolve(
+          jsonResponse({
+            draft: {
+              name: 'weekly-report',
+              description: '周报写作时使用',
+              tags: ['writing'],
+              body: '# 周报手册\n\n正文。',
+            },
+            issues: [],
+            attempts: 1,
+            model: 'test-model',
+          }),
+        )
+      }
+      if (url === '/api/console/skills' && init?.method === 'POST') {
+        return Promise.resolve(jsonResponse({ skill: { ...SKILL_DETAIL, name: 'weekly-report' } }))
+      }
+      return Promise.resolve(defaultFetch(url))
+    })
+    render(<SkillConsole />)
+
+    await userEvent.click(screen.getByRole('button', { name: '新建 Skill' }))
+    await userEvent.type(screen.getByLabelText('技能诉求'), '帮我做一个周报技能')
+    await userEvent.click(screen.getByRole('button', { name: 'AI 生成并创建' }))
+
+    await waitFor(() => {
+      const post = calls.find((c) => c.url === '/api/console/skills' && c.init?.method === 'POST')
+      expect(post).toBeTruthy()
+      expect(JSON.parse(String(post!.init!.body))).toEqual({
+        name: 'weekly-report',
+        description: '周报写作时使用',
+        tags: ['writing'],
+        body: '# 周报手册\n\n正文。',
+      })
+    })
   })
 })

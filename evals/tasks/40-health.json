@@ -1,0 +1,16 @@
+{
+  "id": "health",
+  "name": "健康生活：训练 × 饮食 × 作息一周方案",
+  "participants": ["fitness", "nutrition", "wellness"],
+  "prompt": "帮我安排一周健康生活：@马骁 出一周训练计划（含强度与恢复），@陶然 配饮食方案（热量与配比），@程眠 调整作息改善睡眠；收尾汇总为一周打卡表。",
+  "maxTurns": 6,
+  "assertions": [
+    { "type": "artifact_exists", "path": "docs/训练计划-这个需求.md" },
+    { "type": "artifact_exists", "path": "docs/饮食计划-这个需求.md" },
+    { "type": "artifact_exists", "path": "docs/作息方案-这个需求.md" },
+    { "type": "handoff_targets", "values": ["nutrition", "wellness"] },
+    { "type": "turns_lte", "value": 5 },
+    { "type": "no_loop" },
+    { "type": "run_end_reason", "value": "completed" }
+  ]
+}

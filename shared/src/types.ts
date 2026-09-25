@@ -57,6 +57,52 @@ export interface GroupStage {
   parts?: string[]
 }
 
+/** P4：仪式化订阅声明（_group.yaml ritual 块；一键订阅 = 建会话 + cron 定时任务） */
+export interface RitualDeclaration {
+  /** 仪式标题（订阅后作为会话与任务标题） */
+  title: string
+  /** cron 5 段表达式（分 时 日 月 周；时区缺省 = 服务器默认） */
+  cron: string
+  /** IANA 时区（可选） */
+  timezone?: string
+  /** 到点注入的开场指令（run 任务 instruction） */
+  opener: string
+  /** 参与成员（角色 id；缺省 = 场景 chain） */
+  members?: string[]
+  /** 订阅入口展示文案 */
+  description?: string
+}
+
+/** P4：仪式订阅（ritual_subscriptions 表投影；一键订阅落库，调度 tick 到点建会话并注入 opener） */
+export interface RitualSubscription {
+  id: string
+  /** 订阅者（多用户 userId；兼容模式 'local'） */
+  userId: string
+  /** 来源场景（agents/<id>/_group.yaml） */
+  sceneId: string
+  /** 系统仪式 id（存在 = 来自内置清单而非场景声明；去重键与 sceneId 独立） */
+  ritualId?: string
+  title: string
+  /** cron 5 段表达式（分 时 日 月 周） */
+  cron: string
+  /** 归一化后的 IANA 时区 */
+  timezone: string
+  /** 到点注入的开场指令（用户消息；不含 @，走 PRS / 编制语义） */
+  opener: string
+  /** 建会话参与成员（订阅时快照：声明 members ?? 场景 chain） */
+  members: string[]
+  /** 订阅时的空间归属（建会话随行；缺省 = 我的空间） */
+  spaceId?: string
+  enabled: boolean
+  nextRunAt?: string
+  lastRunAt?: string
+  /** 最近一次生成的会话（留痕） */
+  lastSessionId?: string
+  lastError?: string
+  createdAt: string
+  updatedAt: string
+}
+
 /** 场景（分组）元数据：agents/<场景>/_group.yaml（§25） */
 export interface AgentGroup {
   id: string
@@ -85,6 +131,8 @@ export interface AgentGroup {
   order: number
   /** M52：场景工作区形态声明（未声明即 stream；前端 scene 注册表消费，异常一律回退 stream） */
   stage?: GroupStage
+  /** P4：仪式化订阅声明（可选；一键订阅 = 按 members/chain 建会话 + cron 定时任务注入 opener） */
+  ritual?: RitualDeclaration
 }
 
 export interface AgentDefinition {
@@ -160,6 +208,8 @@ export interface Session {
   serial?: boolean
   /** 关联项目（M6：真实仓库挂载）；缺省 = 会话级沙箱工作区 */
   projectId?: string
+  /** 所属空间（Space.id；缺省 = DEFAULT_SPACE_ID 我的空间，存量零迁移） */
+  spaceId?: string
   /** 会话工作区绝对路径（worktree / sandbox / repo 三种模式统一落这里） */
   workspaceDir?: string
   createdAt: string
@@ -295,6 +345,24 @@ export interface ChatMessage {
   mode?: TurnMode
   /** M35：本条消息由定时任务注入时 = 任务 id（UI 渲染「定时」徽章并可回链任务；缺省 = 普通消息） */
   scheduleId?: string
+  /** M80-B：表情回应聚合（服务端投影；mine 按请求者计算；缺省 = 无回应） */
+  reactions?: ReactionSummary[]
+}
+
+/** M80-B：单条消息的单 emoji 回应聚合 */
+export interface ReactionSummary {
+  emoji: string
+  count: number
+  /** 回应者 userIds（悬停名单；含本人时 mine=true） */
+  userIds: string[]
+  /** 当前请求者是否已挂（服务端按 viewer 投影） */
+  mine: boolean
+}
+
+/** M80-C：会话成员已读水位（GET /sessions/:id 投影；仅含开启已读展示的成员） */
+export interface MemberReadState {
+  userId: string
+  lastReadSeq: number
 }
 
 // ---------- M33：消息附件（上传通道） ----------
@@ -434,6 +502,10 @@ export type NotifyType =
   | 'notify:friends-changed'
   /** M79：会话元数据变更（waitingOn / 标题 / routeMode；payload: { session }） */
   | 'notify:session-meta'
+  /** M80-B：消息表情回应变更（payload: { sessionId, messageId, reactions: ReactionSummary[] }——全量替换该消息投影） */
+  | 'notify:reaction'
+  /** M80-C：成员已读水位推进（会话主题；payload: { sessionId, userId, lastReadSeq }；仅开启已读展示的用户产生） */
+  | 'notify:read-receipt'
 
 export interface NotifyEnvelope {
   v: 1
@@ -648,6 +720,39 @@ export interface SkillWriteInput {
   body: string
 }
 
+/** Agent Studio：AI 生成的 Agent 草稿（POST /api/console/generate/agent；草稿不落盘） */
+export interface AgentDraftPayload {
+  id: string
+  name: string
+  role: string
+  title: string
+  description: string
+  capabilities: string[]
+  group: string
+  newGroup?: { id: string; name: string; description?: string; objective?: string }
+  avatar: { icon: string; gradient?: [string, string] }
+  handoff: string[]
+  skills: string[] | null
+  temperature: number
+  body: string
+}
+
+/** Agent Studio：AI 生成的 Skill 草稿（POST /api/console/generate/skill） */
+export interface SkillDraftPayload {
+  name: string
+  description: string
+  tags: string[]
+  body: string
+}
+
+/** 生成结果（草稿 + 校验 issues + 实际尝试轮次） */
+export interface GenerateDraftResult<T> {
+  draft: T
+  issues: string[]
+  attempts: number
+  model: string
+}
+
 /** 工具中心条目（读：清单 / 分类 / 授权情况；写：二期全局禁用） */
 export interface ConsoleToolInfo {
   name: string
@@ -693,6 +798,8 @@ export interface MemoryItem {
   ownerId: string
   /** M57（多用户）：归属用户（users.id；单用户兼容模式缺省） */
   userId?: string
+  /** 空间域（Space.id；缺省/NULL = 跨域共享的全局记忆；否则仅同空间召回可见） */
+  spaceId?: string
   kind: MemoryKind
   content: string
   source?: string
@@ -1826,6 +1933,8 @@ export interface UserPreferences {
   searchable?: boolean
   /** M79：允许好友申请（缺省 = true） */
   allowFriendRequests?: boolean
+  /** M80-C：向他人展示我的已读状态（对等原则：关闭后也看不到他人的；缺省 = true） */
+  showReadReceipts?: boolean
 }
 
 /** 定时任务变更通知的 action 枚举（notify:schedule-changed） */
@@ -1900,6 +2009,36 @@ export interface UserSearchHit extends UserProfile {
 
 /** 会话社会形态（M79-D） */
 export type SessionKind = 'team' | 'direct' | 'group'
+
+// ---------- 空间（Space）：工作生活一体的一级信息架构 ----------
+
+/** 空间类别：work / life / 内置默认 personal / 用户自建 custom */
+export type SpaceKind = 'work' | 'life' | 'personal' | 'custom'
+
+/**
+ * 空间（Space）：会话列表之上的一级组织维度。
+ * - 内置三空间：`default`（我的，存量会话归属）/ `work`（工作）/ `life`（生活），builtin=1 不可删除；
+ * - 会话经 `Session.spaceId` 归属；缺省（NULL / 'default'）= 我的空间，存量零迁移、行为零差异；
+ * - 通知策略 / 记忆域隔离 / 默认灵魂绑定在后续批次叠加（见 docs/work-life-fusion-design.md）。
+ */
+export interface Space {
+  id: string
+  name: string
+  kind: SpaceKind
+  /** 图标（lucide 名；缺省由前端按 kind 回退） */
+  icon?: string
+  /** 内置空间（不可删除 / 不可改 kind） */
+  builtin?: boolean
+  /** 排序（越小越靠前） */
+  sort: number
+  /** P3：空间默认灵魂（agentId → soulId；成员入编时的默认值，显式选择优先） */
+  soulOverrides?: Record<string, string>
+  createdAt: string
+  updatedAt: string
+}
+
+/** 内置默认空间 id（存量会话缺省归属） */
+export const DEFAULT_SPACE_ID = 'default'
 
 /** 触发策略（M79-E）：auto = 无 @ 消息交给平台路由（现状）；mention = 仅点名唤起 */
 export type SessionRouteMode = 'auto' | 'mention'

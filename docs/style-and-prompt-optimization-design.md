@@ -271,11 +271,13 @@ eval runner 新增断言类型（全部离线可判）：
 | **P0 协议裁剪**（1 周）✅ 已落地（2026-09-22） | 协议分段标记 + 装配裁剪 + deliverable_spec 移出常驻 + L4 用户消息 critical 豁免（§8.5 第 2 项并入） | 无 | eval 36/36 绿；server 1435 / client 1334 测试绿；新增 `tests/p0-optimization.test.ts` 9 例 |
 | **P1 去 AI 化核心**（2–3 周）✅ 首批已落地（2026-09-22） | 三通道文体契约 `<style_channels>` + 全局 AI 腔禁用词表（output_contract）+ 21 个高频角色 voice.md（研发6/研究4/投研5/脑暴4/生活2）+ voice 装配注入与回合指令示例轮换 + 声纹温度加成（+0.1 封顶 0.8，统一温度优先）+ check:agents 声纹报告 | P0 | server 1441 测试绿（新增 p1-voice 6 例）；eval 36/36 绿；声纹覆盖 21/165 达标 21/21 |
 | **P2 转交结构化**（1–2 周）✅ 已落地（2026-09-23，c146400/49591a1） | handoff 工具升格为协议与回合指令中的权威通道（@ 降级为展示标注 + auto 模式兜底）+ trace `handoffSource` 落库（tool/text 占比可观测）+ p2-handoff-channel 双路径测试 | 无 | 双通道引擎测试通过；eval 56/56 绿 |
-| **P3 评测闭环**（1 周） | 内容断言 + judge 基线入夜间 CI + 6 个风格探针 | P1（断言目标存在） | CI 可红且真实抓到过回归 |
+| **P3 评测闭环**（1 周） | ◐ 离线部分已落地（2026-09-23）：内容断言接入 10 个 golden 任务 + 5 个风格探针（voice-no-bullets / voice-distinct / handoff-tool-channel / report-structure-freedom / soul-consistency）；**夜间 CI 骨架已落地**（`.github/workflows/nightly-eval.yml`：mock 基线每日自动跑 + judge 步骤待 Secret `LLM_API_KEY` 注入即启用），judge 基线（`evals/judge-baseline.json`）待真实模型预算；parallel-reconciliation 探针随 P5 fan-in 对账实施 | P1（断言目标存在） | CI 可红且真实抓到过回归 |
 | **P4 灵魂扩编**（持续） | 162 角色默认灵魂批量蒸馏 + 抽检 | P1 | souls 覆盖率 ≥80%；区分度 ≥4/5 |
 | **P5 工程化**（独立排期） | engine.ts 拆分 + fan-in 对账 + critic opt-in | 无 | 全量测试 + e2e 绿 |
 
 每阶段独立可上线、独立回滚；协议类改动统一走「报告模式 → 门禁模式」两步走（项目已有先例）。
+
+> **P3 收口注记（2026-09-23）**：离线部分已落地——`message_no_banned_words`（自定义子表：排除研发场景术语「闭环 / 打磨」）接入 10 个 golden 任务（01/02/04/11/12/13/24/42/49/57）；新增 5 个真实模型风格探针（`61-voice-no-bullets` / `62-voice-distinct` / `63-handoff-tool-channel` / `64-report-structure-freedom` / `65-soul-consistency`；`--real` 手动跑、不进 mock 基线）。另修复 `parseAssertions` 未登记 3 个新断言类型导致 eval 加载即失败的问题（收口期由接线暴露）。**夜间 CI 已落地（2026-09-23）**：`.github/workflows/nightly-eval.yml`（每日 18:00 UTC：mock 基线门禁必跑、judge 步骤待 Secret `LLM_API_KEY` 注入即自动启用、评测报告归档 14 天）；**judge 基线入库**（`evals/judge-baseline.json`）与真实模型预算仍待；`parallel-reconciliation` 探针随 P5 fan-in 对账实施（依赖未建）。
 
 ---
 

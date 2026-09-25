@@ -74,6 +74,25 @@ export function createSchedulesRouter(deps: ApiDeps): Router {
     return true
   }
 
+  /** P5：跨会话「今日安排」聚合（未来 24h 内；按会话可见性过滤，与 /runs/active 同口径） */
+  router.get('/schedules/upcoming', (req, res) => {
+    if (!requireService(res)) return
+    const user = (req as Request & { user?: AuthUser }).user
+    const hoursRaw = Number(req.query.hours)
+    const hours = Number.isFinite(hoursRaw) && hoursRaw > 0 ? Math.min(168, Math.floor(hoursRaw)) : 24
+    const tasks = deps.schedules!.listUpcoming(hours).filter((t) => deps.access.canAccessSession(user, t.sessionId))
+    res.json({
+      tasks: tasks.map((t) => ({
+        id: t.id,
+        sessionId: t.sessionId,
+        sessionTitle: deps.sessions.getSession(t.sessionId)?.title,
+        title: t.title,
+        kind: t.kind,
+        nextRunAt: t.nextRunAt,
+      })),
+    })
+  })
+
   router.get('/sessions/:id/schedules', (req, res) => {
     if (!requireService(res)) return
     if (!deps.sessions.getSession(req.params.id)) return res.status(404).json({ error: '会话不存在' })

@@ -1,0 +1,15 @@
+{
+  "id": "personal",
+  "name": "个人管理：状态梳理 × 事务清点 × 习惯养成",
+  "participants": ["coach", "life-admin", "habit-coach"],
+  "prompt": "帮我梳理最近的状态与琐事：@于清 梳理状态与精力，@常乐 把待办琐事清点成清单并排期，@立习 设计一个两周习惯打卡方案；收尾汇总为本周行动表。",
+  "maxTurns": 6,
+  "assertions": [
+    { "type": "artifact_exists", "path": "docs/陪谈纪要-这个需求.md" },
+    { "type": "artifact_exists", "path": "docs/生活事务清单-这个需求.md" },
+    { "type": "artifact_exists", "path": "docs/习惯计划-这个需求.md" },
+    { "type": "turns_lte", "value": 5 },
+    { "type": "no_loop" },
+    { "type": "run_end_reason", "value": "completed" }
+  ]
+}

@@ -4,7 +4,7 @@ import { Router } from 'express'
 import type { Request, RequestHandler } from 'express'
 import type { UserAvatar, MessageAttachment } from '@multi-agent/shared'
 import type { Session } from '@multi-agent/shared'
-import { MEMBER_SEP, baseAgentId, memberKeyOf, soulIdOfMember } from '@multi-agent/shared'
+import { MEMBER_SEP, baseAgentId, memberKeyOf, soulIdOfMember, isEmojiLike } from '@multi-agent/shared'
 import { findSoulCollision, resolveMembers } from '../orchestration/members.js'
 import { buildMentionTokens, parseMentionsWithTokens } from '../orchestration/parser.js'
 import { parseSessionHumanMentions, sessionHumans } from '../orchestration/humans.js'
@@ -19,6 +19,7 @@ import {
   memberSoulSchema,
   planEditSchema,
   planResolveSchema,
+  reactionSchema,
   renameSessionSchema,
   resumeSessionSchema,
   sendMessageSchema,
@@ -26,6 +27,7 @@ import {
 } from './schemas.js'
 import { classifyKind } from '../store/artifacts.js'
 import { inviteMembersCore } from '../tools/roster.js'
+import { applySpaceSoulDefaults } from '../store/spaces.js'
 import { safeFileName } from '../util/attachments.js'
 import { mimeOfExt } from '../util/mime.js'
 import type { ApiDeps } from './index.js'
@@ -120,22 +122,30 @@ export function createSessionsRouter(deps: ApiDeps): Router {
       (a, b) =>
         (order.get(baseAgentId(a)) ?? Number.MAX_SAFE_INTEGER) - (order.get(baseAgentId(b)) ?? Number.MAX_SAFE_INTEGER),
     )
-    // M16：创建时可选指定灵魂（校验归属：agent 必须挂有该灵魂）
-    const soulErr = soulValidationError(deps, body.souls, new Set(ids))
-    if (soulErr) return res.status(400).json({ error: soulErr })
-    // M77：编制合法性（角色存在 / 分身灵魂归属 / 同角有效灵魂去重 / 同角实例上限）
-    const lineupErr = lineupError(deps, undefined, ids, body.souls)
-    if (lineupErr) return res.status(400).json({ error: lineupErr })
     const title = body.title?.trim() ? body.title : undefined
     // M6：可选关联项目（未指定 = 会话级沙箱工作区，保持既有行为）；M57：仅可关联本人项目
     const projectId = body.projectId
     if (projectId && !deps.access.canAccessProject(userOf(req), projectId)) {
       return res.status(400).json({ error: '项目不存在' })
     }
+    // 空间归属（缺省 = 我的空间；装配了空间存储时校验存在性）
+    if (body.spaceId && deps.spaces && !deps.spaces.get(body.spaceId)) {
+      return res.status(400).json({ error: '空间不存在' })
+    }
+    // P3：空间默认灵魂——入编成员未显式选灵魂时按空间绑定填充（显式选择优先；分身键不受影响）
+    const space = deps.spaces?.get(body.spaceId ?? 'default')
+    const souls = applySpaceSoulDefaults(space, ids, body.souls)
+    // M16：创建时可选指定灵魂（校验归属：agent 必须挂有该灵魂）
+    const soulErr = soulValidationError(deps, souls, new Set(ids))
+    if (soulErr) return res.status(400).json({ error: soulErr })
+    // M77：编制合法性（角色存在 / 分身灵魂归属 / 同角有效灵魂去重 / 同角实例上限）
+    const lineupErr = lineupError(deps, undefined, ids, souls)
+    if (lineupErr) return res.status(400).json({ error: lineupErr })
     const session = deps.sessions.create(ids, title, {
       projectId,
-      souls: body.souls,
+      souls,
       serial: body.serial,
+      spaceId: body.spaceId,
       // M57：会话属主（多用户）；单用户兼容模式缺省
       ownerId: userOf(req)?.id || undefined,
     })
@@ -178,7 +188,66 @@ export function createSessionsRouter(deps: ApiDeps): Router {
         }
       }
     }
-    res.json({ session: entry.session, messages: entry.messages, latestRun, project: project ?? null, humanNames, humanProfiles })
+    /**
+     * 消息分页（2026-09-22）：?limit=N&before=<seq> —— 返回最近 N 条（before = 该 seq 之前的更早一页）。
+     * 缺省不带参数 = 全量返回（兼容既有客户端 / 测试锚点零变化）。
+     * 分页响应附：hasMore（还有更早）/ totalCount（总条数）/ memberStats（全量口径的成员战绩——
+     * 前端只加载了最近一页，但「本会话发言 / 交付」统计须覆盖全部历史，由服务端按缓存全量聚合）。
+     */
+    const limitRaw = Number(req.query.limit)
+    const limit = Number.isFinite(limitRaw) && limitRaw > 0 ? Math.min(500, Math.floor(limitRaw)) : 0
+    const beforeRaw = req.query.before !== undefined ? Number(req.query.before) : undefined
+    // M80-B：表情回应随消息投影（批量聚合，mine 按请求者）
+    const meId = userOf(req)?.id
+    const withReactions = (messages: typeof entry.messages): typeof entry.messages => {
+      if (!deps.reactions) return messages
+      const byMsg = deps.reactions.summaryForMessages(messages.map((m) => m.id), meId)
+      return byMsg.size > 0 ? messages.map((m) => (byMsg.has(m.id) ? { ...m, reactions: byMsg.get(m.id) } : m)) : messages
+    }
+    // M80-C：成员已读水位投影（仅开启对外展示开关的活跃成员；关闭者不投影——对等原则）
+    const memberReads = (() => {
+      if (!deps.access.multiUser || !deps.reads) return []
+      // 对等双向：请求者自身关闭开关 → 也看不到他人的已读（空投影；客户端门之外的权威兜底）
+      if (meId && deps.users.getPrefs(meId).showReadReceipts === false) return []
+      const ids = new Set<string>()
+      if (entry.session.ownerId) ids.add(entry.session.ownerId)
+      for (const m of deps.members.list(entry.session.id)) ids.add(m.userId)
+      const out: Array<{ userId: string; lastReadSeq: number }> = []
+      for (const id of ids) {
+        const user = deps.auth.getUser(id)
+        if (!user || user.status !== 'active') continue
+        if (deps.users.getPrefs(id).showReadReceipts === false) continue
+        out.push({ userId: id, lastReadSeq: deps.reads.get(id, entry.session.id) })
+      }
+      return out
+    })()
+    if (limit > 0) {
+      const all = entry.messages
+      const upto = beforeRaw !== undefined && Number.isFinite(beforeRaw) ? all.filter((m) => (m.seq ?? 0) < beforeRaw) : all
+      const page = upto.slice(-limit)
+      const memberStats: Record<string, { speaks: number; artifacts: number }> = {}
+      for (const m of all) {
+        if (m.role !== 'agent' || !m.agentId) continue
+        const key = m.memberKey ?? m.agentId
+        const cur = memberStats[key] ?? { speaks: 0, artifacts: 0 }
+        cur.speaks += 1
+        cur.artifacts += m.artifacts?.length ?? 0
+        memberStats[key] = cur
+      }
+      return res.json({
+        session: entry.session,
+        messages: withReactions(page),
+        latestRun,
+        project: project ?? null,
+        humanNames,
+        humanProfiles,
+        memberReads,
+        hasMore: upto.length > page.length,
+        totalCount: all.length,
+        memberStats,
+      })
+    }
+    res.json({ session: entry.session, messages: withReactions(entry.messages), latestRun, project: project ?? null, humanNames, humanProfiles, memberReads })
   })
 
   /** 任务清单（M3：write_todos 落库，跨 Run 继承） */
@@ -305,7 +374,8 @@ export function createSessionsRouter(deps: ApiDeps): Router {
       parsed.data.title !== undefined ||
       parsed.data.routeMode !== undefined ||
       parsed.data.serial !== undefined ||
-      parsed.data.planFirst !== undefined
+      parsed.data.planFirst !== undefined ||
+      parsed.data.spaceId !== undefined
     if (managed && deps.access.multiUser) {
       const me = userOf(req)
       if (!me || deps.access.sessionRole(me, session.id) !== 'owner') {
@@ -333,6 +403,14 @@ export function createSessionsRouter(deps: ApiDeps): Router {
         sessionId: session.id,
         detail: { routeMode: parsed.data.routeMode },
       })
+    }
+    // 空间变更（治理权限与改名同口径：仅属主；装配空间存储时校验存在性）
+    if (parsed.data.spaceId !== undefined) {
+      if (deps.spaces && parsed.data.spaceId !== 'default' && !deps.spaces.get(parsed.data.spaceId)) {
+        return res.status(400).json({ error: '空间不存在' })
+      }
+      session = deps.sessions.setSpace(session.id, parsed.data.spaceId) ?? session
+      deps.notify.publish({ type: 'notify:session-meta', sessionId: session.id, payload: { session } })
     }
     res.json({ session })
   })
@@ -445,15 +523,17 @@ export function createSessionsRouter(deps: ApiDeps): Router {
     // M77：新增条目为成员键（经典 = agentId；分身 = agentId~soulId）；已到场者先剔除再校验证编制
     const unique = [...new Set(parsed.data.agentIds.map(String))]
     const fresh = unique.filter((key) => !session.participantIds.includes(key))
-    const lineupErr = lineupError(deps, session, fresh, parsed.data.souls)
+    // P3：空间默认灵魂——邀请时未显式选灵魂的成员按会话所在空间的绑定填充
+    const souls = applySpaceSoulDefaults(deps.spaces?.get(session.spaceId ?? 'default'), fresh, parsed.data.souls)
+    const lineupErr = lineupError(deps, session, fresh, souls)
     if (lineupErr) return res.status(400).json({ error: lineupErr })
     const result = inviteMembersCore(
       { sessions: deps.sessions, prompts: deps.prompts, notify: deps.notify },
       {
         sessionId: session.id,
         agentIds: parsed.data.agentIds,
-        souls: parsed.data.souls,
-        validateSouls: (added) => soulValidationError(deps, parsed.data.souls, new Set(added)),
+        souls,
+        validateSouls: (added) => soulValidationError(deps, souls, new Set(added)),
       },
     )
     if (!result.ok) return res.status(400).json({ error: result.error })
@@ -790,6 +870,62 @@ export function createSessionsRouter(deps: ApiDeps): Router {
   })
 
   /**
+   * M80-B：消息表情回应（toggle 语义；设计 §5.3）。
+   * - 权限：会话写级成员（viewer 403 由会话守卫统一拦截；与发言同口径）；
+   * - 幂等：同 (message, user, emoji) 重复 PUT 不动；DELETE 仅摘本人；
+   * - 校验：emoji 形态（isEmojiLike，≤6 码点；库外合法序列如肤色变体放行）；
+   * - 广播：notify:reaction 全量替换帧（该消息的完整聚合投影，按各接收方无法区分 mine ——
+   *   mine 由客户端本地按 userIds.includes(本人) 推导，与投影口径一致）。
+   */
+  router.put('/sessions/:id/messages/:messageId/reactions', (req, res) => {
+    if (!deps.reactions) return res.status(503).json({ error: '表情回应未装配' })
+    if (!deps.sessions.getSession(req.params.id)) return res.status(404).json({ error: '会话不存在' })
+    const parsed = reactionSchema.safeParse(req.body ?? {})
+    if (!parsed.success) return res.status(400).json({ error: firstIssue(parsed.error) })
+    const { emoji } = parsed.data
+    if (!isEmojiLike(emoji)) return res.status(400).json({ error: '不是合法的表情字符' })
+    const message = deps.sessions.messageById(req.params.id, req.params.messageId)
+    if (!message) return res.status(404).json({ error: '消息不存在' })
+    const me = userOf(req)
+    const meId = me?.id ?? ''
+    // 兼容模式（无账号）：无归属语义，拒绝（ reactions 需要用户身份；单用户模式无观众）
+    if (deps.access.multiUser && !meId) return res.status(401).json({ error: '未登录或登录已失效：请登录后重试' })
+    if (!meId) return res.status(400).json({ error: '表情回应需多用户模式（账号体系）' })
+    // 软限：单条消息同用户最多 8 种（防刷屏滥用；重复挂同一 emoji 幂等不占额）
+    const existing = deps.reactions.summaryFor(message.id, meId)
+    const alreadyMine = existing.some((r) => r.emoji === emoji && r.mine)
+    if (!alreadyMine && deps.reactions.countOfUser(message.id, meId) >= 8) {
+      return res.status(429).json({ error: '同一条消息最多挂 8 种表情' })
+    }
+    deps.reactions.add(message.id, meId, emoji)
+    const reactions = deps.reactions.summaryFor(message.id, meId)
+    deps.notify.publish({
+      type: 'notify:reaction',
+      sessionId: req.params.id,
+      payload: { messageId: message.id, reactions: deps.reactions.summaryFor(message.id) },
+    })
+    res.json({ reactions })
+  })
+
+  router.delete('/sessions/:id/messages/:messageId/reactions', (req, res) => {
+    if (!deps.reactions) return res.status(503).json({ error: '表情回应未装配' })
+    if (!deps.sessions.getSession(req.params.id)) return res.status(404).json({ error: '会话不存在' })
+    // DELETE 兼容 query 传参（客户端 apiDelete 无 body 通道）
+    const parsed = reactionSchema.safeParse(req.body && Object.keys(req.body).length > 0 ? req.body : { emoji: req.query.emoji })
+    if (!parsed.success) return res.status(400).json({ error: firstIssue(parsed.error) })
+    const meId = userOf(req)?.id ?? ''
+    if (!meId) return res.status(400).json({ error: '表情回应需多用户模式（账号体系）' })
+    deps.reactions.remove(req.params.messageId, meId, parsed.data.emoji)
+    const reactions = deps.reactions.summaryFor(req.params.messageId, meId)
+    deps.notify.publish({
+      type: 'notify:reaction',
+      sessionId: req.params.id,
+      payload: { messageId: req.params.messageId, reactions: deps.reactions.summaryFor(req.params.messageId) },
+    })
+    res.json({ reactions })
+  })
+
+  /**
    * M8：从某条消息 fork 新会话（复制 [0..fromMessageId] 消息；新会话为独立沙箱工作区，不带原 worktree）。
    * 不复制运行快照；M33 起消息附件随分支复制文件（缺失则剔除该附件，避免悬空引用）。
    */
@@ -808,6 +944,8 @@ export function createSessionsRouter(deps: ApiDeps): Router {
       souls: entry.session.memberSouls,
       // M46-2：串行开关随 fork 复制（undefined = 关闭，需显式 false 保留）
       serial: entry.session.serial === true,
+      // fork 继承源会话空间归属
+      spaceId: entry.session.spaceId,
       // M57：fork 保持属主
       ownerId: entry.session.ownerId,
     })

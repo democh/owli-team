@@ -1,0 +1,17 @@
+{
+  "id": "academic",
+  "name": "学术论文：文献 × 方法 × 成稿 × 投稿",
+  "participants": ["lit-reviewer", "methodologist", "paper-editor", "submit-advisor"],
+  "prompt": "启动论文冲刺：@索隐 出文献综述与研究缺口（引用可回溯），@定矩 审定研究设计口径，@琢稿 打磨成稿结构与表达，@叩门 给目标期刊清单与投稿材料清单；收尾汇总推进计划。",
+  "maxTurns": 7,
+  "assertions": [
+    { "type": "artifact_exists", "path": "docs/文献综述-这个需求.md" },
+    { "type": "artifact_exists", "path": "docs/研究设计-这个需求.md" },
+    { "type": "artifact_exists", "path": "docs/论文-这个需求.md" },
+    { "type": "artifact_exists", "path": "docs/投稿清单-这个需求.md" },
+    { "type": "handoff_targets", "values": ["methodologist"] },
+    { "type": "turns_lte", "value": 6 },
+    { "type": "no_loop" },
+    { "type": "run_end_reason", "value": "completed" }
+  ]
+}

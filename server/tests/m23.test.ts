@@ -946,3 +946,28 @@ describe('M23：SSH「本地」预置（路由）', () => {
     }
   })
 })
+
+describe('M23 续：SSH 主机指纹校验（可选反 MITM；加固批）', () => {
+  const HEX = 'ab'.repeat(32)
+  const SHA256_B64 = `SHA256:${Buffer.from(HEX, 'hex').toString('base64')}`
+
+  it('SHA256:<base64> / 64 位 hex 均可解析；hostVerifier 归一去冒号比对', () => {
+    const cfg = resolveConnectConfig({ username: 'deploy', hostFingerprint: SHA256_B64 }, { password: 'x' })
+    expect(cfg.hostHash).toBe('sha256')
+    const verify = cfg.hostVerifier as (key: string) => boolean
+    const colonized = (HEX.match(/.{2}/g) ?? []).join(':')
+    expect(verify(colonized)).toBe(true)
+    expect(verify(colonized.toUpperCase())).toBe(true)
+    expect(verify('cd'.repeat(32))).toBe(false)
+
+    const hexCfg = resolveConnectConfig({ username: 'deploy', hostFingerprint: HEX }, { password: 'x' })
+    expect((hexCfg.hostVerifier as (k: string) => boolean)(colonized)).toBe(true)
+  })
+
+  it('缺省不启用指纹校验；非法格式抛中文错误', () => {
+    expect(resolveConnectConfig({ username: 'deploy' }, { password: 'x' }).hostVerifier).toBeUndefined()
+    expect(() =>
+      resolveConnectConfig({ username: 'deploy', hostFingerprint: 'not-a-fingerprint' }, { password: 'x' }),
+    ).toThrow('主机指纹格式无效')
+  })
+})

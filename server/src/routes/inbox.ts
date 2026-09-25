@@ -34,6 +34,10 @@ export interface InboxRouterDeps {
   auth: AuthService
   /** 已读广播（多端同步；缺省 = 不广播（测试 / 未装配）） */
   publishRead?: (userId: string, sessionId: string, lastReadSeq: number) => void
+  /** M80-C：已读对外展示开关（缺省 = 不广播回执，与 M79 行为一致） */
+  readReceiptAllowed?: (userId: string) => boolean
+  /** M80-C：已读回执会话主题广播（对等原则——仅开关开启者投影给他人） */
+  publishReceipt?: (userId: string, sessionId: string, lastReadSeq: number) => void
 }
 
 export function createInboxRouter(deps: InboxRouterDeps): Router {
@@ -81,6 +85,8 @@ export function createInboxRouter(deps: InboxRouterDeps): Router {
     if (!me) return res.json({ ok: true, lastReadSeq: 0 }) // 兼容模式：无账号（无未读语义）
     const lastReadSeq = deps.reads.set(me.id, session.id, parsed.data.seq)
     deps.publishRead?.(me.id, session.id, lastReadSeq)
+    // M80-C：REST 降级路径同样广播已读回执（对等原则：关闭开关者不投影）
+    if (deps.readReceiptAllowed?.(me.id)) deps.publishReceipt?.(me.id, session.id, lastReadSeq)
     res.json({ ok: true, lastReadSeq })
   })
 

@@ -1,0 +1,14 @@
+{
+  "id": "relationship",
+  "name": "情感关系：状态梳理 × 调解视角 × 沟通练习",
+  "participants": ["rel-coach", "mediator", "date-coach"],
+  "prompt": "帮我梳理一段关系：@知言 梳理现状与沟通模式（不诊断不贴标签），@居间 从双方视角各做一次立场复述，@初见 给具体场景的沟通练习脚本；收尾汇总一个小练习。",
+  "maxTurns": 6,
+  "assertions": [
+    { "type": "artifact_exists", "path": "docs/沟通练习-这个需求.md" },
+    { "type": "artifact_exists", "path": "docs/调解记录-这个需求.md" },
+    { "type": "turns_lte", "value": 5 },
+    { "type": "no_loop" },
+    { "type": "run_end_reason", "value": "completed" }
+  ]
+}

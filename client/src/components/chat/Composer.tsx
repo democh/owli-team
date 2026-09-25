@@ -11,7 +11,7 @@
  */
 import * as React from 'react'
 import { toast } from 'sonner'
-import { CornerDownLeft, Loader2, Paperclip, Send, Square } from 'lucide-react'
+import { CornerDownLeft, Loader2, Paperclip, Send, Smile, Square } from 'lucide-react'
 import type { UserAvatar, AgentDefinition, AgentRunState, Artifact, MessageAttachment, SkillMeta, TurnMode } from '@multi-agent/shared'
 import { apiGet, apiUpload } from '../../lib/api'
 import { memberViews } from '../../lib/members'
@@ -27,7 +27,7 @@ import {
 } from '../../lib/attachments'
 import { useAgentStore } from '../../stores/agent-store'
 import { useRunStore } from '../../stores/run-store'
-import { useSessionStore } from '../../stores/session-store'
+import { useSessionStore, useCurrentSession } from '../../stores/session-store'
 import { useUiStore } from '../../stores/ui-store'
 import { Button } from '../ui/button'
 import { AgentAvatar } from '../agents/AgentAvatar'
@@ -38,6 +38,7 @@ import { useWsStore } from '../../stores/ws-store'
 import { AttachmentLightbox, type LightboxItem } from './AttachmentLightbox'
 import { AttachmentTray, type TrayItem } from './AttachmentTray'
 import { ContextBar } from '../context/ContextBar'
+import { EmojiPicker } from './EmojiPicker'
 import { cn } from '../../lib/utils'
 
 interface MentionState {
@@ -165,12 +166,13 @@ export function Composer({ onReady, locked = false, lockedHint }: ComposerProps)
   const ref = React.useRef<HTMLTextAreaElement>(null)
   const fileRef = React.useRef<HTMLInputElement>(null)
   const caretRef = React.useRef<number | null>(null)
+  /** M80-A：表情选择器开关（与 @ 候选面板互斥） */
+  const [emojiOpen, setEmojiOpen] = React.useState(false)
 
   const agents = useAgentStore((s) => s.agents)
   const skills = useAgentStore((s) => s.skills)
   const statuses = useAgentStore((s) => s.statuses)
   const groups = useAgentStore((s) => s.groups)
-  const sessions = useSessionStore((s) => s.sessions)
   const currentId = useSessionStore((s) => s.currentId)
   const active = useRunStore((s) => s.active)
   const queued = useRunStore((s) => s.queued)
@@ -182,7 +184,7 @@ export function Composer({ onReady, locked = false, lockedHint }: ComposerProps)
   const presenceMap = useWsStore((s) => s.presenceMap)
   const myUserId = useAuthStore((s) => s.user?.id)
 
-  const session = sessions.find((s) => s.id === currentId)
+  const session = useCurrentSession()
   /** M79-E：触发提示依据（waiting 命中优先；team「仅点名唤起」且未 @ 时的静默发送提示） */
   const waitingMe = !!myUserId && (session?.waitingOn ?? []).includes(myUserId)
   const mentionSilent =
@@ -252,10 +254,12 @@ export function Composer({ onReady, locked = false, lockedHint }: ComposerProps)
   }, [participantKey])
 
   const slashQuery = detectSlash(value)
+  // Esc 关闭斜杠菜单（不再清空整条输入——原实现 Esc 直接 setValue('')，用户只想关菜单却丢草稿）
+  const [slashDismissed, setSlashDismissed] = React.useState(false)
   const slashMatches = React.useMemo(() => {
-    if (!slashQuery) return []
+    if (!slashQuery || slashDismissed) return []
     return SLASH_COMMANDS.filter((c) => c.cmd.startsWith(slashQuery.query))
-  }, [slashQuery])
+  }, [slashQuery, slashDismissed])
 
   const candidates = React.useMemo<Candidate[]>(() => {
     if (!mention.open) return []
@@ -376,6 +380,7 @@ export function Composer({ onReady, locked = false, lockedHint }: ComposerProps)
     const key = draftKey(currentId)
     setValue(key ? (localStorage.getItem(key) ?? '') : '')
     setMention(CLOSED)
+    setSlashDismissed(false)
     setMode('execute')
     uploadAbortsRef.current.forEach((c) => c.abort())
     uploadAbortsRef.current.clear()
@@ -386,13 +391,41 @@ export function Composer({ onReady, locked = false, lockedHint }: ComposerProps)
     setLightbox(null)
   }, [currentId])
 
-  // 草稿：值变化即落盘
+  // 草稿：值变化防抖落盘（原每击键同步写 localStorage，阻塞主线程；400ms 合并 + 卸载/切换前补写）
+  const draftSaveTimerRef = React.useRef<ReturnType<typeof setTimeout>>()
   React.useEffect(() => {
     const key = draftKey(currentId)
     if (!key) return
-    if (value) localStorage.setItem(key, value)
-    else localStorage.removeItem(key)
+    if (draftSaveTimerRef.current) clearTimeout(draftSaveTimerRef.current)
+    draftSaveTimerRef.current = setTimeout(() => {
+      draftSaveTimerRef.current = undefined
+      if (value) localStorage.setItem(key, value)
+      else localStorage.removeItem(key)
+    }, 400)
+    return () => {
+      if (draftSaveTimerRef.current) {
+        clearTimeout(draftSaveTimerRef.current)
+        draftSaveTimerRef.current = undefined
+        // 卸载/切会话前补写，防抖窗口内的内容不丢
+        if (value) localStorage.setItem(key, value)
+        else localStorage.removeItem(key)
+      }
+    }
   }, [value, currentId])
+
+  // 草稿：多标签页同步（其他标签页改了同一会话草稿时跟随；本页输入中（聚焦）不覆盖，避免打字被打断）
+  React.useEffect(() => {
+    const key = draftKey(currentId)
+    if (!key) return
+    const onStorage = (e: StorageEvent): void => {
+      if (e.key !== key || e.storageArea !== localStorage) return
+      if (document.activeElement === ref.current) return
+      const next = e.newValue ?? ''
+      setValue((v) => (v === next ? v : next))
+    }
+    window.addEventListener('storage', onStorage)
+    return () => window.removeEventListener('storage', onStorage)
+  }, [currentId])
 
   // M8：引用插入（消息菜单 / 交付件 / 任务 / 命令面板）
   React.useEffect(() => {
@@ -430,6 +463,15 @@ export function Composer({ onReady, locked = false, lockedHint }: ComposerProps)
     caretRef.current = Number.MAX_SAFE_INTEGER
   }, [])
 
+  /** M80-A：光标处插入 emoji（纯 Unicode 字符；插完关闭面板并回焦） */
+  const insertEmoji = (char: string): void => {
+    const el = ref.current
+    const caret = el?.selectionStart ?? value.length
+    applyValue(value.slice(0, caret) + char + value.slice(caret), caret + char.length)
+    setEmojiOpen(false)
+    requestAnimationFrame(() => ref.current?.focus())
+  }
+
   React.useEffect(() => {
     onReady?.(insert)
   }, [onReady, insert])
@@ -444,9 +486,11 @@ export function Composer({ onReady, locked = false, lockedHint }: ComposerProps)
     const caret = e.target.selectionStart ?? next.length
     setValue(next)
     setSlashIndex(0)
+    setSlashDismissed(false)
     const probe = detectMention(next, caret)
     if (probe) {
       setMention({ open: true, query: probe.query, start: probe.start, index: 0 })
+      if (emojiOpen) setEmojiOpen(false) // M80-A：与表情面板互斥
     } else if (mention.open) {
       setMention(CLOSED)
     }
@@ -684,7 +728,7 @@ export function Composer({ onReady, locked = false, lockedHint }: ComposerProps)
       }
       if (e.key === 'Escape') {
         e.preventDefault()
-        setValue('')
+        setSlashDismissed(true)
         return
       }
     }
@@ -930,6 +974,19 @@ export function Composer({ onReady, locked = false, lockedHint }: ComposerProps)
           <Button
             variant="ghost"
             size="icon-sm"
+            title="表情"
+            aria-label="表情"
+            disabled={disabled}
+            onClick={() => {
+              setEmojiOpen((o) => !o)
+              if (mention.open) setMention(CLOSED)
+            }}
+          >
+            <Smile className="size-3.5" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon-sm"
             title="上传文件 / 图片（也可拖拽、粘贴）"
             disabled={disabled || uploading}
             onClick={() => fileRef.current?.click()}
@@ -962,6 +1019,13 @@ export function Composer({ onReady, locked = false, lockedHint }: ComposerProps)
             {active ? '插话' : '发送'}
           </Button>
         </div>
+
+        {/* M80-A：表情面板（互斥 @ 候选；锚定工具条右上方） */}
+        {emojiOpen && (
+          <div className="absolute bottom-12 right-2.5 z-30">
+            <EmojiPicker onPick={insertEmoji} onClose={() => setEmojiOpen(false)} />
+          </div>
+        )}
       </div>
 
       {/* 底栏提示行：单行不换行（窄窗口由快捷键提示先让位，状态类信息优先保留） */}

@@ -474,6 +474,8 @@ export class ContextService {
       exclude,
       // M57：多用户隔离（global 桶按用户切分 + 命中行按用户过滤；单用户兼容模式 session.ownerId 为空 → 行为同旧版）
       userId: session.ownerId,
+      // P2：空间域隔离（同空间 + 跨域共享记忆可召回；缺省 default 与存量行为一致）
+      spaceId: session.spaceId ?? 'default',
     })
     this.rememberRecall(input.sessionId, outcome)
     return outcome

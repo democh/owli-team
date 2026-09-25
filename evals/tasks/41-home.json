@@ -1,0 +1,16 @@
+{
+  "id": "home",
+  "name": "家庭生活：菜单 × 家务 × 育儿 × 宠物一周清单",
+  "participants": ["chef", "home", "parenting", "pet"],
+  "prompt": "安排家庭一周事务：@唐味 出一周菜单与采买清单，@温居 排家务分区与排期，@苗雨 安排孩子作息与活动，@柯萌 补齐宠物照护要点；收尾汇总为一张周清单。",
+  "maxTurns": 7,
+  "assertions": [
+    { "type": "artifact_exists", "path": "docs/每周菜单-这个需求.md" },
+    { "type": "artifact_exists", "path": "docs/家居方案-这个需求.md" },
+    { "type": "artifact_exists", "path": "docs/育儿方案-这个需求.md" },
+    { "type": "artifact_exists", "path": "docs/宠物照护-这个需求.md" },
+    { "type": "turns_lte", "value": 6 },
+    { "type": "no_loop" },
+    { "type": "run_end_reason", "value": "completed" }
+  ]
+}

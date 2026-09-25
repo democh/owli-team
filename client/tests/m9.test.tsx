@@ -536,12 +536,18 @@ describe('SessionList 全文搜索（M9）', () => {
   it('输入防抖后请求 FTS；命中展示会话名与片段，点击跳转并恢复列表', async () => {
     const user = userEvent.setup()
     const onSelect = vi.fn()
-    fetchMock.mockResolvedValue(
-      jsonResponse({
-        results: [
-          { sessionId: 's2', messageId: 'm9', content: '请帮我实现登录功能，注意幂等', sessionTitle: '交接讨论' },
-        ],
-      }),
+    // 注意：Response body 只能消费一次——须按调用新建实例（SessionList 挂载即拉 /api/spaces，共享实例会被抢先消费）；
+    // /api/spaces 显式返空列表（空间切换器隐藏，不干扰搜索断言）
+    fetchMock.mockImplementation((url: unknown) =>
+      Promise.resolve(
+        String(url).startsWith('/api/spaces')
+          ? jsonResponse({ spaces: [] })
+          : jsonResponse({
+              results: [
+                { sessionId: 's2', messageId: 'm9', content: '请帮我实现登录功能，注意幂等', sessionTitle: '交接讨论' },
+              ],
+            }),
+      ),
     )
     render(<SessionList onSelect={onSelect} />)
 

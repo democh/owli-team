@@ -7,9 +7,15 @@
  * - 页头 ValidateBanner（资产校验聚合）；数据源 console-store（挂载时 refreshAll）。
  */
 import * as React from 'react'
-import { Bot, Copy, Loader2, Pencil, Plus, Search, Trash2 } from 'lucide-react'
+import { Bot, Copy, Loader2, Pencil, Plus, Search, Sparkles, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
-import type { AgentCreateInput, AgentDefinition, ConsoleAgentSummary } from '@multi-agent/shared'
+import type {
+  AgentCreateInput,
+  AgentDefinition,
+  AgentDraftPayload,
+  ConsoleAgentSummary,
+  GenerateDraftResult,
+} from '@multi-agent/shared'
 import { resolveIcon } from '../../lib/avatar-icons'
 import { ApiError } from '../../lib/api'
 import { useConsoleStore } from '../../stores/console-store'
@@ -89,6 +95,12 @@ export function AgentConsole(): React.JSX.Element {
   const [wizard, setWizard] = React.useState<WizardState>()
   const [wizardError, setWizardError] = React.useState('')
   const [creating, setCreating] = React.useState(false)
+  // Agent Studio：AI 生成（描述 → 草稿 → 填入新建向导 step2）
+  const [genOpen, setGenOpen] = React.useState(false)
+  const [genDesc, setGenDesc] = React.useState('')
+  const [genBusy, setGenBusy] = React.useState(false)
+  const [genError, setGenError] = React.useState('')
+  const [genResult, setGenResult] = React.useState<GenerateDraftResult<AgentDraftPayload>>()
   const [deleteTarget, setDeleteTarget] = React.useState<ConsoleAgentSummary>()
   const [deleteRefs, setDeleteRefs] = React.useState<string[]>()
   const [deleting, setDeleting] = React.useState(false)
@@ -197,6 +209,53 @@ export function AgentConsole(): React.JSX.Element {
     setWizard({ ...wizard, step: 2 })
   }
 
+  /** Agent Studio：调用生成器（不落盘；issues 由结果区展示） */
+  const runGenerate = async (): Promise<void> => {
+    const description = genDesc.trim()
+    if (!description) {
+      setGenError('请先描述你想要的角色（一句话即可）')
+      return
+    }
+    setGenBusy(true)
+    setGenError('')
+    try {
+      const result = await useConsoleStore.getState().generateAgent(description)
+      setGenResult(result)
+    } catch (err) {
+      setGenError((err as Error).message)
+    } finally {
+      setGenBusy(false)
+    }
+  }
+
+  /** 将生成草稿填入新建向导 step2（用户可改后提交创建） */
+  const applyDraft = (): void => {
+    if (!genResult) return
+    const draft = genResult.draft
+    const groupIds = new Set(groups.map((g) => g.id))
+    setWizard({
+      step: 2,
+      group: groupIds.has(draft.group) ? draft.group : draft.newGroup ? NEW_GROUP : (groups[0]?.id ?? NEW_GROUP),
+      newGroupId: draft.newGroup?.id ?? '',
+      newGroupName: draft.newGroup?.name ?? '',
+      newGroupDescription: draft.newGroup?.description ?? '',
+      newGroupIcon: 'compass',
+      newGroupTheme: draft.avatar.gradient ?? ['#6366f1', '#818cf8'],
+      newGroupObjective: draft.newGroup?.objective ?? '',
+      id: draft.id,
+      name: draft.name,
+      role: draft.role,
+      title: draft.title,
+      description: draft.description,
+      icon: draft.avatar.icon,
+      gradient: draft.avatar.gradient ?? ['#6366f1', '#818cf8'],
+      body: draft.body,
+    })
+    setWizardError('')
+    setGenOpen(false)
+    toast('已填入新建向导——检查无误后提交创建')
+  }
+
   const wizardSubmit = async (): Promise<void> => {
     if (!wizard) return
     if (!ID_RE.test(wizard.id.trim())) {
@@ -263,6 +322,18 @@ export function AgentConsole(): React.JSX.Element {
         </span>
         <div className="ml-auto flex items-center gap-2">
           <ValidateBanner />
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => {
+              setGenResult(undefined)
+              setGenError('')
+              setGenOpen(true)
+            }}
+          >
+            <Sparkles className="size-3.5" />
+            AI 生成
+          </Button>
           <Button size="sm" onClick={openWizard}>
             <Plus className="size-3.5" />
             新建 Agent
@@ -368,6 +439,65 @@ export function AgentConsole(): React.JSX.Element {
           <div className="py-16 text-center text-[12px] text-muted-foreground">没有匹配的角色</div>
         )}
       </div>
+
+      {/* Agent Studio：AI 生成（描述 → 草稿 → 填入新建向导） */}
+      <Dialog open={genOpen} onOpenChange={setGenOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>AI 生成 Agent</DialogTitle>
+            <DialogDescription>
+              用一句话描述你想要的角色，AI 生成完整草稿（六段人设 / 场景 / 技能 / 头像回退），确认后填入新建向导。
+            </DialogDescription>
+          </DialogHeader>
+          <div className="mt-3 space-y-3">
+            <textarea
+              value={genDesc}
+              aria-label="角色描述"
+              rows={3}
+              placeholder="例如：一个专门拆解竞品的分析师，懂定价与功能对比；或：财务对账助理，能比对流水与发票差异"
+              className="w-full rounded-md border border-input bg-card px-2 py-1.5 text-[12.5px] shadow-sm transition-colors placeholder:text-muted-foreground/70 focus-visible:border-primary/40 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-primary/15"
+              onChange={(e) => setGenDesc(e.target.value)}
+            />
+            {genError && <p className="text-[11.5px] text-destructive">{genError}</p>}
+            {genResult && (
+              <div className="rounded-md border bg-muted/30 p-2 text-[11.5px]">
+                <p>
+                  已生成 <span className="font-medium">{genResult.draft.name}</span>（{genResult.draft.role}）·
+                  {genResult.attempts > 1 ? ` 第 ${genResult.attempts} 轮通过` : ' 一次通过'} · 场景「
+                  {groups.find((g) => g.id === genResult.draft.group)?.name ??
+                    genResult.draft.newGroup?.name ??
+                    '待定'}
+                  」
+                </p>
+                {genResult.issues.length > 0 && (
+                  <ul className="mt-1 list-inside list-disc text-amber-600">
+                    {genResult.issues.map((issue) => (
+                      <li key={issue}>{issue}</li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )}
+          </div>
+          <div className="mt-4 flex justify-end gap-2">
+            <Button variant="outline" size="sm" disabled={genBusy} onClick={() => void runGenerate()}>
+              {genBusy ? (
+                <>
+                  <Loader2 className="size-3.5 animate-spin" />
+                  正在生成（约 10–30 秒）…
+                </>
+              ) : genResult ? (
+                '再生成一次'
+              ) : (
+                '生成'
+              )}
+            </Button>
+            <Button size="sm" disabled={!genResult || genBusy} onClick={applyDraft}>
+              填入新建向导
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* 新建向导 */}
       <Dialog open={!!wizard} onOpenChange={(open) => (!open ? setWizard(undefined) : undefined)}>

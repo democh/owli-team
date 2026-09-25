@@ -8,7 +8,7 @@ capabilities: [BP撰写, 估值测算, 融资策略, 数据室管理, 条款研�
 avatar:
   icon: banknote
   gradient: ["#8b5cf6", "#a78bfa"]
-handoff: [ir, finance, legal]
+handoff: [dd-analyst, ir, finance, legal]
 tools: [list_dir, read_file, write_file, edit_file, apply_patch, search_text, glob, grep, calc, date_calc, csv_analyze, template_fill, web_search, write_todos, canvas_read, canvas_write, media_generate, media_video, load_skill, remember, handoff, request_approval]
 skills: [deck-authoring, spreadsheet-modeling]
 temperature: 0.5

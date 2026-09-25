@@ -23,7 +23,7 @@ import { memberViews } from '../../lib/members'
 import { useAgentStore, useGroup } from '../../stores/agent-store'
 import { useRunStore } from '../../stores/run-store'
 import { useSceneStore } from '../../stores/scene-store'
-import { useSessionStore } from '../../stores/session-store'
+import { useSessionStore, useCurrentSession } from '../../stores/session-store'
 import { useAuthStore } from '../../stores/auth-store'
 import { useWsStore } from '../../stores/ws-store'
 import { useUiStore } from '../../stores/ui-store'
@@ -132,10 +132,15 @@ function WaveSeparator({ info }: { info: WaveInfo }): React.JSX.Element {
 }
 
 export function ChatArea(): React.JSX.Element {
-  const sessions = useSessionStore((s) => s.sessions)
   const currentId = useSessionStore((s) => s.currentId)
+  const session = useCurrentSession()
   const order = useSessionStore((s) => s.order)
   const loading = useSessionStore((s) => s.loadingMessages)
+  // 消息分页：更早历史（滑近顶部自动前插 / 定位未加载消息时逐页回退）
+  const hasMore = useSessionStore((s) => s.hasMore)
+  const loadingEarlier = useSessionStore((s) => s.loadingEarlier)
+  const loadEarlier = useSessionStore((s) => s.loadEarlier)
+  const totalCount = useSessionStore((s) => s.totalCount)
   const latestRun = useSessionStore((s) => s.latestRun)
   const agents = useAgentStore((s) => s.agents)
   const active = useRunStore((s) => s.active)
@@ -161,6 +166,8 @@ export function ChatArea(): React.JSX.Element {
   const atBottomRef = React.useRef(true)
   /** M52-D：最近一次程序化贴底的滚动偏移（-1 = 尚未贴底过），供 onScroll 识别自身滚动回声 */
   const pinnedTopRef = React.useRef(-1)
+  /** 消息分页：前插前的滚动快照（{height, top}），prepend 后按高度差补偿视口 */
+  const prependAnchorRef = React.useRef<{ height: number; top: number }>()
   const insertRef = React.useRef<((text: string) => void) | null>(null)
   // M12：「回到最新」浮标：atBottom 驱动显隐，missedRef 记录离开底部那一刻的消息数基线
   const [atBottom, setAtBottom] = React.useState(true)
@@ -168,7 +175,6 @@ export function ChatArea(): React.JSX.Element {
   // M37-3/7：视口窗口（首个/末个可见行下标）——滚动驱动，变化才落 state
   const [vp, setVp] = React.useState({ first: 0, last: 0 })
 
-  const session = sessions.find((s) => s.id === currentId)
   // M57 P2：当前会话权限角色（兼容模式缺省 = owner；viewer = 只读共享）
   const myRole = session?.role ?? 'owner'
   const isViewer = myRole === 'viewer'
@@ -220,16 +226,9 @@ export function ChatArea(): React.JSX.Element {
   const agenda = sceneGroup?.agenda ?? []
   const SceneIcon = resolveIcon(sceneGroup?.icon)
 
-  // M16/M37：消息流结构键（order 顺序 + 每条消息 role~runId~turnIndex）→ 派生行（含波次分隔行 / 波次归属 / 导航条目）；
-  // 高频流式增量不改这些字段，字符串比较命中则不触发 ChatArea 重渲染
-  const structureKey = useSessionStore((s) =>
-    s.order
-      .map((id) => {
-        const m = s.byId.get(id)
-        return m ? `${m.role}~${m.runId ?? ''}~${m.turnIndex ?? -1}` : '_~~-1'
-      })
-      .join('|'),
-  )
+  // M16/M37：消息流结构键（写入时由 session-store 增量维护，流式 delta 不再触发 O(n) 拼接）→
+  // 派生行（含波次分隔行 / 波次归属 / 导航条目）；结构不变 → ChatArea 不重渲染
+  const structureKey = useSessionStore((s) => s.structureKey)
   const { rows, waveOf, rail } = React.useMemo(() => deriveRows(order, structureKey), [order, structureKey])
 
   // 虚拟列表：count 只依赖派生行数；行内容由 MessageItem 自行按 id 订阅
@@ -257,6 +256,13 @@ export function ChatArea(): React.JSX.Element {
   const onScroll = (): void => {
     const el = containerRef.current
     if (!el) return
+    // 消息分页：滑近顶部自动加载更早一页（快照滚动锚点，前插后由 useLayoutEffect 补偿）
+    if (el.scrollTop < 100 && hasMore && !loadingEarlier && order.length > 0) {
+      prependAnchorRef.current = { height: el.scrollHeight, top: el.scrollTop }
+      void loadEarlier().catch(() => {
+        prependAnchorRef.current = undefined
+      })
+    }
     const near = el.scrollHeight - el.scrollTop - el.clientHeight < STICK_BOTTOM_THRESHOLD
     // M52-D：贴底回声守卫——程序化贴底后的实测行高回填会在 scroll 事件派发前抬高 scrollHeight，
     // 浏览器补发的 scroll 事件因此算出「瞬时大 gap」。若偏移仍锚定在上次贴底位置（未被用户上拖），
@@ -292,16 +298,35 @@ export function ChatArea(): React.JSX.Element {
 
   const missed = atBottom ? 0 : Math.max(0, order.length - missedRef.current)
 
+  // 消息分页：前插锚点补偿——prepend 后把滚动偏移按新增高度差平移，用户视口不跳
+  React.useLayoutEffect(() => {
+    const anchor = prependAnchorRef.current
+    const el = containerRef.current
+    if (!anchor || !el) return
+    if (!loadingEarlier) {
+      prependAnchorRef.current = undefined
+      el.scrollTop = el.scrollHeight - anchor.height + anchor.top
+      pinnedTopRef.current = -1 // 历史阅读态：废除贴底回声锚点，防误判
+    }
+  }, [order, loadingEarlier])
+
   // 消息定位（右侧接力视图 / M37 悬浮条与导航条点击）：滚动到目标行并闪光，随后自动清除
+  // 分页回退：目标在未加载的更早历史中时，逐页向前加载直到命中或穷尽（每个 focusRequest 至多触发一轮）
+  const focusPagedRef = React.useRef<string>()
   React.useEffect(() => {
     if (!focusRequest) return
     const index = rows.findIndex((r) =>
       r.kind === 'message' ? r.id === focusRequest.id : r.kind === 'wave' ? r.ids.includes(focusRequest.id) : false,
     )
-    if (index >= 0) virtualizer.scrollToIndex(index, { align: 'center' })
+    if (index >= 0) {
+      virtualizer.scrollToIndex(index, { align: 'center' })
+    } else if (hasMore && !loadingEarlier && focusPagedRef.current !== focusRequest.id) {
+      focusPagedRef.current = focusRequest.id
+      void loadEarlier().catch(() => undefined)
+    }
     const t = setTimeout(clearFocus, 1900)
     return () => clearTimeout(t)
-  }, [focusRequest, rows, virtualizer, clearFocus])
+  }, [focusRequest, rows, virtualizer, clearFocus, hasMore, loadingEarlier, loadEarlier])
 
   // M37-3：当前波次（首个可见行起向前扫描的首个波次）；仅上滑离开底部时展示
   const currentWave = React.useMemo(() => {
@@ -325,13 +350,8 @@ export function ChatArea(): React.JSX.Element {
   const waveNodes = React.useMemo(() => waveNodesOf(waveOf), [waveOf])
   const activeWaveIdx = React.useMemo(() => activeWaveIndexOf(waveOf, vp.first), [waveOf, vp.first])
 
-  // 布尔选择器：流式增量只改 byId 内容，不改变本结果 → ChatArea 不重渲染
-  const anyStreaming = useSessionStore((s) => {
-    for (const id of s.order) {
-      if (s.byId.get(id)?.status === 'streaming') return true
-    }
-    return false
-  })
+  // 流式计数：写入时由 store 增量维护（原实现在此线性扫描全部消息，流式期每 40ms O(n)）
+  const anyStreaming = useSessionStore((s) => s.streamingCount > 0)
 
   // M3：断点继续（进程中断遗留的 Run 快照 → 以队列 + 发言史继续，不重跑已完成回合）
   const canResume = !!session && !active && latestRun?.state === 'interrupted'
@@ -364,7 +384,7 @@ export function ChatArea(): React.JSX.Element {
         )}
         {session && !isChatKind && (
           <span className="text-[11.5px] text-muted-foreground">
-            {participants.length} 位成员 · {messageCount} 条消息
+            {participants.length} 位成员 · {Math.max(messageCount, totalCount)} 条消息
           </span>
         )}
         {sceneGroup?.stage ? (
@@ -558,6 +578,19 @@ export function ChatArea(): React.JSX.Element {
             </div>
           ) : (
             <>
+              {/* 消息分页：顶部哨兵——还有更早历史时给出加载反馈（自动触发见 onScroll） */}
+              {hasMore && (
+                <div className="flex items-center justify-center gap-1.5 py-2 text-[11px] text-muted-foreground">
+                  {loadingEarlier ? (
+                    <>
+                      <Loader2 className="size-3 animate-spin" />
+                      正在加载更早的消息…
+                    </>
+                  ) : (
+                    '上滑加载更早的消息'
+                  )}
+                </div>
+              )}
               <div style={{ height: virtualizer.getTotalSize(), width: '100%', position: 'relative' }}>
                 {virtualizer.getVirtualItems().map((vi) => {
                   const row = rows[vi.index]

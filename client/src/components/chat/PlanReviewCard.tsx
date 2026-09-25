@@ -25,7 +25,7 @@ import {
 import type { AgentDefinition, Plan, PlanStatus, PlanStep, ReviewRecord, ReviewVerdict } from '@multi-agent/shared'
 import { useAgentStore } from '../../stores/agent-store'
 import { usePlanStore } from '../../stores/plan-store'
-import { useSessionStore } from '../../stores/session-store'
+import { useSessionStore, useCurrentSession } from '../../stores/session-store'
 import { cn } from '../../lib/utils'
 import { memberDisplayList } from '../../lib/members'
 import { formatClock } from '../../lib/time'
@@ -174,7 +174,7 @@ function PlanApprovalCard({ plan, members }: { plan: Plan; members: AgentDefinit
   const updatePlan = usePlanStore((s) => s.updatePlan)
   const resolve = usePlanStore((s) => s.resolve)
   // M79-AH：只读共享（viewer）→ 批准 / 驳回 / 保存修改禁用（草稿编辑仅本地，服务端写守卫兜底）
-  const readOnly = useSessionStore((s) => s.sessions.find((x) => x.id === s.currentId)?.role) === 'viewer'
+  const readOnly = useSessionStore((s) => s.current?.role) === 'viewer'
   const [busy, setBusy] = React.useState<string>()
   const [rejectOpen, setRejectOpen] = React.useState(false)
   const [feedback, setFeedback] = React.useState('')
@@ -572,7 +572,7 @@ export function PlanReviewCard(): React.JSX.Element | null {
     if (currentId) void load(currentId)
   }, [currentId, load])
 
-  const session = sessions.find((s) => s.id === currentId)
+  const session = useCurrentSession()
   const bound = boundSessionId === currentId
   // 活跃计划（done / superseded 不占聊天区，任务面板可见）；最多并列 2 张，避免堆叠
   const visible = React.useMemo(

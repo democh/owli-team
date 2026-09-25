@@ -1,0 +1,17 @@
+{
+  "id": "ecommerce",
+  "name": "电商经营：选品 × Listing × 运营 × 客服",
+  "participants": ["category-scout", "listing-optimizer", "store-operator", "shop-support"],
+  "prompt": "启动一轮电商经营：@探市 做选品评估与保本测算，@炼词 出 Listing 标题与五点卖点，@守铺 排店铺节奏与定价（保本线硬约束），@暖客 沉淀客服话术与售后 SOP；收尾汇总经营方案。",
+  "maxTurns": 7,
+  "assertions": [
+    { "type": "artifact_exists", "path": "docs/选品分析-这个需求.md" },
+    { "type": "artifact_exists", "path": "docs/Listing-这个需求.md" },
+    { "type": "artifact_exists", "path": "docs/运营复盘-这个需求.md" },
+    { "type": "artifact_exists", "path": "docs/客服话术-这个需求.md" },
+    { "type": "handoff_targets", "values": ["listing-optimizer"] },
+    { "type": "turns_lte", "value": 6 },
+    { "type": "no_loop" },
+    { "type": "run_end_reason", "value": "completed" }
+  ]
+}

@@ -309,3 +309,19 @@ export function assertWritableSql(sql: string): { ok: true } | { ok: false; reas
   if (!analysis.ok) return { ok: false, reason: analysis.reason ?? 'SQL 不合法' }
   return { ok: true }
 }
+
+/**
+ * 只读查询的行数下推（修复「全量读入内存再截断」）：
+ * 对 SELECT / WITH 单语句包一层 `SELECT * FROM (...) LIMIT maxRows+1`，
+ * 让数据库端只返回 maxRows+1 行（+1 用于探测是否截断，避免 COUNT）。
+ * 其余首关键字（EXPLAIN / SHOW / PRAGMA / TABLE / VALUES）结果集天然很小，不包裹（返回 null）。
+ * 说明：WITH 包裹为派生表形式（PG / SQLite / MySQL 8 / MariaDB 均支持 CTE 出现在子查询开头）。
+ */
+export function wrapSelectWithLimit(sql: string, maxRows: number): string | null {
+  const analysis = analyzeSql(sql)
+  if (!analysis.ok || analysis.statements.length !== 1) return null
+  if (analysis.firstKeyword !== 'SELECT' && analysis.firstKeyword !== 'WITH') return null
+  const stmt = analysis.statements[0]!
+  const limit = Math.max(1, Math.trunc(maxRows)) + 1
+  return `SELECT * FROM (${stmt}) AS __ma_row_limit LIMIT ${limit}`
+}

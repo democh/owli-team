@@ -14,7 +14,7 @@ import { baseAgentId } from '@multi-agent/shared'
 import { memberDisplayList, labelOfMemberKey } from '../../lib/members'
 import { useAgentStore } from '../../stores/agent-store'
 import { useScheduleStore } from '../../stores/schedule-store'
-import { useSessionStore } from '../../stores/session-store'
+import { useSessionStore, useCurrentSession } from '../../stores/session-store'
 import { cn } from '../../lib/utils'
 import { Button } from '../ui/button'
 import { Badge } from '../ui/badge'
@@ -75,7 +75,7 @@ function defaultOnceAt(): string {
 /** 任务卡：规格 / 目标 / 下次触发 / 运行态 + 操作（立即执行 / 启停 / 删除） */
 function ScheduleCard({ task }: { task: ScheduledTask }): React.JSX.Element {
   const agents = useAgentStore((s) => s.agents)
-  const session = useSessionStore((s) => s.sessions.find((x) => x.id === s.currentId))
+  const session = useCurrentSession()
   const setEnabled = useScheduleStore((s) => s.setEnabled)
   const remove = useScheduleStore((s) => s.remove)
   const trigger = useScheduleStore((s) => s.runNow)
@@ -412,7 +412,7 @@ function CreateForm({ members, onClose }: { members: AgentDefinition[]; onClose:
 
 export function SchedulePanel(): React.JSX.Element {
   const currentId = useSessionStore((s) => s.currentId)
-  const session = useSessionStore((s) => s.sessions.find((x) => x.id === s.currentId))
+  const session = useCurrentSession()
   const agents = useAgentStore((s) => s.agents)
   const tasks = useScheduleStore((s) => s.tasks)
   const boundSessionId = useScheduleStore((s) => s.sessionId)

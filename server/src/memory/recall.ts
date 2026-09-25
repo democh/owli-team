@@ -84,6 +84,8 @@ export interface RecallInput {
   exclude?: Set<string>
   /** M57：用户维度（多用户隔离；缺省 = 不过滤——单用户兼容模式） */
   userId?: string
+  /** P2：空间域（缺省 = 不过滤；提供时仅命中「同空间 OR 跨域共享（spaceId 空）」的记忆） */
+  spaceId?: string
 }
 
 export interface RecallResult {
@@ -116,6 +118,8 @@ export function recallMemories(deps: RecallIndexDeps, input: RecallInput): Recal
   for (const item of deps.store.rowsByIds([...best.keys()], input.userId)) {
     if (item.status !== 'active') continue // vec0 镜像不过滤状态
     if (input.exclude?.has(item.id)) continue
+    // P2：空间域隔离——带空间标签的记忆仅在的同空间召回；无标签（跨域共享）对所有空间可见
+    if (input.spaceId && item.spaceId && item.spaceId !== input.spaceId) continue
     const { score, signals } = scoreMemory(item, best.get(item.id) ?? 0, queryTokens, nowMs)
     if (score < input.minScore) continue
     scored.push({

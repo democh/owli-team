@@ -14,7 +14,7 @@ import { describe, expect, it } from 'vitest'
 import type { AppConfig } from '../src/config.js'
 import { loadConfig } from '../src/config.js'
 import { SecretVault } from '../src/connections/crypto.js'
-import { analyzeSql, assertReadOnlySql, assertWritableSql } from '../src/connections/db/guard.js'
+import { analyzeSql, assertReadOnlySql, assertWritableSql, wrapSelectWithLimit } from '../src/connections/db/guard.js'
 import { DbConnectionManager } from '../src/connections/db/manager.js'
 import { StreamTokenService } from '../src/browser/stream-token.js'
 import { ArtifactStore } from '../src/store/artifacts.js'
@@ -498,5 +498,24 @@ describe('M22：db 工具实时操作事件（opNotify）', () => {
     expect(errOp?.action).toBe('db.execute')
     expect(errOp?.summary ?? '').toMatch(/只读/)
     await env.manager.closeAll()
+  })
+})
+
+describe('M22 续：只读查询行数下推（wrapSelectWithLimit）', () => {
+  it('SELECT / WITH 包一层 LIMIT maxRows+1；其余首关键字不包裹', () => {
+    expect(wrapSelectWithLimit('SELECT * FROM users', 100)).toBe(
+      'SELECT * FROM (SELECT * FROM users) AS __ma_row_limit LIMIT 101',
+    )
+    expect(wrapSelectWithLimit('WITH t AS (SELECT 1 AS x) SELECT * FROM t', 50)).toBe(
+      'SELECT * FROM (WITH t AS (SELECT 1 AS x) SELECT * FROM t) AS __ma_row_limit LIMIT 51',
+    )
+    // 结果集天然很小 / 非查询：不包裹
+    expect(wrapSelectWithLimit('EXPLAIN SELECT 1', 10)).toBeNull()
+    expect(wrapSelectWithLimit('PRAGMA table_info(users)', 10)).toBeNull()
+    expect(wrapSelectWithLimit('DELETE FROM users', 10)).toBeNull()
+    // 多语句：不包裹（交由既有护栏裁决）
+    expect(wrapSelectWithLimit('SELECT 1; SELECT 2', 10)).toBeNull()
+    // maxRows 下限护栏：0 → LIMIT 2
+    expect(wrapSelectWithLimit('SELECT 1', 0)).toBe('SELECT * FROM (SELECT 1) AS __ma_row_limit LIMIT 2')
   })
 })

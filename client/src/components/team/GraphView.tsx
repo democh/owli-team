@@ -80,7 +80,7 @@ import { RelayEdge, EDGE_TONE, type RelayFlowEdge } from './graph/RelayEdge'
 import type { RelayEdgeData } from './graph/types'
 import { useAgentStore } from '../../stores/agent-store'
 import { useRunStore } from '../../stores/run-store'
-import { messagesOf, useSessionStore } from '../../stores/session-store'
+import { messagesOf, useSessionStore, useCurrentSession } from '../../stores/session-store'
 import { useUiStore } from '../../stores/ui-store'
 import '@xyflow/react/dist/style.css'
 
@@ -274,7 +274,6 @@ export function GraphView(): React.JSX.Element {
   const agents = useAgentStore((s) => s.agents)
   const groups = useAgentStore((s) => s.groups)
   const statuses = useAgentStore((s) => s.statuses)
-  const sessions = useSessionStore((s) => s.sessions)
   const currentId = useSessionStore((s) => s.currentId)
   const active = useRunStore((s) => s.active)
   const queue = useRunStore((s) => s.queue)
@@ -344,7 +343,7 @@ export function GraphView(): React.JSX.Element {
     return () => ro.disconnect()
   }, [])
 
-  const session = sessions.find((s) => s.id === currentId)
+  const session = useCurrentSession()
   // M77：节点 = 成员实例（分身 = `名字·灵魂名` 节点）——显示克隆入图（id = 成员键、name = 标签）
   const participants = React.useMemo(
     () => memberViews(agents, session).map((m) => ({ ...m.agent, id: m.key, name: m.label })),
@@ -797,8 +796,7 @@ export function GraphView(): React.JSX.Element {
   /** 生效灵魂：会话覆盖（经典）> 分身键内嵌 > 角色默认（档案面板徽标） */
   const soulOverride = useSessionStore((s) => {
     const key = selectedId ?? ''
-    const sessionNow = s.sessions.find((x) => x.id === s.currentId)
-    return sessionNow?.memberSouls?.[key] ?? soulIdOfMember(key)
+    return s.current?.memberSouls?.[key] ?? soulIdOfMember(key)
   })
   /** A1 预览目标节点与最近发言（悬停节点在 model 中解析） */
   const previewNode = preview ? model.nodes.find((n) => n.id === preview.id) : undefined

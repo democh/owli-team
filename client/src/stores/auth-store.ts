@@ -39,6 +39,8 @@ interface AuthState {
   phase: AuthPhase
   user: AuthUserInfo | null
   isAdmin: boolean
+  /** M80-C：本人已读对外展示开关（对等双向的客户端门；缺省开，引导时读取） */
+  readReceiptsOn: boolean
   status: AuthStatus
   error: string | null
   bootstrap: () => Promise<void>
@@ -53,6 +55,8 @@ interface AuthState {
   setError: (message: string | null) => void
   /** M79-B：本地应用画像补丁（保存成功后就地更新，免整页刷新） */
   applyProfile: (patch: Partial<AuthUserInfo>) => void
+  /** M80-C：更新本人已读对外展示门（设置保存成功后就地生效，免刷新） */
+  setReadReceiptsOn: (on: boolean) => void
 }
 
 const reload = (): void => {
@@ -63,6 +67,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   phase: 'loading',
   user: null,
   isAdmin: false,
+  readReceiptsOn: true,
   status: { needsSetup: false, authRequired: false, multiUser: false },
   error: null,
 
@@ -81,6 +86,15 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       const me = await apiGet<{ user: AuthUserInfo; isAdmin: boolean }>('/api/auth/me')
       const mustChange = Boolean(me.user.mustChangePassword) && !me.user.legacy
       set({ phase: mustChange ? 'force-password' : 'ready', user: me.user, isAdmin: me.isAdmin })
+      // M80-C：已读对外展示偏好（对等双向的客户端门；读取失败不阻断引导，缺省视为开启）
+      if (!mustChange && status.multiUser) {
+        try {
+          const prefs = await apiGet<{ preferences: { showReadReceipts?: boolean } }>('/api/auth/preferences')
+          set({ readReceiptsOn: prefs.preferences.showReadReceipts !== false })
+        } catch {
+          // 非致命：缺省开
+        }
+      }
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) {
         // 无账号 + 需令牌（AUTH_TOKEN 部署）→ 令牌入口；其余 → 登录页
@@ -141,6 +155,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     if (!current) return
     set({ user: { ...current, ...patch } })
   },
+
+  setReadReceiptsOn: (on) => set({ readReceiptsOn: on }),
 }))
 
 // 注册全局 401 处理（lib/api.ts 在任意请求 401 时回调；登录/首启等公开接口的 401 由页面自行处理）

@@ -196,7 +196,7 @@ export function ApprovalPanel(): React.JSX.Element | null {
   const currentId = useSessionStore((s) => s.currentId)
   const approvals = useRunStore((s) => s.approvals)
   // M79-AF：只读共享（viewer）→ 审批卡仅展示、不渲染决策按钮（服务端另有定向 + 403 兜底）
-  const role = useSessionStore((s) => s.sessions.find((x) => x.id === s.currentId)?.role)
+  const role = useSessionStore((s) => s.current?.role)
   const readOnly = role === 'viewer'
   const mine = approvals.filter((a) => a.sessionId === currentId)
   if (!currentId || mine.length === 0) return null

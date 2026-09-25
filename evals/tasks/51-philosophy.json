@@ -1,0 +1,15 @@
+{
+  "id": "philosophy",
+  "name": "哲学茶室：追问 × 思想实验 × 伦理框架",
+  "participants": ["socratic-host", "thought-experimenter", "ethics-moderator"],
+  "prompt": "开一席哲学茶席：@叩问 用追问澄清我真正的问题，@设境 设计一个思想实验暴露隐含假设，@议善 用三种伦理框架并列分析（不作意识形态输出）；收尾记录暂定立场与待想清单。",
+  "maxTurns": 6,
+  "assertions": [
+    { "type": "artifact_exists", "path": "docs/哲思笔记-这个需求.md" },
+    { "type": "artifact_exists", "path": "docs/思想实验-这个需求.md" },
+    { "type": "artifact_exists", "path": "docs/伦理分析-这个需求.md" },
+    { "type": "turns_lte", "value": 5 },
+    { "type": "no_loop" },
+    { "type": "run_end_reason", "value": "completed" }
+  ]
+}

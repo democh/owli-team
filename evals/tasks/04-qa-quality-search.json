@@ -11,6 +11,7 @@
     { "type": "artifact_contains", "path": "docs/测试计划-搜索.md", "text": "越权访问" },
     { "type": "artifact_exists", "path": "deploy/部署说明-搜索.md" },
     { "type": "turns_lte", "value": 4 },
-    { "type": "run_end_reason", "value": "completed" }
+    { "type": "run_end_reason", "value": "completed" },
+    { "type": "message_no_banned_words", "values": ["综上所述", "总而言之", "赋能", "抓手", "颗粒度", "希望对你有帮助", "如有问题随时提问"] }
   ]
 }

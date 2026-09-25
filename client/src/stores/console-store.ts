@@ -8,6 +8,7 @@
 import { create } from 'zustand'
 import type {
   AgentCreateInput,
+  AgentDraftPayload,
   AgentGroup,
   AgentWriteInput,
   ConsoleAgentDetail,
@@ -15,7 +16,9 @@ import type {
   ConsoleSkillDetail,
   ConsoleSkillSummary,
   ConsoleToolInfo,
+  GenerateDraftResult,
   GroupWriteInput,
+  SkillDraftPayload,
   SkillWriteInput,
   SoulWriteInput,
   ValidationIssue,
@@ -51,6 +54,10 @@ interface ConsoleState {
   createSkill: (name: string, input: SkillWriteInput) => Promise<ConsoleSkillDetail>
   updateSkill: (name: string, input: SkillWriteInput) => Promise<ConsoleSkillDetail>
   deleteSkill: (name: string, force?: boolean) => Promise<void>
+  /** Agent Studio：AI 生成 Agent 草稿（POST /api/console/generate/agent；不落盘） */
+  generateAgent: (description: string, sceneHint?: string) => Promise<GenerateDraftResult<AgentDraftPayload>>
+  /** Agent Studio：AI 生成 Skill 草稿（POST /api/console/generate/skill；不落盘） */
+  generateSkill: (requirement: string) => Promise<GenerateDraftResult<SkillDraftPayload>>
 }
 
 export const useConsoleStore = create<ConsoleState>((set, get) => {
@@ -182,6 +189,17 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
     deleteSkill: async (name, force) => {
       await apiDelete<{ ok: boolean }>(`/api/console/skills/${encodeURIComponent(name)}${force ? '?force=1' : ''}`)
       await afterWrite()
+    },
+
+    // Agent Studio：生成只产草稿（不写盘、不刷新列表——落盘走既有 createAgent / createSkill）
+    generateAgent: async (description, sceneHint) => {
+      return await apiPost<GenerateDraftResult<AgentDraftPayload>>('/api/console/generate/agent', {
+        description,
+        ...(sceneHint ? { sceneHint } : {}),
+      })
+    },
+    generateSkill: async (requirement) => {
+      return await apiPost<GenerateDraftResult<SkillDraftPayload>>('/api/console/generate/skill', { requirement })
     },
   }
 })

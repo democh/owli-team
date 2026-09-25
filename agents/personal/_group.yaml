@@ -16,6 +16,11 @@ agenda:
     prompt: 帮我看看这个个人目标怎么推进：
   - label: 到点提醒
     prompt: 帮我为这些事项设置到点提醒：
+ritual:
+  title: 每周复盘
+  cron: "0 20 * * 0"
+  opener: 帮我复盘这一周：做了什么、卡在哪、下周最重要的三件事。
+  description: 每周日 20:00 一次生活复盘
 stage:
   layout: dock
   panel: coach

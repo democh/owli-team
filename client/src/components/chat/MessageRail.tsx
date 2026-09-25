@@ -5,7 +5,7 @@
  */
 import * as React from 'react'
 import { useAgentStore } from '../../stores/agent-store'
-import { useSessionStore } from '../../stores/session-store'
+import { useSessionStore, useCurrentSession } from '../../stores/session-store'
 import type { RailItem } from '../../lib/chat-rows'
 import { labelOfMemberKey } from '../../lib/members'
 import { cn } from '../../lib/utils'
@@ -32,7 +32,7 @@ export function MessageRail({
 }): React.JSX.Element | null {
   const agents = useAgentStore((s) => s.agents)
   // M77：导航条署名按成员实例（分身 = 名字·灵魂名）
-  const session = useSessionStore((s) => s.sessions.find((x) => x.id === s.currentId))
+  const session = useCurrentSession()
   const [dots, setDots] = React.useState<Set<number>>(() => new Set())
   const itemsRef = React.useRef(items)
   itemsRef.current = items

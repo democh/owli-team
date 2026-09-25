@@ -17,7 +17,7 @@ import { baseAgentId } from '@multi-agent/shared'
 import { labelOfMemberKey } from '../../lib/members'
 import { waveStage } from '../../lib/stage-map'
 import { useAgentStore } from '../../stores/agent-store'
-import { useSessionStore } from '../../stores/session-store'
+import { useSessionStore, useCurrentSession } from '../../stores/session-store'
 import { AgentAvatar } from '../agents/AgentAvatar'
 
 export function WaveStrip({
@@ -34,7 +34,7 @@ export function WaveStrip({
   onJump: () => void
 }): React.JSX.Element {
   const agents = useAgentStore((s) => s.agents)
-  const session = useSessionStore((s) => s.sessions.find((x) => x.id === s.currentId))
+  const session = useCurrentSession()
   // M77：成员键（分身实例）——头像 / 署名按实例，阶段映射（M39）仍按基础角色口径
   const memberKey = useSessionStore((s) =>
     info.memberIds

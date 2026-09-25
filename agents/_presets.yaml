@@ -155,16 +155,6 @@ presets:
       组织一轮多空对弈（围绕增长与估值的对抗推演，默认 3 轮）：@秦砚 持多方立论，@雷动 持空方立论，每轮挂证据与置信度并回应对方论据；@闻笛 汇拢双方证据弹药（附信源等级），随后由方程逐轮量化走子、主管终局裁决（胜负 + 置信度 + 核心依据 + 翻盘条件）。
     order: 150
 
-  - id: classic-debate
-    name: 辩论赛
-    description: 3 轮辩论 → 裁决书：正反立论交锋 × 证据挂载，裁判收口
-    icon: scale
-    theme: ["#dc2626", "#3b82f6"]
-    members: [judge, affirmative, negative, evidence]
-    prompt: |-
-      组织一场完整辩论（默认 3 轮）：@明断 开场定议题边界与轮数并主持回合，@立言 正方立论、@砺锋 反方立论（每轮挂证据与置信度并回应对方上轮论点），@昭实 汇拢双方证据弹药（附来源等级）；终局由 @明断 裁决（胜负 + 置信度 + 核心依据 + 翻盘条件）。
-    order: 160
-
   - id: negotiation-rehearsal
     name: 谈判彩排
     description: 定策略 → 多轮出价 → 复盘：真实谈判前先练一遍
@@ -180,9 +170,9 @@ presets:
     description: 事实核查 × 立场图谱 × 政策伦理：多方研讨收口观察报告
     icon: globe
     theme: ["#0ea5e9", "#14b8a6"]
-    members: [moderator, fact-checker, stakeholder, policy-advisor]
+    members: [moderator, stakeholder, policy-advisor]
     prompt: |-
-      组织一场社会议题研讨（默认 3 轮）：@齐观 开场定议题边界与轮数，@尚真 出事实基线与来源分级、@方衡 推演各方立场与关切（并行展开），@允中 补政策伦理视角（公平 / 权利 / 后果）；终局由 @齐观 收口观察报告（含共识与分歧 + 政策伦理章）。
+      组织一场社会议题研讨（默认 3 轮）：@齐观 开场定议题边界与轮数并先行核查事实基线（来源分级），@方衡 推演各方立场与关切，@允中 补政策伦理视角（公平 / 权利 / 后果）；终局由 @齐观 收口观察报告（含事实基线章 + 共识与分歧 + 政策伦理章）。
     order: 180
 
   - id: writing-sprint
@@ -334,3 +324,113 @@ presets:
     prompt: |-
       组织一次入宅前格局复核（先盘后论）：@察隅 先做户型解析与坐向采集（含数据等级与存疑项），@司南 排盘做分维度点评与改善参考（盘面走 `::: pan luopan` 整卡），@筑居 按点评结论做装修避让与预算校核（涉结构拆改标注需现场核实）。
     order: 370
+
+  - id: tarot-quickread
+    name: 塔罗三张快解
+    description: 抽牌 → 牌阵解读 → 意象叙事 → 考据出处：一轮完整的三张牌阵研习
+    icon: sparkles
+    theme: ["#7c3aed", "#c084fc"]
+    members: [tarot-reader, symbol-narrator, tarot-historian]
+    prompt: |-
+      做一次三张牌阵研习（过去 / 现在 / 建议）：@观照 用 tarot_draw 抽牌并按牌阵解读（牌面为据，不作宿命断言），@释象 就关键牌面做意象叙事补充，@考源 给出核心牌义的历史出处与流变；收尾汇总为一份解读札记，注明文化参考定位。
+    order: 380
+
+  - id: trpg-oneshot
+    name: 跑团快速开团
+    description: 剧本 → 规则 → NPC → 主持：一场单发（one-shot）跑团的完整开局
+    icon: dices
+    theme: ["#b91c1c", "#f59e0b"]
+    members: [scenario-writer, rule-keeper, npc-player, gm-host]
+    prompt: |-
+      组织一场单发跑团：@构幕 先出剧本框架（背景 / 冲突 / 三条线索），@执规 定规则口径与安全工具（骰子走 dice_roll，种子可复现），@入戏 准备两位关键 NPC 的设定与声口，@开卷 主持开场回合并推进第一幕；全程玩家向娱乐体验，不作现实预测。
+    order: 390
+
+  - id: paper-sprint
+    name: 论文冲刺
+    description: 文献 → 方法 → 成稿 → 投稿：论文生产链一轮完整推进
+    icon: graduation-cap
+    theme: ["#1d4ed8", "#38bdf8"]
+    members: [lit-reviewer, methodologist, paper-editor, submit-advisor]
+    prompt: |-
+      启动论文冲刺（逐棒推进）：@索隐 先出文献综述与研究缺口（引用真实性可回溯），@定矩 审定研究设计与方法口径，@琢稿 按学术规范打磨成稿结构与表达，@叩门 给出目标期刊 / 会议清单与投稿材料清单；收尾汇总为「论文推进计划与当前稿件状态」。
+    order: 400
+
+  - id: philosophy-teatime
+    name: 哲学茶席
+    description: 追问 → 思想实验 → 伦理框架：把一个困扰想得更清楚
+    icon: coffee
+    theme: ["#57534e", "#a8a29e"]
+    members: [socratic-host, thought-experimenter, ethics-moderator]
+    prompt: |-
+      开一席哲学茶席：@叩问 先用苏格拉底式追问澄清我真正的问题，@设境 设计一个思想实验把隐含假设暴露出来，@议善 用三种伦理框架并列分析（多元立场并列，不作意识形态输出）；收尾记录「问题澄清 + 我的暂定立场 + 待想清单」。
+    order: 410
+
+  - id: relationship-checkup
+    name: 关系体检
+    description: 沟通练习 → 调解视角 → 相处方案：一段关系的状态梳理
+    icon: heart-handshake
+    theme: ["#db2777", "#fb7185"]
+    members: [rel-coach, mediator, date-coach]
+    prompt: |-
+      做一次关系状态梳理：@知言 先梳理现状与沟通模式（不诊断、不贴标签），@居间 从双方视角各做一次立场复述，@初见 给出具体场景的沟通练习脚本；收尾汇总为「关系体检与下周一个可执行的小练习」。危机信号直接建议转介专业帮助。
+    order: 420
+
+  - id: home-week
+    name: 家庭一周安排
+    description: 菜单 → 家务 → 孩子 / 宠物：把一周家务排成清爽清单
+    icon: home
+    theme: ["#f59e0b", "#84cc16"]
+    members: [chef, home, parenting, pet]
+    prompt: |-
+      安排家庭一周事务：@唐味 出一周菜单与采买清单（按人数与口味），@温居 排家务分区与排期，@苗雨 安排孩子的作息与活动，@柯萌 补齐宠物照护要点；收尾汇总为一张可打钩的周清单。
+    order: 430
+
+  - id: wealth-checkup
+    name: 财务体检
+    description: 收支 → 保障 → 大额决策：个人财务的一轮完整检视
+    icon: piggy-bank
+    theme: ["#059669", "#34d399"]
+    members: [wealth, insurance-planner, big-ticket-advisor]
+    prompt: |-
+      做一次个人财务体检：@钱程 先盘收支与目标储蓄（预算口径），@保宁 检视保障缺口与保额合理性（先保障后投资），@慎衡 就近期一笔大额支出做决策清单；收尾汇总为「财务体检报告与三条优先动作」，先稳后进。
+    order: 440
+
+  - id: rights-check
+    name: 维权路径评估
+    description: 时效 → 路径对比 → 证据清单：个人维权的第一步走对
+    icon: scale
+    theme: ["#334155", "#94a3b8"]
+    members: [rights-advisor, labor-advisor, contract-checker]
+    prompt: |-
+      评估一次维权路径：@持正 先做时效状态与四路对比（协商 / 投诉 / 仲裁 / 诉讼），@守薪 若涉劳动纠纷给出仲裁口径与材料清单，@审微 审相关合同 / 协议的风险条款；收尾汇总为「维权方案与证据清单」，重大事项建议转执业律师。
+    order: 450
+
+  - id: mock-trial
+    name: 模拟庭审
+    description: 原告主张 → 被告抗辩 → 审判长裁决：一轮庭审对抗演练
+    icon: gavel
+    theme: ["#78350f", "#fbbf24"]
+    members: [plaintiff-counsel, defense-counsel, presiding-judge]
+    prompt: |-
+      组织一场模拟庭审（程序正义框架）：@申言 立原告主张与举证清单，@析辩 逐条抗辩并质证，@端衡 主持程序、归纳争点并出具模拟判决书；模拟推演性质，不针对真实未决案件。
+    order: 460
+
+  - id: sales-sprint
+    name: 销售冲刺
+    description: 线索 → 话术 → 客户成功 → 客服闭环：一轮打单全链演练
+    icon: target
+    theme: ["#0891b2", "#22d3ee"]
+    members: [bd, sales, success, support]
+    prompt: |-
+      组织一轮销售冲刺：@秦拓 先盘线索池与优先级，@陆征 出报价与话术方案（每条线索有下一动作），@安然 设计签约后的客户成功陪跑节奏，@夏禾 补齐客服 SOP 与升级阈值；收尾汇总为「本周打单动作表」。
+    order: 470
+
+  - id: mind-reset
+    name: 情绪安顿
+    description: 陪谈 → 正念练习 → 心理科普：一轮非治疗的情绪支持闭环
+    icon: heart-handshake
+    theme: ["#0d9488", "#f472b6"]
+    members: [emotion-companion, mindfulness-guide, psycho-educator]
+    prompt: |-
+      我最近状态不太好，帮我安顿一下：@听澜 先接住情绪、梳理状态（非治疗，先复述），@安屿 给我一个三分钟就能做的练习与一周安排（含独自执行版与暂停信号），@知澄 科普相关概念（含自助边界与求助渠道）；出现危机信号直接建议专业帮助。
+    order: 480

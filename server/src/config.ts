@@ -163,6 +163,8 @@ export interface AppConfig {
   webSearch: { apiKey: string; apiUrl: string; htmlUrl: string; engines: string[] }
   /** 联网工具浏览器 UA 覆盖（空 = 内置 Chrome 桌面版） */
   httpUserAgent: string
+  /** 追加 UA 池（HTTP_UA_POOL，每行一个 UA；与内置池合并） */
+  httpUaPoolExtra: string[]
   /** 联网工具同域名最小请求间隔（毫秒，反爬限速；0 = 不限速） */
   httpMinIntervalMs: number
   /** 联网工具单次请求超时（毫秒） */
@@ -486,6 +488,10 @@ export function loadConfig(): AppConfig {
       engines: envList('WEB_SEARCH_ENGINES'),
     },
     httpUserAgent: envStr('HTTP_USER_AGENT', ''),
+    httpUaPoolExtra: envStr('HTTP_UA_POOL', '')
+      .split(/\r?\n/)
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0),
     httpMinIntervalMs: envNum('HTTP_MIN_INTERVAL_MS', 1_200, 0, 60_000),
     httpTimeoutMs: envNum('HTTP_TIMEOUT_MS', 15_000, 1_000, 120_000),
     artifactMaxBytes: envNum('ARTIFACT_MAX_BYTES', 512 * 1024, 1_024),

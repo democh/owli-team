@@ -1,7 +1,7 @@
 /**
  * 反爬 HTTP 共享模块（web_search / web_fetch / 财经源共用，§21.3 联网工具）：
  * - 浏览器化请求头：UA 池按 host 粘性选择（同站点会话稳定），Sec-Fetch-* 与浏览器指纹一致；
- * - 会话 Cookie 罐（tough-cookie）：Set-Cookie 自动入库并按域/路径/过期语义回传（降低「无会话脚本」判定）；
+ * - 会话 Cookie 罐（tough-cookie，按 cookieKey/用户分桶）：Set-Cookie 自动入库并按域/路径/过期语义回传（降低「无会话脚本」判定）；
  * - 域名级限速：同 host 串行队列 + 最小间隔（HTTP_MIN_INTERVAL_MS），避免密集请求触发风控；
  * - 风控冷却：识别到拦截后对该 host 冷却 60s，冷却期内请求直接拒绝（不加剧封禁）；
  * - 软封锁升级：连接被异常中断（ECONNRESET / other side closed）或 JSON 接口空响应
@@ -48,25 +48,35 @@ export interface UaProfile {
   secFetch: boolean
 }
 
-/** UA 池（真实主流桌面浏览器；同 host 会话内稳定，跨 host 分散指纹） */
+/** UA 池（真实主流桌面浏览器；同 host 会话内稳定，跨 host 分散指纹；版本随稳定版季度刷新） */
 const UA_POOL: readonly UaProfile[] = [
   {
-    ua: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+    ua: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36',
     secFetch: true,
   },
   {
-    ua: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+    ua: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36',
     secFetch: true,
   },
   {
-    ua: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Edg/131.0.0.0',
+    ua: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36 Edg/151.0.0.0',
     secFetch: true,
   },
   {
-    ua: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Safari/605.1.15',
+    ua: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Safari/605.1.15',
     secFetch: false,
   },
 ]
+
+/** 配置追加的 UA（HTTP_UA_POOL；Chromium 系按 secFetch=true 处理），并入池内参与 host 散列选择（导出于单测） */
+export function effectivePool(extra?: string[]): readonly UaProfile[] {
+  if (!extra || extra.length === 0) return UA_POOL
+  const extras = extra
+    .map((ua) => ua.trim())
+    .filter((ua) => ua.length > 0)
+    .map((ua): UaProfile => ({ ua, secFetch: !/Safari\/[\d.]+$/.test(ua) || /Chrome\//.test(ua) }))
+  return extras.length > 0 ? [...extras, ...UA_POOL] : UA_POOL
+}
 
 /** 默认浏览器 UA（Chrome 桌面版；HTTP_USER_AGENT 可覆盖） */
 export const DEFAULT_BROWSER_UA = UA_POOL[0].ua
@@ -95,22 +105,41 @@ const hostSoftFails = new Map<string, number>()
 const hostUaProfile = new Map<string, UaProfile>()
 
 /**
- * 会话 Cookie 罐（tough-cookie）：Set-Cookie 自动入库并按域/路径/过期语义在后续请求回传。
+ * 会话 Cookie 罐（tough-cookie，按 cookieKey 分桶）：Set-Cookie 自动入库并按域/路径/过期语义在后续请求回传。
  * 反爬价值：东财 / 新浪等站点通过 Set-Cookie 下发访客指纹（如 qgqp_b_id），
  * 自动回传可显著降低被判定为「无会话脚本」的概率（looseMode 容忍非 RFC 严格 Cookie）。
+ * 分桶原因（M57 多用户）：不同用户抓同一站点所得的会话 Cookie 不得互相携带（隐私串号 + 指纹混淆）。
  */
-const cookieJar = new CookieJar(undefined, { looseMode: true })
+const cookieJars = new Map<string, CookieJar>()
+
+/** 按归属键取 Cookie 罐（缺省 '' = 全局桶，兼容无用户语境的调用方如 finance fetcher） */
+function jarFor(cookieKey?: string): CookieJar {
+  const key = cookieKey ?? ''
+  let jar = cookieJars.get(key)
+  if (!jar) {
+    jar = new CookieJar(undefined, { looseMode: true })
+    cookieJars.set(key, jar)
+  }
+  return jar
+}
 
 /** host 级 UA 指纹（首次按 host 散列选择，会话内保持稳定——UA 抖动反而可疑） */
-function pickUaProfile(host: string): UaProfile {
-  let profile = hostUaProfile.get(host)
-  if (!profile) {
-    let hash = 0
-    for (let i = 0; i < host.length; i++) hash = (hash * 31 + host.charCodeAt(i)) >>> 0
-    profile = UA_POOL[hash % UA_POOL.length]
-    hostUaProfile.set(host, profile)
+function pickUaProfile(host: string, extra?: string[]): UaProfile {
+  const pool = effectivePool(extra)
+  if (pool === UA_POOL) {
+    let profile = hostUaProfile.get(host)
+    if (!profile) {
+      let hash = 0
+      for (let i = 0; i < host.length; i++) hash = (hash * 31 + host.charCodeAt(i)) >>> 0
+      profile = UA_POOL[hash % UA_POOL.length]
+      hostUaProfile.set(host, profile)
+    }
+    return profile
   }
-  return profile
+  // 追加池不走缓存（配置热更新场景极少，省去键控复杂度）
+  let hash = 0
+  for (let i = 0; i < host.length; i++) hash = (hash * 31 + host.charCodeAt(i)) >>> 0
+  return pool[hash % pool.length]!
 }
 
 /** 测试辅助：重置限速/冷却/队列/UA/会话 Cookie 状态（避免用例相互污染） */
@@ -120,7 +149,7 @@ export function resetAntiBotState(): void {
   hostCooldown.clear()
   hostSoftFails.clear()
   hostUaProfile.clear()
-  cookieJar.removeAllCookiesSync()
+  cookieJars.clear()
 }
 
 /** 浏览器化基础请求头（Accept 默认 HTML；JSON 接口用 accept 覆盖；显式 UA 覆盖保持既有行为） */
@@ -240,6 +269,10 @@ export interface AntiBotRequest {
   maxRetries?: number
   /** 是否读取响应体（false = 只取响应头/Set-Cookie，如 cookie 预热） */
   readBody?: boolean
+  /** Cookie 罐归属键（多用户隔离：传触发者 userId；缺省 = 全局桶） */
+  cookieKey?: string
+  /** 追加 UA 池（HTTP_UA_POOL 配置；与内置池合并后按 host 散列选择） */
+  uaPoolExtra?: string[]
 }
 
 export interface AntiBotResponse {
@@ -352,9 +385,10 @@ async function fetchOnce(
   req.signal?.addEventListener('abort', onParentAbort, { once: true })
   try {
     const explicit = { ...req.headers }
+    const jar = jarFor(req.cookieKey)
     // 会话 Cookie 自动携带（调用方显式 cookie 则优先）
     if (!('cookie' in explicit) && !('Cookie' in explicit)) {
-      const jarCookie = cookieJar.getCookieStringSync(req.url)
+      const jarCookie = jar.getCookieStringSync(req.url)
       if (jarCookie) explicit.cookie = jarCookie
     }
     const res = await fetch(req.url, {
@@ -368,7 +402,7 @@ async function fetchOnce(
           ...(req.accept ? { accept: req.accept } : {}),
           ...explicit,
         },
-        pickUaProfile(host),
+        pickUaProfile(host, req.uaPoolExtra),
       ),
     })
     const retryAfterMs = parseRetryAfter(res)
@@ -408,9 +442,13 @@ async function fetchOnce(
     const expectJson = (req.readBody ?? true) && (req.accept ?? '').includes('json')
     const blocked = detectBlockPage({ status: res.status, finalUrl, text, expectJson })
     if (blocked) {
-      // JSON 空响应属软风控信号（计数升级）；其余为页面级拦截（立即冷却）
-      if (blocked.startsWith('空响应')) softFail(host, blocked, softGuard)
-      markBlocked(host)
+      // JSON 空响应属软风控信号：仅计数升级（首次不冷却，连续 N 次由 softFail 内冷却）；
+      // 其余为页面级拦截（立即冷却）。softFail 必抛，两分支互斥。
+      if (blocked.startsWith('空响应')) {
+        softFail(host, blocked, softGuard)
+      } else {
+        markBlocked(host)
+      }
       throw new AntiBotError('blocked', blocked, { status: res.status })
     }
     if (!res.ok) {
@@ -420,7 +458,7 @@ async function fetchOnce(
     // 会话 Cookie 入库（域/路径/过期语义由 tough-cookie 处理；非法 Cookie 忽略，不影响主流程）
     for (const raw of setCookies) {
       try {
-        cookieJar.setCookieSync(raw, finalUrl, { ignoreError: true })
+        jar.setCookieSync(raw, finalUrl, { ignoreError: true })
       } catch {
         // 极少数非标准 Cookie 解析失败 → 跳过
       }

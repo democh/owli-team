@@ -157,7 +157,7 @@ export function GenerationPanel(): React.JSX.Element | null {
   const sessionId = useCanvasStore((s) => s.sessionId)
   const { screenToFlowPosition } = useReactFlow()
   // M79-AF：只读共享（viewer）→ 提交 / 取消 / 再生成只读（服务端另有写闸门兜底）
-  const readOnly = useSessionStore((s) => s.sessions.find((x) => x.id === s.currentId)?.role) === 'viewer'
+  const readOnly = useSessionStore((s) => s.current?.role) === 'viewer'
 
   const [providerId, setProviderId] = React.useState<string>()
   const [capability, setCapability] = React.useState<MediaCapability>('text2image')

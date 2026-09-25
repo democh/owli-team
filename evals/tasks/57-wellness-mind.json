@@ -1,0 +1,17 @@
+{
+  "id": "wellness-mind",
+  "name": "心理支持：陪谈 × 正念练习 × 心理科普",
+  "participants": ["emotion-companion", "mindfulness-guide", "psycho-educator"],
+  "prompt": "我最近压力大睡不好：@听澜 先接住情绪帮我梳理状态（非治疗，先复述），@安屿 给我一个三分钟呼吸练习与一周安排（含独自执行版与暂停信号），@知澄 科普压力与睡眠的关系（含自助边界与求助渠道）。",
+  "maxTurns": 6,
+  "assertions": [
+    { "type": "artifact_exists", "path": "docs/陪谈纪要-这个需求.md" },
+    { "type": "artifact_exists", "path": "docs/正念练习-这个需求.md" },
+    { "type": "artifact_exists", "path": "docs/心理科普-这个需求.md" },
+    { "type": "artifact_contains", "path": "docs/陪谈纪要-这个需求.md", "text": "非心理治疗" },
+    { "type": "turns_lte", "value": 5 },
+    { "type": "no_loop" },
+    { "type": "run_end_reason", "value": "completed" },
+    { "type": "message_no_banned_words", "values": ["综上所述", "总而言之", "赋能", "抓手", "颗粒度", "希望对你有帮助", "如有问题随时提问"] }
+  ]
+}

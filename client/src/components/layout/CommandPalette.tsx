@@ -49,13 +49,14 @@ import {
   GitBranch,
 } from 'lucide-react'
 import type { AgentDefinition } from '@multi-agent/shared'
-import { baseAgentId } from '@multi-agent/shared'
+import { baseAgentId, DEFAULT_SPACE_ID } from '@multi-agent/shared'
 import { toast } from 'sonner'
 import { resolveIcon } from '../../lib/avatar-icons'
 import { attachActiveRunFor, useRunStore } from '../../stores/run-store'
 import { useAgentStore } from '../../stores/agent-store'
 import { useCanvasStore, type CanvasActionKind } from '../../stores/canvas-store'
-import { useSessionStore } from '../../stores/session-store'
+import { useSessionStore, useCurrentSession } from '../../stores/session-store'
+import { useSpaceStore } from '../../stores/space-store'
 import { useLiveDockStore } from '../../stores/live-dock-store'
 import { useAuthStore } from '../../stores/auth-store'
 import { useUiStore } from '../../stores/ui-store'
@@ -84,7 +85,7 @@ export function CommandPalette(): React.JSX.Element {
   // M21：快速组队（预设）与场景开局入口（数据源 /api/agents）
   const presets = useAgentStore((s) => s.presets)
   const groups = useAgentStore((s) => s.groups)
-  const session = sessions.find((s) => s.id === currentId)
+  const session = useCurrentSession()
   // M16：当前会话未在场成员（一键邀请）；M77：在场判定按基础角色（分身在场 = 该角色已在场）
   const invitable = React.useMemo(
     () => (session ? agents.filter((a) => !session.participantIds.some((key) => baseAgentId(key) === a.id)) : []),
@@ -106,7 +107,11 @@ export function CommandPalette(): React.JSX.Element {
     void (async () => {
       // M48：零选择开场——空编制创建，首条消息由平台路由自动组队并派发任务
       try {
-        const session = await useSessionStore.getState().createSession([])
+        // 空间归属：default 之外的当前空间才随行（与 CreateSessionDialog 同口径，default 不入 body）
+        const spaceId = useSpaceStore.getState().currentId
+        const session = await useSessionStore
+          .getState()
+          .createSession([], undefined, undefined, spaceId === DEFAULT_SPACE_ID ? undefined : spaceId)
         openSession(session.id)
         toast(`会话「${session.title}」已创建，直接描述需求即可（平台将自动组队）`)
       } catch (err) {

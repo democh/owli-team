@@ -985,4 +985,126 @@ CREATE TABLE IF NOT EXISTS presence_instances (
 CREATE INDEX IF NOT EXISTS idx_presence_instances_user ON presence_instances(user_id);
 `,
   },
+  {
+    version: 27,
+    name: 'spaces',
+    sql: `
+-- ---------- 空间（Space）：工作生活一体的一级信息架构（docs/work-life-fusion-design.md） ----------
+-- 内置三空间：default（我的，存量会话归属）/ work（工作）/ life（生活），builtin=1 不可删除；
+-- kind：work / life / personal / custom（内置固定，custom 为用户自建）。
+CREATE TABLE IF NOT EXISTS spaces (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  kind TEXT NOT NULL DEFAULT 'custom' CHECK (kind IN ('work','life','personal','custom')),
+  icon TEXT,
+  builtin INTEGER NOT NULL DEFAULT 0,
+  sort INTEGER NOT NULL DEFAULT 100,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+-- 内置空间种子（幂等；created_at/updated_at 占位由 SpaceStore.ensureBuiltins 首启校正）
+INSERT OR IGNORE INTO spaces (id, name, kind, icon, builtin, sort, created_at, updated_at) VALUES
+  ('default', '我的', 'personal', 'home', 1, 0, 'builtin', 'builtin'),
+  ('work', '工作', 'work', 'briefcase', 1, 1, 'builtin', 'builtin'),
+  ('life', '生活', 'life', 'sparkles', 1, 2, 'builtin', 'builtin');
+-- 会话归属空间（NULL / 'default' = 我的空间；存量零迁移、行为零差异；删除空间时外键置空回 default 语义）
+ALTER TABLE sessions ADD COLUMN space_id TEXT REFERENCES spaces(id) ON DELETE SET NULL;
+CREATE INDEX IF NOT EXISTS idx_sessions_space ON sessions(space_id);
+`,
+  },
+  {
+    version: 28,
+    name: 'message_reactions_and_read_receipts',
+    sql: `
+-- ---------- M80：表情回应 + 已读对外展示开关（docs/emoji-and-readreceipt-design.md） ----------
+-- message_reactions：消息表情回应（三元组唯一 = 幂等 toggle；随消息级联删除）。
+--   emoji ≤6 码点（服务端 isEmojiLike 校验；库外合法序列如肤色变体放行）。
+CREATE TABLE IF NOT EXISTS message_reactions (
+  message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+  user_id TEXT NOT NULL,
+  emoji TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (message_id, user_id, emoji)
+);
+CREATE INDEX IF NOT EXISTS idx_reactions_message ON message_reactions(message_id);
+-- 已读对外展示开关走 user_prefs JSON（M79 allowFriendRequests 同族先例；对等原则：关闭者其水位
+--   不投影他人，也看不到他人水位；本人多端同步不受影响）——不新增 users 列。
+`,
+  },
+  {
+    version: 29,
+    name: 'memory_space_domain',
+    sql: `
+-- ---------- P2 记忆域隔离（docs/work-life-fusion-design.md §3.2） ----------
+-- memory.space_id：空间域标签（spaces.id）。写入时按来源会话解析；NULL = 跨域共享的全局记忆
+-- （「我叫 X」这类用户显式共享事实）；召回默认过滤为「同空间 OR 跨域共享」。
+-- 存量记忆一律 NULL（跨域共享）——零行为差异，隔离仅对新写入生效。
+ALTER TABLE memory ADD COLUMN space_id TEXT;
+CREATE INDEX IF NOT EXISTS idx_memory_space ON memory(space_id);
+-- 去重维度并入空间域：同内容在不同空间各自成条（COALESCE 表达式索引，NULL 跨域共享条目仍互相去重）；
+-- 旧唯一索引 idx_memory_unique_scoped 废弃删除（P2 起唯一性由新索引承载）。
+DROP INDEX IF EXISTS idx_memory_unique_scoped;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_memory_unique_scoped_v2 ON memory(scope, owner_id, kind, hash, COALESCE(space_id, ''));
+`,
+  },
+  {
+    version: 30,
+    name: 'space_soul_overrides',
+    sql: `
+-- ---------- P3 空间默认灵魂（docs/work-life-fusion-design.md §3.3） ----------
+-- spaces.soul_overrides：JSON（agentId → soulId）。成员入编（创建会话 / 动态邀请）时作为默认值
+-- 填充——显式选择的灵魂永远优先；分身键（agentId~soulId）灵魂内嵌不受影响；运行中换装零变化。
+ALTER TABLE spaces ADD COLUMN soul_overrides TEXT;
+`,
+  },
+  {
+    version: 31,
+    name: 'ritual_subscriptions',
+    sql: `
+-- ---------- P4：仪式订阅（docs/work-life-fusion-design.md §3.4） ----------
+-- 场景 _group.yaml ritual 声明经「一键订阅」落库；调度 tick 到点新建会话并注入 opener
+-- （走 PRS / 编制语义）；退订删行；按订阅者隔离（user_id；兼容模式 'local'）。
+CREATE TABLE IF NOT EXISTS ritual_subscriptions (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  scene_id TEXT NOT NULL,
+  title TEXT NOT NULL,
+  cron TEXT NOT NULL,
+  timezone TEXT NOT NULL,
+  opener TEXT NOT NULL,
+  members TEXT NOT NULL DEFAULT '[]',
+  space_id TEXT,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  next_run_at TEXT,
+  last_run_at TEXT,
+  last_session_id TEXT,
+  last_error TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_rituals_user ON ritual_subscriptions(user_id);
+CREATE INDEX IF NOT EXISTS idx_rituals_next ON ritual_subscriptions(next_run_at);
+`,
+  },
+  {
+    version: 32,
+    name: 'space_owner',
+    sql: `
+-- ---------- P4：自建空间用户级隔离（docs/work-life-fusion-design.md §3.1 演进项） ----------
+-- owner_id：多用户 userId（兼容模式 'local'）；NULL = 内置三空间 / 迁移前历史自建（保持共享，
+-- 仅 admin 可改删）。列表按「内置 ∪ 本人」过滤；写操作归属校验在路由层。
+ALTER TABLE spaces ADD COLUMN owner_id TEXT;
+CREATE INDEX IF NOT EXISTS idx_spaces_owner ON spaces(owner_id);
+`,
+  },
+  {
+    version: 33,
+    name: 'ritual_system_source',
+    sql: `
+-- ---------- P5：系统内置仪式（server/src/schedule/system-rituals.ts） ----------
+-- ritual_id：存在 = 订阅来自系统清单（如 daily-review），去重键与场景声明的 scene_id 独立，
+-- 同场景可并存「场景仪式 + 系统仪式」两类订阅。
+ALTER TABLE ritual_subscriptions ADD COLUMN ritual_id TEXT;
+`,
+  },
 ]

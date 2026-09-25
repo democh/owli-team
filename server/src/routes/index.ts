@@ -38,6 +38,7 @@ import type { RunEventStore } from '../store/run-events.js'
 import type { RunStore } from '../store/runs.js'
 import type { SessionMemberStore } from '../store/session-members.js'
 import type { SessionStore } from '../store/sessions.js'
+import type { SpaceStore } from '../store/spaces.js'
 import type { QuotaService } from '../quota/service.js'
 import type { LlmCredentialStore } from '../store/llm-credentials.js'
 import type { SkillLibrary } from '../store/skills.js'
@@ -82,6 +83,7 @@ import { createSkillsRouter } from './skills.js'
 import { createConnectionsRouter } from './connections.js'
 import { createBrowserRouter } from './browser.js'
 import { createMemoriesRouter } from './memories.js'
+import { createRitualsRouter } from './rituals.js'
 import { createConsoleRouter } from './console.js'
 import { createMcpRouter } from './mcp.js'
 import { createCanvasRouter } from './canvas.js'
@@ -90,6 +92,7 @@ import { createLibraryRouter } from './library.js'
 import { createMediaRouter } from './media.js'
 import { createSchedulesRouter } from './schedules.js'
 import { createFinanceRouter } from './finance.js'
+import { createSpacesRouter } from './spaces.js'
 
 export interface ApiDeps {
   cfg: AppConfig
@@ -157,6 +160,8 @@ export interface ApiDeps {
   streamTokens: StreamTokenService
   /** M26：资产控制台（Agent / Skill / 场景 读写与校验；唯一写盘通道） */
   assets: AssetManager
+  /** Agent Studio：资产生成器（描述 → 草稿；缺省 = generate 路由 503） */
+  assetGen?: import('../assets/generator.js').AssetGenerator
   /** M26：工具注册表（工具中心清单与授权情况） */
   tools: ToolRegistry
   /** M27：MCP 服务器存储（CRUD / 会话绑定；缺省 = MCP 路由 503 未装配） */
@@ -203,6 +208,10 @@ export interface ApiDeps {
   hides?: SessionHideStore
   /** M79-C：在线状态读取（好友清单 / 搜索结果随行投影；缺省 = 全部离线） */
   presence?: { isOnline: (userId: string) => boolean; lastSeenAt: (userId: string) => string | undefined }
+  /** M80-B：消息表情回应存储（缺省 = reactions 路由不挂载，投影不带 reactions） */
+  reactions?: import('../store/reactions.js').ReactionStore
+  /** 空间存储（Space；缺省 = /spaces 路由不挂载、会话空间字段仅透传 default，测试零影响） */
+  spaces?: SpaceStore
 }
 
 export function createApiRouter(deps: ApiDeps): Router {
@@ -333,6 +342,14 @@ export function createApiRouter(deps: ApiDeps): Router {
         auth: deps.auth,
         publishRead: (userId, sessionId, lastReadSeq) =>
           deps.notify.publishToUser(userId, 'notify:read-state', { sessionId, lastReadSeq, ts: Date.now() }),
+        // M80-C：已读回执（对等原则：关闭开关者其水位不投影他人）
+        readReceiptAllowed: (userId) => deps.users.getPrefs(userId).showReadReceipts !== false,
+        publishReceipt: (userId, sessionId, lastReadSeq) =>
+          deps.notify.publish({
+            type: 'notify:read-receipt',
+            sessionId,
+            payload: { sessionId, userId, lastReadSeq },
+          }),
       }),
     )
   }
@@ -405,6 +422,7 @@ export function createApiRouter(deps: ApiDeps): Router {
   router.use(createAgentsRouter(deps))
   router.use(createSkillsRouter(deps))
   router.use(createProjectsRouter(deps))
+  router.use(createSpacesRouter(deps))
   router.use(createSettingsRouter(deps))
   router.use(createSessionsRouter(deps))
   // M33：附件上传（raw 二进制直传；对话附件托盘）
@@ -419,6 +437,8 @@ export function createApiRouter(deps: ApiDeps): Router {
   router.use(createBrowserRouter(deps))
   // M25：向量记忆（跨 scope 管理 / 统计 / 重建 / 语义搜索）
   router.use(createMemoriesRouter(deps))
+  // P4：仪式订阅（列表 / 订阅 / 退订；本人资源）
+  router.use(createRitualsRouter(deps))
   // M26：资产控制台（Agent / Skill / 场景 / 工具清单 / 校验）
   router.use(createConsoleRouter(deps))
   // M27：MCP 接入与管理（服务器 CRUD / 生命周期 / 工具目录 / 会话绑定）

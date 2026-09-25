@@ -277,16 +277,19 @@ export function MyProfileCard(): React.JSX.Element {
 export function MyPrivacyCard(): React.JSX.Element {
   const [searchable, setSearchable] = React.useState(true)
   const [allowFriendRequests, setAllowFriendRequests] = React.useState(true)
+  // M80-C：已读对外展示（对等原则：关闭后也看不到他人的已读状态）
+  const [showReadReceipts, setShowReadReceipts] = React.useState(true)
   const [loading, setLoading] = React.useState(true)
   const [busy, setBusy] = React.useState(false)
 
   React.useEffect(() => {
     let alive = true
-    void apiGet<{ preferences: { searchable?: boolean; allowFriendRequests?: boolean } }>('/api/auth/preferences')
+    void apiGet<{ preferences: { searchable?: boolean; allowFriendRequests?: boolean; showReadReceipts?: boolean } }>('/api/auth/preferences')
       .then((res) => {
         if (!alive) return
         setSearchable(res.preferences.searchable !== false)
         setAllowFriendRequests(res.preferences.allowFriendRequests !== false)
+        setShowReadReceipts(res.preferences.showReadReceipts !== false)
       })
       .catch(() => undefined)
       .finally(() => {
@@ -297,21 +300,27 @@ export function MyPrivacyCard(): React.JSX.Element {
     }
   }, [])
 
-  const update = async (patch: { searchable?: boolean; allowFriendRequests?: boolean }): Promise<void> => {
-    const prev = { searchable, allowFriendRequests }
+  const update = async (patch: { searchable?: boolean; allowFriendRequests?: boolean; showReadReceipts?: boolean }): Promise<void> => {
+    const prev = { searchable, allowFriendRequests, showReadReceipts }
     if (patch.searchable !== undefined) setSearchable(patch.searchable)
     if (patch.allowFriendRequests !== undefined) setAllowFriendRequests(patch.allowFriendRequests)
+    if (patch.showReadReceipts !== undefined) setShowReadReceipts(patch.showReadReceipts)
     setBusy(true)
     try {
-      const res = await apiPut<{ preferences: { searchable?: boolean; allowFriendRequests?: boolean } }>(
+      const res = await apiPut<{ preferences: { searchable?: boolean; allowFriendRequests?: boolean; showReadReceipts?: boolean } }>(
         '/api/auth/preferences',
         patch,
       )
       setSearchable(res.preferences.searchable !== false)
       setAllowFriendRequests(res.preferences.allowFriendRequests !== false)
+      const receiptsOn = res.preferences.showReadReceipts !== false
+      setShowReadReceipts(receiptsOn)
+      // M80-C 对等双向：同步全局门（已读徽章 / 入站回执帧即时生效，免刷新）
+      useAuthStore.getState().setReadReceiptsOn(receiptsOn)
     } catch (err) {
       setSearchable(prev.searchable)
       setAllowFriendRequests(prev.allowFriendRequests)
+      setShowReadReceipts(prev.showReadReceipts)
       toast.error((err as Error).message)
     } finally {
       setBusy(false)
@@ -343,8 +352,18 @@ export function MyPrivacyCard(): React.JSX.Element {
             onChange={(v) => void update({ allowFriendRequests: v })}
           />
         </div>
+        <div className="flex items-center justify-between text-[12px]">
+          <span className="text-muted-foreground">向他人展示我的已读状态</span>
+          <Switch
+            checked={showReadReceipts}
+            disabled={loading || busy}
+            label="向他人展示我的已读状态"
+            onChange={(v) => void update({ showReadReceipts: v })}
+          />
+        </div>
         <p className="text-[11px] leading-4 text-muted-foreground">
           关闭「搜索」后仅精确用户名可找到你；关闭「好友申请」后他人无法向你发起请求（已是好友不受影响）。
+          关闭「已读状态」后，对方看不到你是否读过消息，你也看不到对方的已读状态（对等原则）。
         </p>
       </CardContent>
     </Card>

@@ -1,0 +1,17 @@
+{
+  "id": "creator",
+  "name": "自媒体工作室：定位 × 脚本 × 日历 × 商业化",
+  "participants": ["account-strategist", "script-writer", "growth-editor", "monetizer"],
+  "prompt": "启动一个内容账号：@立帜 校准账号定位（定位四问），@先声 出三条首发脚本（钩子先行），@借风 排两周内容日历，@点金 设计商业化路径与报价区间（含红线自查）；收尾汇总启动方案。",
+  "maxTurns": 7,
+  "assertions": [
+    { "type": "artifact_exists", "path": "docs/账号定位-内容.md" },
+    { "type": "artifact_exists", "path": "docs/脚本-内容.md" },
+    { "type": "artifact_exists", "path": "docs/内容日历-内容.md" },
+    { "type": "artifact_exists", "path": "docs/商业化方案-内容.md" },
+    { "type": "handoff_targets", "values": ["script-writer"] },
+    { "type": "turns_lte", "value": 6 },
+    { "type": "no_loop" },
+    { "type": "run_end_reason", "value": "completed" }
+  ]
+}

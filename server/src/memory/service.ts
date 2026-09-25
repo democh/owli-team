@@ -40,6 +40,8 @@ export interface RecallRequest {
   force?: boolean
   /** M57：用户维度（多用户隔离：global 桶按用户切分 + 命中行按用户过滤；缺省 = 单用户兼容模式） */
   userId?: string
+  /** P2：空间域（缺省 = 不过滤；提供时仅召回「同空间 OR 跨域共享」记忆） */
+  spaceId?: string
 }
 
 export interface RecallOutcome extends RecallResult {
@@ -144,6 +146,7 @@ export class MemoryService {
             budgetTokens: request.budgetTokens ?? cfg.memoryRecallBudgetTokens,
             exclude: request.exclude,
             userId: request.userId,
+            spaceId: request.spaceId,
           },
         )
       })

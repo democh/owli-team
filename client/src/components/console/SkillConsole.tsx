@@ -30,6 +30,10 @@ export function SkillConsole(): React.JSX.Element {
   const [createDescription, setCreateDescription] = React.useState('')
   const [createError, setCreateError] = React.useState('')
   const [creating, setCreating] = React.useState(false)
+  // Agent Studio：AI 生成（诉求 → 草稿 → 直接创建并进编辑器）
+  const [genDesc, setGenDesc] = React.useState('')
+  const [genBusy, setGenBusy] = React.useState(false)
+  const [genError, setGenError] = React.useState('')
   const [deleteTarget, setDeleteTarget] = React.useState<ConsoleSkillSummary>()
   const [deleteRefs, setDeleteRefs] = React.useState<string[]>()
   const [deleting, setDeleting] = React.useState(false)
@@ -59,7 +63,40 @@ export function SkillConsole(): React.JSX.Element {
     setCreateName('')
     setCreateDescription('')
     setCreateError('')
+    setGenError('')
     setCreateOpen(true)
+  }
+
+  /** Agent Studio：按诉求生成完整手册并直接创建（草稿经服务端校验；issues 以 toast 提示） */
+  const runGenerateSkill = async (): Promise<void> => {
+    const requirement = genDesc.trim()
+    if (!requirement) {
+      setGenError('请先描述你想要的能力（一句话即可）')
+      return
+    }
+    setGenBusy(true)
+    setGenError('')
+    try {
+      const result = await useConsoleStore.getState().generateSkill(requirement)
+      const draft = result.draft
+      await useConsoleStore.getState().createSkill(draft.name, {
+        description: draft.description,
+        tags: draft.tags,
+        body: draft.body,
+      })
+      setCreateOpen(false)
+      setGenDesc('')
+      toast(
+        result.issues.length > 0
+          ? `技能「${draft.name}」已创建（${result.issues.length} 条提示，可在编辑器完善）`
+          : `技能「${draft.name}」已由 AI 生成并创建`,
+      )
+      setEditingName(draft.name)
+    } catch (err) {
+      setGenError((err as Error).message)
+    } finally {
+      setGenBusy(false)
+    }
   }
 
   const submitCreate = async (): Promise<void> => {
@@ -271,6 +308,34 @@ export function SkillConsole(): React.JSX.Element {
                 onChange={setCreateDescription}
               />
             </FieldRow>
+            <div className="rounded-md border border-dashed px-3 py-2">
+              <div className="flex items-center gap-1.5">
+                <Sparkles className="size-3.5 text-primary/80" />
+                <span className="text-[11.5px] font-medium">AI 生成</span>
+                <span className="text-[10.5px] text-muted-foreground">描述诉求 → 生成完整手册并直接创建</span>
+              </div>
+              <textarea
+                value={genDesc}
+                aria-label="技能诉求"
+                rows={2}
+                placeholder="例如：拆解竞品定价与功能的对比分析流程；或：把会议录音纪要整理成行动项"
+                className="mt-1.5 w-full rounded-md border border-input bg-card px-2 py-1.5 text-[12.5px] shadow-sm transition-colors placeholder:text-muted-foreground/70 focus-visible:border-primary/40 focus-visible:outline-none"
+                onChange={(e) => setGenDesc(e.target.value)}
+              />
+              {genError && <p className="mt-1 text-[11px] text-destructive">{genError}</p>}
+              <div className="mt-1.5 flex justify-end">
+                <Button size="sm" disabled={genBusy || creating} onClick={() => void runGenerateSkill()}>
+                  {genBusy ? (
+                    <>
+                      <Loader2 className="size-3.5 animate-spin" />
+                      生成中…
+                    </>
+                  ) : (
+                    'AI 生成并创建'
+                  )}
+                </Button>
+              </div>
+            </div>
             {createError && (
               <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-[11.5px] text-destructive">
                 {createError}

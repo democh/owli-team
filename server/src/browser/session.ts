@@ -1142,7 +1142,8 @@ export class BrowserSession {
           action: 'fill',
           args: {
             selector,
-            value: value.length > 80 ? `${value.slice(0, 80)}…` : value,
+            // 密码框落库脱敏（步骤时间轴持久化在 SQLite，不得留存明文口令片段）
+            value: point.password ? '***' : value.length > 80 ? `${value.slice(0, 80)}…` : value,
             submit: Boolean(opts.submit),
           },
           ok: true,
@@ -1282,22 +1283,25 @@ export class BrowserSession {
     return file
   }
 
-  /** 取得元素中心坐标（不可见 / 不存在时给出明确错误） */
-  private async elementCenter(selector: string): Promise<{ x: number; y: number }> {
-    const raw = await this.evaluate<{ ok: boolean; x?: number; y?: number; reason?: string }>(
+  /** 取得元素中心坐标（不可见 / 不存在时给出明确错误；附带密码框标记用于落库脱敏） */
+  private async elementCenter(
+    selector: string,
+  ): Promise<{ x: number; y: number; password: boolean }> {
+    const raw = await this.evaluate<{ ok: boolean; x?: number; y?: number; reason?: string; pw?: boolean }>(
       `(() => {
         const el = document.querySelector(${JSON.stringify(selector)});
         if (!el) return { ok: false, reason: '元素不存在' };
         el.scrollIntoView({ block: 'center', inline: 'center' });
         const r = el.getBoundingClientRect();
         if (r.width === 0 && r.height === 0) return { ok: false, reason: '元素尺寸为 0（不可见）' };
-        return { ok: true, x: r.left + r.width / 2, y: r.top + r.height / 2 };
+        const pw = el instanceof HTMLInputElement && el.type === 'password';
+        return { ok: true, x: r.left + r.width / 2, y: r.top + r.height / 2, pw };
       })()`,
     )
     if (!raw?.ok || raw.x === undefined || raw.y === undefined) {
       throw new Error(`定位元素失败：${selector}（${raw?.reason ?? '未知原因'}）`)
     }
-    return { x: raw.x, y: raw.y }
+    return { x: raw.x, y: raw.y, password: raw.pw === true }
   }
 
   // ---------- 步骤与事件辅助 ----------

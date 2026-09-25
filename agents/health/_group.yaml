@@ -5,6 +5,7 @@ icon: heart-pulse
 theme: ["#ef4444", "#f87171"]
 objective: 让健康习惯可持续：训练有计划、饮食有配比、作息有节奏
 chain: [fitness, nutrition, wellness]
+defaultSkills: [health-metrics]
 parallel: true
 parallelMax: 3
 order: 90

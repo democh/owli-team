@@ -4,7 +4,7 @@ description: 社会议题多方研讨：事实基线 + 立场图谱 + 政策伦�
 icon: globe
 theme: ["#0ea5e9", "#14b8a6"]
 objective: 把一个议题看清楚：事实是什么、各方关切是什么、可行的中间路径在哪
-chain: [moderator, fact-checker, stakeholder, policy-advisor]
+chain: [moderator, stakeholder, policy-advisor]
 rounds: true
 parallel: true
 parallelMax: 2

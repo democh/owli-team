@@ -276,7 +276,7 @@ describe('CommandPalette 快速组队分组（M21）', () => {
         return jsonResponse({ session: makeSession({ id: 's-all', title: '全员局' }) })
       }
       if (url === '/api/sessions') return jsonResponse({ sessions: [makeSession({ id: 's-all' })] })
-      if (url === '/api/sessions/s-all') return jsonResponse({ messages: [], latestRun: null })
+      if (url.startsWith('/api/sessions/s-all')) return jsonResponse({ messages: [], latestRun: null })
       if (url === '/api/runs/active') return jsonResponse({ runs: [] })
       return jsonResponse({})
     })

@@ -38,7 +38,7 @@ import { useAgentStore } from '../../stores/agent-store'
 import { useLivePanelStore } from '../../stores/live-panel-store'
 import { usePlanStore } from '../../stores/plan-store'
 import { useRunStore } from '../../stores/run-store'
-import { messagesOf, useSessionStore } from '../../stores/session-store'
+import { messagesOf, useSessionStore, useCurrentSession } from '../../stores/session-store'
 import {
   GROUP_LABELS,
   GROUP_ORDER,
@@ -119,7 +119,7 @@ function MiniDossier({
   onClose: () => void
 }): React.JSX.Element {
   const agents = useAgentStore((s) => s.agents)
-  const session = useSessionStore((s) => s.sessions.find((x) => x.id === s.currentId))
+  const session = useCurrentSession()
   const focusMessage = useUiStore((s) => s.focusMessage)
   const agent = member.agent
 
@@ -260,7 +260,7 @@ function MembersView({
   const groups = useAgentStore((s) => s.groups)
   const skillMeta = useAgentStore((s) => s.skills)
   const currentId = useSessionStore((s) => s.currentId)
-  const session = useSessionStore((s) => s.sessions.find((x) => x.id === s.currentId))
+  const session = useCurrentSession()
   const setInviteOpen = useUiStore((s) => s.setInviteOpen)
   // M12：单击成员卡打开迷你档案（M77：档案按成员实例）
   const [dossier, setDossier] = React.useState<MemberView>()
@@ -304,19 +304,8 @@ function MembersView({
     return out
   }, [members, groups])
 
-  /** 会话战绩：本会话发言条数 / 交付件数（M77 按成员键归口：分身各自计数；无记录 = 未出手） */
-  const stats = React.useMemo(() => {
-    const m = new Map<string, { speaks: number; artifacts: number }>()
-    for (const msg of messages) {
-      if (msg.role !== 'agent' || !msg.agentId) continue
-      const key = msg.memberKey ?? msg.agentId
-      const cur = m.get(key) ?? { speaks: 0, artifacts: 0 }
-      cur.speaks += 1
-      cur.artifacts += msg.artifacts?.length ?? 0
-      m.set(key, cur)
-    }
-    return m
-  }, [messages])
+  /** 会话战绩：store 增量维护（服务端全量口径为底 + 插入计数 / artifacts 差分；流式 delta 零重算） */
+  const stats = useSessionStore((s) => s.sessionStats)
 
   if (members.length === 0) {
     return <div className="px-3 py-8 text-center text-[12.5px] text-muted-foreground">选择一个会话查看出战成员</div>
@@ -412,7 +401,7 @@ function MemberCard({
   const currentId = useSessionStore((s) => s.currentId)
   // M77：分身实例的灵魂内嵌在键里；经典实例用会话覆盖（soulOverride = 当前生效灵魂）
   const classicOverride = useSessionStore((s) =>
-    member.pinned ? undefined : s.sessions.find((x) => x.id === s.currentId)?.memberSouls?.[member.key],
+    member.pinned ? undefined : s.current?.memberSouls?.[member.key],
   )
   const soulOverride = member.pinned ? member.soul?.id : classicOverride
   const setMemberSoul = useSessionStore((s) => s.setMemberSoul)
@@ -772,7 +761,7 @@ function excerptOf(content: string): string {
 function RelayCard({ step, showLink }: { step: RelayStep; showLink: boolean }): React.JSX.Element {
   const agents = useAgentStore((s) => s.agents)
   const focusMessage = useUiStore((s) => s.focusMessage)
-  const session = useSessionStore((s) => s.sessions.find((x) => x.id === s.currentId))
+  const session = useCurrentSession()
   const m = step.message
   const handedToUser = m.mentions.includes('user')
   const targets = m.mentions.filter((x) => x !== 'user')
@@ -851,7 +840,7 @@ function RelayChain({ steps }: { steps: RelayStep[] }): React.JSX.Element | null
   const queue = useRunStore((s) => s.queue)
   const active = useRunStore((s) => s.active)
   const agents = useAgentStore((s) => s.agents)
-  const session = useSessionStore((s) => s.sessions.find((x) => x.id === s.currentId))
+  const session = useCurrentSession()
 
   const nodes = React.useMemo(() => {
     const seen = new Set<string>()
@@ -936,7 +925,7 @@ export function RelayQueue(): React.JSX.Element | null {
   const reorder = useRunStore((s) => s.reorderQueue)
   const agents = useAgentStore((s) => s.agents)
   // M77：队列条目为成员键（分身）；展示名走成员标签（同角多实例 = 名字·灵魂名）
-  const session = useSessionStore((s) => s.sessions.find((x) => x.id === s.currentId))
+  const session = useCurrentSession()
   // M79-AF：只读共享（viewer）→ 队列仅展示、不渲染调序按钮（服务端另有写闸门兜底）
   const readOnly = session?.role === 'viewer'
   const nameOf = React.useCallback((id: string): string => labelOfMemberKey(agents, session, id), [agents, session])
@@ -1126,14 +1115,14 @@ export function TeamPanel(): React.JSX.Element {
   const lastOf = useUiStore((s) => s.lastOf)
 
   const agents = useAgentStore((s) => s.agents)
-  const sessions = useSessionStore((s) => s.sessions)
-  const currentId = useSessionStore((s) => s.currentId)
-  // M8：消息为 byId+order 结构，右栏按需派生数组（接力/战绩视图消费）
-  const byId = useSessionStore((s) => s.byId)
+  // 冻结口径（对齐场景舞台 ADR 0129）：右栏派生只在「结构变化 / 非流式写入」时重算，
+  // 流式 delta（40ms 一批）不再触发成员统计 / 接力步 / 战绩的全量重建。
+  const completedTick = useSessionStore((s) => s.completedTick)
   const order = useSessionStore((s) => s.order)
-  const messages = React.useMemo(() => messagesOf({ byId, order }), [byId, order])
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- completedTick 为冻结口径的刷新信号（非响应式读 byId）
+  const messages = React.useMemo(() => messagesOf(useSessionStore.getState()), [completedTick, order])
 
-  const session = sessions.find((s) => s.id === currentId)
+  const session = useCurrentSession()
   // M77：成员实例视图（成员卡/计数按实例；档案与图谱仍按角色）；participants 为去重后的基础角色（接力/战绩视图）
   const memberList = React.useMemo(() => memberViews(agents, session), [agents, session])
   const participants = React.useMemo(() => {

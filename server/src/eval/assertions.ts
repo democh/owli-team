@@ -53,6 +53,22 @@ export type Assertion =
   | { type: 'token_budget_ok' }
   | { type: 'memory_recall'; minItems: number }
   | { type: 'judge'; rubric: string; minScore: number }
+  | { type: 'message_no_banned_words'; values?: string[] }
+  | { type: 'message_bullet_ratio_lte'; value: number }
+  | { type: 'handoff_channel_tool_min'; value: number }
+
+/** 全局 AI 腔禁用词表（与 agents/_protocol.md <output_contract> 保持一致；message_no_banned_words 缺省值） */
+export const DEFAULT_BANNED_WORDS = [
+  '综上所述',
+  '总而言之',
+  '赋能',
+  '抓手',
+  '闭环',
+  '打磨',
+  '颗粒度',
+  '希望对你有帮助',
+  '如有问题随时提问',
+]
 
 export interface AssertionContext {
   /** 会话工作区根（隔离沙箱绝对路径） */
@@ -119,6 +135,12 @@ export function assertionLabel(assertion: Assertion): string {
       return `语义召回注入 ≥ ${assertion.minItems} 条`
     case 'judge':
       return `judge ≥ ${assertion.minScore}（${assertion.rubric.slice(0, 40)}…）`
+    case 'message_no_banned_words':
+      return `发言无禁用词（${(assertion.values ?? DEFAULT_BANNED_WORDS).length} 词表）`
+    case 'message_bullet_ratio_lte':
+      return `发言分点占比 ≤ ${assertion.value}`
+    case 'handoff_channel_tool_min':
+      return `工具转交通道占比 ≥ ${assertion.value}`
   }
 }
 
@@ -404,6 +426,63 @@ export async function runAssertion(assertion: Assertion, ctx: AssertionContext):
         detail: `得分 ${result.score}（阈值 ${assertion.minScore}）${result.reasons ? ` · ${result.reasons.slice(0, 160)}` : ''}`,
       }
     }
+
+    // P3 内容级断言（AI 腔机检代理指标；mock 模式同样可判——mock 文本也须守红线）
+    case 'message_no_banned_words': {
+      const words = assertion.values ?? DEFAULT_BANNED_WORDS
+      const hits: string[] = []
+      for (const m of ctx.messages) {
+        if (m.role !== 'agent') continue
+        for (const w of words) {
+          if (m.content.includes(w)) hits.push(`${m.agentId}:${w}`)
+        }
+      }
+      const ok = hits.length === 0
+      return {
+        type: assertion.type,
+        ok,
+        detail: ok ? '发言零禁用词' : `禁用词命中：${hits.slice(0, 5).join('、')}${hits.length > 5 ? ` 等 ${hits.length} 处` : ''}`,
+      }
+    }
+
+    case 'message_bullet_ratio_lte': {
+      // 对话发言分点行占比（分点服务于清单，不服务于表达；交接收尾棒允许清单）
+      let lines = 0
+      let bullets = 0
+      for (const m of ctx.messages) {
+        if (m.role !== 'agent') continue
+        for (const line of m.content.split('\n')) {
+          if (line.trim() === '') continue
+          lines++
+          if (/^\s*([-*+]|\d+[.、)])/.test(line)) bullets++
+        }
+      }
+      const ratio = lines === 0 ? 0 : bullets / lines
+      const ok = ratio <= assertion.value
+      return {
+        type: assertion.type,
+        ok,
+        detail: `分点占比 ${(ratio * 100).toFixed(0)}%（${bullets}/${lines} 行）${ok ? '≤' : '>'} ${assertion.value * 100}%`,
+      }
+    }
+
+    case 'handoff_channel_tool_min': {
+      // P2 观测断言：有接手/交还的回合中，工具通道占比 ≥ 阈值（turn:end.handoffSource）
+      const ends = ctx.events.filter(
+        (e) => e.type === 'turn:end' && (((e.payload.mentions as unknown[]) ?? []).length > 0),
+      )
+      if (ends.length === 0) {
+        return { type: assertion.type, ok: true, skipped: true, detail: '本 Run 无接手回合（无需判定）' }
+      }
+      const toolCount = ends.filter((e) => e.payload.handoffSource === 'tool').length
+      const share = toolCount / ends.length
+      const ok = share >= assertion.value
+      return {
+        type: assertion.type,
+        ok,
+        detail: `工具转交占比 ${(share * 100).toFixed(0)}%（${toolCount}/${ends.length} 回合）${ok ? '≥' : '<'} ${assertion.value * 100}%`,
+      }
+    }
   }
 }
 
@@ -465,6 +544,13 @@ export function parseAssertions(raw: unknown): Assertion[] {
         return { type, minItems: a.minItems === undefined ? 1 : Number(a.minItems) }
       case 'judge':
         return { type, rubric: String(a.rubric), minScore: Number(a.minScore) }
+      // P3 内容级断言（AI 腔机检代理指标）
+      case 'message_no_banned_words':
+        return { type, ...(a.values !== undefined ? { values: (a.values as unknown[]).map(String) } : {}) }
+      case 'message_bullet_ratio_lte':
+        return { type, value: Number(a.value) }
+      case 'handoff_channel_tool_min':
+        return { type, value: Number(a.value) }
       default:
         throw new Error(`assertions[${i}] 未知断言类型：${type || '(空)'}`)
     }

@@ -1,6 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { z } from 'zod'
 import { loadConfig } from '../src/config.js'
 import { ArtifactStore } from '../src/store/artifacts.js'
 import { openDatabase } from '../src/store/db.js'
@@ -466,5 +467,47 @@ describe('tools：审核加固（H-1 / M-5 / M-6）', () => {
     expect(evicted.summary).not.toContain('缓存命中')
     const retained = await registry.execute('read_file', arg(500), runtime)
     expect(retained.summary).toContain('缓存命中')
+  })
+})
+
+describe('工具失败重试语义（写类不自动重试 / 只读重试 1 次；加固批）', () => {
+  /** 注册可编程失败次数的假工具；返回尝试次数读取器 */
+  function registerFlaky(
+    registry: ReturnType<typeof createToolRegistry>,
+    name: string,
+    readOnly: boolean,
+    failTimes: number,
+  ): () => number {
+    let calls = 0
+    registry.register({
+      name,
+      description: '测试用假工具（行为由失败次数控制）',
+      parameters: { type: 'object', properties: {} },
+      schema: z.object({}),
+      readOnly,
+      async execute() {
+        calls += 1
+        if (calls <= failTimes) throw new Error('boom')
+        return { ok: true, summary: 'ok' }
+      },
+    })
+    return () => calls
+  }
+
+  it('只读工具：首次失败自动重试 1 次（幂等，第二次成功）', async () => {
+    const { registry, runtime } = makeRuntime()
+    const calls = registerFlaky(registry, 'flaky_read', true, 1)
+    const r = await registry.execute('flaky_read', {}, runtime)
+    expect(r.ok).toBe(true)
+    expect(calls()).toBe(2)
+  })
+
+  it('写类工具：失败不自动重试（避免「服务端已生效但响应失败 」的重复副作用）', async () => {
+    const { registry, runtime } = makeRuntime()
+    const calls = registerFlaky(registry, 'flaky_write', false, 99)
+    const r = await registry.execute('flaky_write', {}, runtime)
+    expect(r.ok).toBe(false)
+    expect(r.summary).toContain('工具失败')
+    expect(calls()).toBe(1)
   })
 })
