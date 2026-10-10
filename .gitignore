@@ -18,5 +18,5 @@ blob-report/
 __pycache__/
 *.pyc
 
-# 临时脚本（截图/抓取探针；scripts/ 下未跟踪的 tmp-*）
-scripts/tmp-*.mjs
+# 临时脚本（截图/抓取/合成探针；scripts/ 下未跟踪的 tmp-*）
+scripts/tmp-*
