@@ -20,3 +20,9 @@ __pycache__/
 
 # 临时脚本（截图/抓取/合成探针；scripts/ 下未跟踪的 tmp-*）
 scripts/tmp-*
+
+# 演示媒体产物（由 scripts/tmp-intro-*.mjs 生成，体积大且可再生）
+docs/intro-shots/video/
+docs/intro-shots/video-raw/
+# 文档目录下的临时探针文件
+docs/.tmp-*
