@@ -13,6 +13,7 @@ import { toast } from 'sonner'
 import {
   Copy,
   GitBranch,
+  Hand,
   Loader2,
   MessageSquarePlus,
   MoreHorizontal,
@@ -25,6 +26,7 @@ import {
   Trash2,
 } from 'lucide-react'
 import type { FeedbackItem, Session } from '@multi-agent/shared'
+import { baseAgentId } from '@multi-agent/shared'
 import { apiDelete, apiGet, apiPost } from '../../lib/api'
 import { baseName } from '../../lib/artifacts'
 import { commentDraft } from '../../lib/focus-artifact'
@@ -33,7 +35,7 @@ import { cn } from '../../lib/utils'
 import { useAgentStore } from '../../stores/agent-store'
 import { useAuthStore } from '../../stores/auth-store'
 import { attachActiveRunFor, useRunStore } from '../../stores/run-store'
-import { useSessionStore } from '../../stores/session-store'
+import { useSessionStore, useCurrentSession } from '../../stores/session-store'
 import { useUiStore } from '../../stores/ui-store'
 import { useWsStore } from '../../stores/ws-store'
 import { Button } from '../ui/button'
@@ -85,10 +87,41 @@ export function MessageActions({
   const [open, setOpen] = React.useState(false)
   const [busy, setBusy] = React.useState(false)
   const [confirmDelete, setConfirmDelete] = React.useState(false)
+  const [dispatchMode, setDispatchMode] = React.useState(false)
   const [feedback, setFeedback] = React.useState<FeedbackItem | null>(null)
   const [reasonMode, setReasonMode] = React.useState(false)
   const [reason, setReason] = React.useState('')
   const rootRef = React.useRef<HTMLDivElement>(null)
+  // M86：手动派发（接力控制）—— 成员列表 + 该消息里 handoff 工具给出的建议目标
+  const dispatch = useRunStore((s) => s.dispatch)
+  const sessionNow = useCurrentSession()
+  const agentsNow = useAgentStore((s) => s.agents)
+  const memberOptions = React.useMemo(() => {
+    if (!sessionNow) return []
+    return (sessionNow.participantIds ?? []).map((key) => ({ key, name: labelOfMemberKey(agentsNow, sessionNow, key) }))
+  }, [sessionNow, agentsNow])
+  const suggestedKeys = React.useMemo(() => {
+    const out = new Set<string>()
+    for (const call of message?.toolCalls ?? []) {
+      if (call.name !== 'handoff' || call.status !== 'ok') continue
+      const target = call.args?.target
+      const raw = Array.isArray(target) ? target : target ? [target] : []
+      for (const token of raw) {
+        if (typeof token !== 'string') continue
+        const key = token.trim().replace(/^@/, '')
+        const hit = memberOptions.find(
+          (m) => m.key === key || baseAgentId(m.key) === key || m.name === key,
+        )
+        if (hit) out.add(hit.key)
+      }
+    }
+    return out
+  }, [message?.toolCalls, memberOptions])
+  // 建议目标置顶（用户打开菜单即可一键派发）
+  const orderedMembers = React.useMemo(
+    () => [...memberOptions].sort((a, b) => Number(suggestedKeys.has(b.key)) - Number(suggestedKeys.has(a.key))),
+    [memberOptions, suggestedKeys],
+  )
   // M79-AF：写项展示 gating（服务端为准；兼容模式 role/userId 缺省 → 全放行零变化）
   const myUserId = useAuthStore((s) => s.user?.id)
   const myRole = useSessionStore((s) => s.current?.role)
@@ -132,6 +165,7 @@ export function MessageActions({
   const close = (): void => {
     setOpen(false)
     setConfirmDelete(false)
+    setDispatchMode(false)
   }
 
   const guard = async (fn: () => Promise<void>): Promise<void> => {
@@ -273,10 +307,47 @@ export function MessageActions({
           role="menu"
           className={cn(
             'absolute top-full z-30 mt-1 rounded-lg border bg-popover p-1 shadow-lg shadow-slate-900/10 animate-fade-in',
-            reasonMode ? 'w-56' : 'w-44',
+            reasonMode || dispatchMode ? 'w-56' : 'w-44',
             align === 'end' ? 'right-0' : 'left-0',
           )}
         >
+          {dispatchMode && (
+            <div className="mb-1 border-b pb-1">
+              <div className="flex items-center gap-1 px-1 py-1 text-[10.5px] text-muted-foreground">
+                <button
+                  type="button"
+                  aria-label="返回消息菜单"
+                  onClick={() => setDispatchMode(false)}
+                  className="rounded px-1 hover:bg-accent/70"
+                >
+                  ←
+                </button>
+                <span>派发下一棒（运行中会插到队首）</span>
+              </div>
+              <div className="max-h-56 overflow-y-auto">
+                {orderedMembers.map((m) => (
+                  <MenuItem
+                    key={m.key}
+                    icon={<Hand className="size-3.5" />}
+                    label={`${m.name}${suggestedKeys.has(m.key) ? ' · 建议' : ''}`}
+                    title={
+                      suggestedKeys.has(m.key)
+                        ? '这条发言建议把下一棒交给 TA；点击立即派发'
+                        : `把下一棒交给 ${m.name}`
+                    }
+                    onClick={() => {
+                      void dispatch(m.key)
+                        .then(() => close())
+                        .catch((err) => toast.error((err as Error).message))
+                    }}
+                  />
+                ))}
+                {orderedMembers.length === 0 && (
+                  <p className="px-2 py-1 text-[11px] text-muted-foreground">会话里没有可派发的成员</p>
+                )}
+              </div>
+            </div>
+          )}
           <MenuItem icon={<Copy className="size-3.5" />} label="复制" onClick={copy} />
           <MenuItem icon={<Quote className="size-3.5" />} label="引用到输入框" onClick={quote} />
           {!isUser && message.artifacts && message.artifacts.length > 0 ? (
@@ -319,6 +390,14 @@ export function MessageActions({
               ) : null}
             </>
           )}
+          {!isViewer && !isUser && memberOptions.length > 0 ? (
+            <MenuItem
+              icon={<Hand className="size-3.5" />}
+              label="派发下一棒"
+              title="手动指定下一位接棒成员（自动接力可提前插队）"
+              onClick={() => setDispatchMode(true)}
+            />
+          ) : null}
           {!isViewer ? (
             <MenuItem
               icon={<GitBranch className="size-3.5" />}

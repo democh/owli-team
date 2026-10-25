@@ -10,9 +10,11 @@
  */
 import * as React from 'react'
 import { Activity, Loader2, RefreshCw } from 'lucide-react'
-import type { MetricsSummary, SchedulingStats } from '@multi-agent/shared'
+import type { AgentMetric, MetricsSummary, SchedulingStats } from '@multi-agent/shared'
+import { baseAgentId } from '@multi-agent/shared'
 import { apiGet } from '../../lib/api'
 import { cn } from '../../lib/utils'
+import { useAgentStore } from '../../stores/agent-store'
 import { Button } from '../ui/button'
 
 interface UsageSlice {
@@ -65,21 +67,30 @@ export function MetricsPanel(): React.JSX.Element {
   const [windowIndex, setWindowIndex] = React.useState(0)
   const [data, setData] = React.useState<MetricsResponse | null>(null)
   const [sched, setSched] = React.useState<SchedulingStats | null>(null)
+  const [agentRows, setAgentRows] = React.useState<AgentMetric[]>([])
   const [loading, setLoading] = React.useState(false)
+  const agents = useAgentStore((s) => s.agents)
+
+  const nameOf = React.useCallback(
+    (id: string): string => agents.find((a) => a.id === baseAgentId(id))?.name ?? id,
+    [agents],
+  )
 
   const load = React.useCallback(async (): Promise<void> => {
     setLoading(true)
     try {
       const sinceMs = WINDOWS[windowIndex].sinceMs
       const qs = sinceMs ? `?sinceMs=${sinceMs}` : ''
-      const [res, sc] = await Promise.all([
+      const [res, sc, ar] = await Promise.all([
         apiGet<MetricsResponse>(`/api/metrics/summary${qs}`),
         apiGet<{ scheduling: SchedulingStats }>(`/api/metrics/scheduling${qs}`).catch(
           () => ({ scheduling: null }),
         ),
+        apiGet<{ agents: AgentMetric[] }>(`/api/metrics/agents${qs}`).catch(() => ({ agents: [] })),
       ])
       setData(res)
       setSched(sc.scheduling)
+      setAgentRows(ar.agents ?? [])
     } catch {
       // 服务端异常时保留旧数据
     } finally {
@@ -194,6 +205,51 @@ export function MetricsPanel(): React.JSX.Element {
                     </span>
                   </div>
                 ))}
+              </div>
+            </div>
+          )}
+
+          {agentRows.length > 0 && (
+            <div className="rounded-xl border bg-card p-2">
+              <div className="mb-1 flex items-center justify-between text-[11px] font-medium text-muted-foreground">
+                <span>角色负载与质量</span>
+                <span className="text-[10px] font-normal">回合 / token / 工具失败 / 步骤 / 评审</span>
+              </div>
+              <div className="space-y-1">
+                {agentRows.slice(0, 8).map((row) => {
+                  const risky = row.toolFailures > 0 || row.planStepsBlocked > 0 || row.reviewFails > 0
+                  return (
+                    <div key={row.agentId} className="flex items-center gap-2 text-[11.5px]">
+                      <span className={cn('min-w-0 flex-1 truncate', risky ? 'text-amber-700' : 'text-foreground')}>
+                        {nameOf(row.agentId)}
+                      </span>
+                      <span className="shrink-0 tabular-nums text-muted-foreground">{row.turns} 回合</span>
+                      <span className="w-14 shrink-0 text-right tabular-nums text-muted-foreground">
+                        {fmtTokens(row.promptTokens)}
+                      </span>
+                      <span
+                        className={cn(
+                          'w-14 shrink-0 text-right tabular-nums',
+                          row.toolFailures > 0 ? 'text-rose-600' : 'text-muted-foreground',
+                        )}
+                      >
+                        {row.toolFailures > 0 ? `失败 ${row.toolFailures}` : '—'}
+                      </span>
+                      <span className="w-16 shrink-0 text-right tabular-nums text-muted-foreground">
+                        {row.planStepsDone}/{row.planStepsDone + row.planStepsBlocked}
+                        {row.planStepsBlocked > 0 && <span className="text-rose-600"> 阻{row.planStepsBlocked}</span>}
+                      </span>
+                      <span
+                        className={cn(
+                          'w-12 shrink-0 text-right tabular-nums',
+                          row.reviewFails > 0 ? 'text-rose-600' : 'text-muted-foreground',
+                        )}
+                      >
+                        {row.reviews > 0 ? `${row.reviews - row.reviewFails}/${row.reviews}` : '—'}
+                      </span>
+                    </div>
+                  )
+                })}
               </div>
             </div>
           )}

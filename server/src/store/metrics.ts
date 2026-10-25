@@ -75,4 +75,33 @@ export class ToolMetricsStore {
       }
     })
   }
+
+  /**
+   * M89：按 agent 聚合（可选时间窗）。
+   * 仅统计带 agent_id 的明细（系统级 / 无归属调用不计入角色指标）。
+   */
+  agentSummary(sinceMs?: number): Array<{ agentId: string; calls: number; failures: number; avgMs: number }> {
+    const conditions = ['agent_id IS NOT NULL']
+    const params: string[] = []
+    if (sinceMs) {
+      conditions.push('created_at >= ?')
+      params.push(new Date(Date.now() - sinceMs).toISOString())
+    }
+    const rows = this.db.all<{ agent_id: string; calls: number; failures: number; avg_ms: number | null }>(
+      `SELECT agent_id,
+              COUNT(*) AS calls,
+              COALESCE(SUM(CASE WHEN ok = 0 THEN 1 ELSE 0 END), 0) AS failures,
+              AVG(duration_ms) AS avg_ms
+       FROM tool_metrics
+       WHERE ${conditions.join(' AND ')}
+       GROUP BY agent_id`,
+      ...params,
+    )
+    return rows.map((r) => ({
+      agentId: r.agent_id,
+      calls: Number(r.calls),
+      failures: Number(r.failures),
+      avgMs: Math.round(Number(r.avg_ms ?? 0)),
+    }))
+  }
 }

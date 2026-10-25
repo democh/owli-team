@@ -9,7 +9,7 @@ import * as React from 'react'
 import {
   AtSign,
   Command,
-  Frame,
+  // Frame, // 临时隐藏画布快捷键组
   Info,
   Keyboard,
   MessageSquareText,
@@ -30,6 +30,7 @@ interface Shortcut {
 }
 
 interface ShortcutGroup {
+  // 临时隐藏画布：id 'canvas' 不再出现（保留类型以兼容旧值）
   id: 'general' | 'composer' | 'approval' | 'canvas'
   label: string
   icon: LucideIcon
@@ -90,40 +91,41 @@ const GROUPS: ShortcutGroup[] = [
       content: <>仅作用于首张挂起卡：批准 → 成员继续执行；拒绝 → 改换方案；附反馈提交 → 模型据此调整。</>,
     },
   },
-  {
-    id: 'canvas',
-    label: '画布',
-    icon: Frame,
-    hint: '在「画布」页签内生效；输入控件聚焦时不拦截。',
-    items: [
-      { label: '缩放 100% / 适应视野 / 缩放到选区', combos: [['⇧0'], ['⇧1'], ['⇧2']] },
-      { label: '手型工具 / 选择工具', combos: [['H'], ['V']] },
-      { label: '临时平移', combos: [['Space']], note: '按住拖动；滚轮 / 双指直接平移，⌘+滚轮缩放' },
-      {
-        label: '撤销 / 重做',
-        combos: [
-          ['⌘/Ctrl', 'Z'],
-          ['⌘/Ctrl', '⇧Z'],
-          ['⌘/Ctrl', 'Y'],
-        ],
-      },
-      {
-        label: '复制 / 粘贴选中节点',
-        combos: [
-          ['⌘/Ctrl', 'C'],
-          ['⌘/Ctrl', 'V'],
-        ],
-      },
-      { label: '删除选中节点 / 连线', combos: [['Backspace'], ['Delete']] },
-      {
-        label: '脑图加子节点 / 加兄弟节点',
-        combos: [['Tab'], ['Enter']],
-        note: '选中单个脑图节点时（xmind 式手感）',
-      },
-      { label: '新建节点菜单', combos: [['双击空白']] },
-      { label: '保存并提交画布文档', combos: [['⌘/Ctrl', 'S']] },
-    ],
-  },
+  // 临时隐藏画布快捷键组（恢复时取消本段注释）
+  // {
+  //   id: 'canvas',
+  //   label: '画布',
+  //   icon: Frame,
+  //   hint: '在「画布」页签内生效；输入控件聚焦时不拦截。',
+  //   items: [
+  //     { label: '缩放 100% / 适应视野 / 缩放到选区', combos: [['⇧0'], ['⇧1'], ['⇧2']] },
+  //     { label: '手型工具 / 选择工具', combos: [['H'], ['V']] },
+  //     { label: '临时平移', combos: [['Space']], note: '按住拖动；滚轮 / 双指直接平移，⌘+滚轮缩放' },
+  //     {
+  //       label: '撤销 / 重做',
+  //       combos: [
+  //         ['⌘/Ctrl', 'Z'],
+  //         ['⌘/Ctrl', '⇧Z'],
+  //         ['⌘/Ctrl', 'Y'],
+  //       ],
+  //     },
+  //     {
+  //       label: '复制 / 粘贴选中节点',
+  //       combos: [
+  //         ['⌘/Ctrl', 'C'],
+  //         ['⌘/Ctrl', 'V'],
+  //       ],
+  //     },
+  //     { label: '删除选中节点 / 连线', combos: [['Backspace'], ['Delete']] },
+  //     {
+  //       label: '脑图加子节点 / 加兄弟节点',
+  //       combos: [['Tab'], ['Enter']],
+  //       note: '选中单个脑图节点时（xmind 式手感）',
+  //     },
+  //     { label: '新建节点菜单', combos: [['双击空白']] },
+  //     { label: '保存并提交画布文档', combos: [['⌘/Ctrl', 'S']] },
+  //   ],
+  // },
 ]
 
 /** 键帽 */
@@ -199,7 +201,7 @@ export function ShortcutHelp(): React.JSX.Element {
         </DialogHeader>
 
         <Tabs value={tab} onValueChange={(v) => setTab(v as ShortcutGroup['id'])}>
-          {/* 分组页签：等宽四格（通用 / 输入框 / 审批卡 / 画布） */}
+          {/* 分组页签：等宽三格（通用 / 输入框 / 审批卡）；画布组已临时隐藏 */}
           <div className="px-5 pt-3">
             <TabsList className="w-full" aria-label="快捷键分组">
               {GROUPS.map((group) => (

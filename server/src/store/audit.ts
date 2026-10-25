@@ -72,6 +72,10 @@ export type AuditAction =
   | 'friend.unblock'
   // M79-E：触发策略切换（auto / mention）
   | 'session.route-mode-set'
+  // M86：接力控制切换（auto / manual）
+  | 'session.relay-mode-set'
+  // M88：自动编排策略切换（auto / always-plan / never-plan）
+  | 'session.autonomy-set'
   // M57 P3：用户配额（管理侧设置）
   | 'auth.quota-set'
   // M57 P3：用户 LLM 凭据（BYOK）

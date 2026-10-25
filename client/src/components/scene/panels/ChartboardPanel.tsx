@@ -108,8 +108,13 @@ export function ChartboardPanel(): React.JSX.Element {
     return derivePan(westChart.kind === 'natal' ? 'natal' : 'qizheng', westChart.title, westChart.fields, westChart.items)
   }, [westChart])
   const eastChart = React.useMemo(() => charts.find((x) => x.kind === 'bazi') ?? null, [charts])
-  const crossPair =
-    bazi?.kind === 'bazi' && eastChart && westChart && westModel ? { east: eastChart, west: westChart, westModel } : null
+  const crossPair = React.useMemo(
+    () =>
+      bazi?.kind === 'bazi' && eastChart && westChart && westModel
+        ? { east: eastChart, west: westChart, westModel }
+        : null,
+    [bazi, eastChart, westChart, westModel],
+  )
   const crossNote = React.useMemo(() => {
     if (!crossPair || bazi?.kind !== 'bazi' || !('detail' in crossPair.westModel)) return null
     const pick = (rows: PanRowData[], key: string): string | undefined => {

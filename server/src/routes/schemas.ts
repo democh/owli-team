@@ -49,6 +49,10 @@ export const renameSessionSchema = z
     serial: z.boolean({ message: 'serial 需为布尔值' }).optional(),
     /** M79-E：触发策略（auto = 无 @ 消息交给平台路由（现状）/ mention = 仅点名唤起） */
     routeMode: z.enum(['auto', 'mention'], { message: 'routeMode 需为 auto / mention' }).optional(),
+    /** M86：接力控制（auto = 成员可自动转交；manual = 仅用户点按派发；null = 恢复按会话形态推导） */
+    relay: z.enum(['auto', 'manual'], { message: 'relay 需为 auto / manual' }).nullable().optional(),
+    /** M88：自动编排策略（auto = 意图判定；always-plan / never-plan = 强制） */
+    autonomy: z.enum(['auto', 'always-plan', 'never-plan'], { message: 'autonomy 需为 auto / always-plan / never-plan' }).nullable().optional(),
     /** 所属空间（spaces.id；'default' = 移回我的空间） */
     spaceId: z.string().min(1, 'spaceId 非法').max(64).optional(),
   })
@@ -58,8 +62,10 @@ export const renameSessionSchema = z
       v.planFirst !== undefined ||
       v.serial !== undefined ||
       v.routeMode !== undefined ||
+      v.relay !== undefined ||
+      v.autonomy !== undefined ||
       v.spaceId !== undefined,
-    'title、planFirst、serial、routeMode 或 spaceId 至少提供一个',
+    'title、planFirst、serial、routeMode、relay、autonomy 或 spaceId 至少提供一个',
   )
 
 export const resumeSessionSchema = z.object({
@@ -151,6 +157,14 @@ export const addMembersSchema = z.object({
 /** 切换成员灵魂：null / 缺省 = 恢复角色默认 */
 export const memberSoulSchema = z.object({
   soul: z.string().min(1, 'soul 非法').nullable().optional(),
+})
+
+// ---------- M86：手动派发（接力控制） ----------
+
+/** 手动派发下一棒：agentId 必须是会话在场成员；note 为派发说明（注入接收方回合指令） */
+export const dispatchSchema = z.object({
+  agentId: z.string().min(1, 'agentId 不能为空').max(64, 'agentId 过长'),
+  note: z.string().trim().max(500, '派发说明过长（上限 500 字符）').optional(),
 })
 
 // ---------- M24：范式协作（计划编辑 / 审批） ----------

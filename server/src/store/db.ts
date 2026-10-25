@@ -172,6 +172,13 @@ export class AppDb {
 
   close(): void {
     this.cache.clear()
+    // 关库前交给优化器一次统计信息刷新，并截断 WAL（失败不影响关闭流程）
+    try {
+      this.driver.exec('PRAGMA optimize')
+      this.driver.exec('PRAGMA wal_checkpoint(TRUNCATE)')
+    } catch {
+      // 内存库 / 已关闭 / 驱动不支持等场景忽略
+    }
     this.driver.close()
   }
 
@@ -271,6 +278,10 @@ export function openDatabase(file: string, opts: OpenDbOptions = {}): AppDb {
   db.exec('PRAGMA synchronous = NORMAL')
   db.exec('PRAGMA foreign_keys = ON')
   db.exec('PRAGMA busy_timeout = 5000')
+  // 读多写少的单机场景调优：20MB 页缓存 / 256MB mmap / 临时表驻留内存（降低页调度开销）
+  db.exec('PRAGMA cache_size = -20000')
+  db.exec('PRAGMA mmap_size = 268435456')
+  db.exec('PRAGMA temp_store = MEMORY')
   logMigrationReport(applyMigrations(db), file)
   return db
 }

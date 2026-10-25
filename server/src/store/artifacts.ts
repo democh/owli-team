@@ -114,6 +114,10 @@ export class ArtifactStore {
     return this.authors.get(`${sessionId}:${relPath}`)
   }
 
+  /**
+   * 磁盘全量枚举（测试 / 校准对照用）；生产读路径请走 ArtifactIndex（M87），
+   * 避免每回合 / 每次面板刷新都递归扫盘。
+   */
   list(sessionId: string): Artifact[] {
     const dir = this.sessionDir(sessionId)
     if (!fs.existsSync(dir)) return []

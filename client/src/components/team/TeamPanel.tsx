@@ -145,9 +145,10 @@ function MiniDossier({
 
   return (
     <Dialog open onOpenChange={(v) => !v && onClose()}>
-      <DialogContent className="max-h-[80vh] max-w-sm overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2.5 pr-6 text-[14px]">
+      {/* 滚动放在内层，避免关闭钮随内容滚出 */}
+      <DialogContent className="flex max-h-[80vh] max-w-sm flex-col overflow-hidden">
+        <DialogHeader className="shrink-0 pr-6">
+          <DialogTitle className="flex items-center gap-2.5 pr-2 text-[14px]">
             <AgentAvatar agent={agent} size={40} animated={false} className="shrink-0 ring-1 ring-primary/15" />
             <span className="min-w-0">
               <span className="block truncate">{member.label}</span>
@@ -159,7 +160,7 @@ function MiniDossier({
           <DialogDescription className="pt-1 text-[12px] leading-5">{agent.description}</DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-3.5">
+        <div className="-mr-2 min-h-0 flex-1 space-y-3.5 overflow-y-auto pr-2">
           <section>
             <h4 className="mb-1 text-[10.5px] font-medium uppercase tracking-wide text-muted-foreground">最近出手</h4>
             {recent.length > 0 ? (

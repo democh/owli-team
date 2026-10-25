@@ -275,7 +275,7 @@ describe('M79-P：纯人聊天隐藏 AI 状态条（范式 chips / 上下文与�
   it('direct 无 agent：不渲染范式 chips；快捷键提示仍保留', () => {
     setSession([], 'direct')
     render(<Composer />)
-    expect(screen.queryByRole('button', { name: '执行' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '自动' })).toBeNull()
     expect(screen.queryByRole('button', { name: '规划' })).toBeNull()
     expect(screen.queryByRole('button', { name: '评审' })).toBeNull()
     expect(screen.getByText(/Enter 发送/)).toBeTruthy()
@@ -284,17 +284,17 @@ describe('M79-P：纯人聊天隐藏 AI 状态条（范式 chips / 上下文与�
   it('group 无 agent：同收口；混编群（有 agent）：状态条保留', () => {
     setSession([], 'group')
     const first = render(<Composer />)
-    expect(screen.queryByRole('button', { name: '执行' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '自动' })).toBeNull()
     first.unmount()
 
     setSession(['pm'], 'group')
     render(<Composer />)
-    expect(screen.getByRole('button', { name: '执行' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: '自动' })).toBeTruthy()
   })
 
   it('team / 场景会话（含空编制）：状态条保留（回归）', () => {
     setSession([])
     render(<Composer />)
-    expect(screen.getByRole('button', { name: '执行' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: '自动' })).toBeTruthy()
   })
 })

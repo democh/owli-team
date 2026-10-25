@@ -6,11 +6,16 @@
  * 安全：默认仅监听 127.0.0.1；BIND_ALL=true 时 config 层强制要求 AUTH_TOKEN。
  * 生产形态下同时托管 client/dist 静态资源（单端口 8787）。
  */
+// Express 4 不会捕获 async 路由的 rejected promise：该补丁将 rejection 转给错误中间件，
+// 避免请求悬挂（必须在任何 Router 创建前加载）。
+import 'express-async-errors'
 import fs from 'node:fs'
 import http from 'node:http'
 import path from 'node:path'
+import compression from 'compression'
 import cors from 'cors'
 import express from 'express'
+import helmet from 'helmet'
 import { ApprovalService } from './approval.js'
 import { PlanReviewService } from './plan-review.js'
 // M57：多用户（认证服务 / 访问控制 / 账号存储）
@@ -24,11 +29,12 @@ import { ContextService } from './context/service.js'
 import { createProvider } from './llm/factory.js'
 import { LlmProviderRouter } from './llm/provider-router.js'
 import { closeLogger, initLogger } from './logger.js'
-import { createAuthMiddleware, createCorsOptions, createLoginLimiter, createMessageLimiter, createOriginGuard, createRequireAdmin, createTokenEntryMiddleware } from './middleware.js'
+import { createAuthMiddleware, createCorsOptions, createLoginLimiter, createMessageLimiter, createOriginGuard, createRequireAdmin, createTokenEntryMiddleware, createUploadLimiter } from './middleware.js'
 import { Engine } from './orchestration/engine.js'
 import { apiErrorHandler, createApiRouter } from './routes/index.js'
 import { applySettingsToConfig, readSettingsFile } from './settings.js'
 import { ArtifactStore } from './store/artifacts.js'
+import { ArtifactIndex } from './store/artifact-index.js'
 import { ArtifactVersionStore } from './store/artifact-versions.js'
 import { defaultDbFile, openDatabase } from './store/db.js'
 import { FeedbackStore } from './store/feedback.js'
@@ -146,6 +152,10 @@ const spaceStore = new SpaceStore(db)
 const projects = new ProjectStore(db, cfg.allowedRoots)
 const workspace = new WorkspaceService({ cfg, sessions, projects })
 const artifacts = new ArtifactStore(cfg.workspaceDir, (sid) => workspace.resolveDir(sid))
+// M87：交付件索引（写时登记 + 低频校准；repo / worktree 以 git 变更集为准）
+const artifactIndex = new ArtifactIndex(db, artifacts, {
+  changedArtifacts: (sid) => (workspace.isGitMode(sid) ? workspace.changedArtifacts(sid) : Promise.resolve(null)),
+})
 // M8：交付件版本存储（写类工具落地后记版；Diff 视图数据源）
 const versions = new ArtifactVersionStore(db)
 // M25：嵌入队列（写入即入队；worker 未启动时仅积累，启用后消费）
@@ -192,6 +202,8 @@ const reactionStore = new ReactionStore(db)
 const friendStore = new FriendStore(db)
 // M79-D：会话隐藏（DM「删除」语义）
 const sessionHides = new SessionHideStore(db)
+// 前向引用：notify 的钩子先于 presence 装配闭包引用它（回调在启动后执行），故保留 let + 单次赋值
+// eslint-disable-next-line prefer-const
 let presence: PresenceTracker | undefined
 // M79-L：跨实例 presence 计数表（NOTIFY_BUS=db 时启用；memory 模式 undefined = 现状）
 let presenceInstances: PresenceInstanceStore | undefined
@@ -393,7 +405,13 @@ const canvasStore = new CanvasStore({
 })
 // M31：媒体生成服务（四适配器注册；全局连接，未配置的连接在创建任务时给「设置 → 媒体生成」引导错误）
 // M31 修订：注入画布存储——任务创建落占位 / 终态结算（未装配 canvas 时落位降级）
-const mediaService = new MediaService({ connections: connectionStore, artifacts, notify, canvas: canvasStore })
+const mediaService = new MediaService({
+  connections: connectionStore,
+  artifacts,
+  index: artifactIndex,
+  notify,
+  canvas: canvasStore,
+})
 mediaService.register(comfyUiAdapter)
 mediaService.register(sdWebUiAdapter)
 mediaService.register(openAiCompatAdapter)
@@ -425,7 +443,21 @@ browserRuntime.startReclaimLoop()
 // M23：SSH 交互终端通道（/ws/ssh；一次性 token 握手即消费；M57：token 与登录用户绑定）
 const sshTerminalHub = new SshTerminalHub(cfg, sshManager, streamTokens, () => ({ auth }))
 const compressor = new Compressor({ cfg, provider, sessions, summaries, memory, usage: usageStore, billingModelFor: (sid) => byokProvider.modelFor(sid), userLabelFor: (sid) => userLabelResolver(sid) })
-const context = new ContextService({ cfg, prompts, skills, sessions, artifacts, memory, memories, summaries, compressor, plans: planStore, members: sessionMembers, users })
+const context = new ContextService({
+  cfg,
+  prompts,
+  skills,
+  sessions,
+  artifacts,
+  index: artifactIndex,
+  memory,
+  memories,
+  summaries,
+  compressor,
+  plans: planStore,
+  members: sessionMembers,
+  users,
+})
 // M28：工具按需发现（混合检索：BM25 词法打底 + 嵌入语义融合 0.35；未配置 / 失败 = 静默退化纯词法）
 const toolDiscovery = new ToolDiscoveryService({
   embedder: { embed: async (texts) => (await embeddings.embed(texts)).vecs },
@@ -459,6 +491,7 @@ const engine = new Engine({
   skills,
   sessions,
   artifacts,
+  index: artifactIndex,
   memory,
   memories,
   context,
@@ -571,10 +604,36 @@ const app = express()
 // M57：反向代理信任（nginx 网关单跳：限流 / 审计取 X-Forwarded-For 真实 IP；TRUST_PROXY='1' | 'true'）
 const trustProxy = parseTrustProxy(cfg.trustProxy)
 if (trustProxy !== false) app.set('trust proxy', trustProxy)
+app.disable('x-powered-by')
+// 基础安全响应头：CSP 关闭（SPA 需要内联样式与 mermaid 经典脚本注入，CSP 需按实际资源单独治理），
+// COEP 关闭（跨域图片 / 预览 iframe），HSTS 仅在配置了 Secure cookie（即 HTTPS 部署）时下发。
+app.use(
+  helmet({
+    contentSecurityPolicy: false,
+    crossOriginEmbedderPolicy: false,
+    hsts: cfg.authCookieSecure ? undefined : false,
+  }),
+)
+// 响应压缩：前端产物（~4MB JS/CSS）与 JSON 接口默认走 gzip/brotli；SSE 帧带 `no-transform`
+// 会被 compression 的默认 filter 跳过，流式不受影响。
+app.use(compression())
 // M7：CORS 收窄（ALLOWED_ORIGINS 白名单；未配置时仅本机来源）
 app.use(cors(createCorsOptions(cfg)))
 // M57：非 GET 请求 Origin 校验（CSRF 第二道防线；无 Origin 的 CLI / 测试请求放行）
 app.use(createOriginGuard(cfg))
+// 上传通道限流（每 IP 每分钟 120 次；必须在 body 解析之前——避免先缓冲 200MB 再拒绝。
+// 登录态在 body 解析之后才解析，故此处按 IP 计数而非用户维度）
+app.use(
+  [
+    '/api/sessions/:id/uploads',
+    '/api/sessions/:id/attachments',
+    '/api/sessions/:id/media/upload',
+    '/api/library/uploads',
+    '/api/auth/avatar',
+    '/api/console/agents/:id/avatar',
+  ],
+  createUploadLimiter(),
+)
 // 审核 M-2：上传接口单独放宽 body 上限（8MB 文件 base64 后 ~10.7MB，全局 4mb 会先拒）
 app.use('/api/sessions/:id/uploads', express.json({ limit: '12mb' }))
 // M26：头像上传通道（base64 PNG ≤8MB，同上传接口模式，须在全局 4mb 之前）
@@ -600,6 +659,7 @@ app.use(
     skills,
     sessions,
     artifacts,
+    index: artifactIndex,
     memory,
     context,
     tasks: taskStore,
@@ -682,14 +742,18 @@ app.use(
 // 生产形态：托管 client/dist（SPA fallback，不拦截 /api 与 /ws）
 const clientDist = path.join(cfg.rootDir, 'client', 'dist')
 if (fs.existsSync(clientDist)) {
-  app.use(express.static(clientDist))
+  // 内容哈希产物（/assets/*）可长缓存；index.html 必须每次回源（发布即生效）。
+  app.use(
+    '/assets',
+    express.static(path.join(clientDist, 'assets'), { maxAge: '1y', immutable: true, fallthrough: false }),
+  )
+  app.use(express.static(clientDist, { index: false, maxAge: '1h' }))
   app.get(/^\/(?!api\/|ws$).*/, (_req, res) => {
-    res.sendFile(path.join(clientDist, 'index.html'))
+    res.sendFile(path.join(clientDist, 'index.html'), { headers: { 'Cache-Control': 'no-cache' } })
   })
 }
 
 app.use((err: Error, req: express.Request, res: express.Response, next: express.NextFunction) => {
-  log.error({ err }, 'API 未捕获错误')
   apiErrorHandler(err, req, res, next)
 })
 

@@ -1107,4 +1107,70 @@ CREATE INDEX IF NOT EXISTS idx_spaces_owner ON spaces(owner_id);
 ALTER TABLE ritual_subscriptions ADD COLUMN ritual_id TEXT;
 `,
   },
+  {
+    version: 34,
+    name: 'session_relay_mode',
+    sql: `
+-- ---------- M86：接力控制（会话级） ----------
+-- relay_mode：auto = 成员可自动转交下一棒（团队协作现状）；manual = 仅用户点按派发才接棒。
+-- NULL = 未显式设置，由 resolveRelayMode 按会话形态推导（纯人聊天 / 单助手对话 = manual）。
+ALTER TABLE sessions ADD COLUMN relay_mode TEXT;
+`,
+  },
+  {
+    version: 35,
+    name: 'artifact_index',
+    sql: `
+-- ---------- M87：交付件索引（写时登记 + 低频校准） ----------
+-- 正文唯一真相仍在磁盘；本表只存元数据，供上下文摘要 / 路由去重 / 面板分页 / 增量同步使用。
+CREATE TABLE IF NOT EXISTS artifacts (
+  session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+  path TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  size INTEGER NOT NULL DEFAULT 0,
+  mtime_ms INTEGER NOT NULL DEFAULT 0,
+  dir TEXT NOT NULL DEFAULT '',
+  author_agent_id TEXT,
+  origin TEXT NOT NULL DEFAULT 'scan',
+  delivery_class TEXT NOT NULL DEFAULT 'final',
+  git_status TEXT,
+  run_id TEXT,
+  message_id TEXT,
+  version INTEGER NOT NULL DEFAULT 1,
+  revision INTEGER NOT NULL DEFAULT 0,
+  first_seen_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  deleted_at TEXT,
+  PRIMARY KEY (session_id, path)
+);
+CREATE INDEX IF NOT EXISTS idx_artifacts_recent ON artifacts(session_id, deleted_at, mtime_ms DESC);
+CREATE INDEX IF NOT EXISTS idx_artifacts_revision ON artifacts(session_id, revision);
+CREATE INDEX IF NOT EXISTS idx_artifacts_run ON artifacts(session_id, run_id);
+
+CREATE TABLE IF NOT EXISTS artifact_index_state (
+  session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
+  revision INTEGER NOT NULL DEFAULT 0,
+  last_full_scan_at TEXT
+);
+`,
+  },
+  {
+    version: 36,
+    name: 'session_autonomy',
+    sql: `
+-- ---------- M88：自动编排策略（会话级） ----------
+-- autonomy：auto = 按意图判定（规则 + PRS）；always-plan / never-plan = 用户强制。
+-- NULL = auto（存量会话零差异）；plan_first 保留为兼容快捷开关。
+ALTER TABLE sessions ADD COLUMN autonomy TEXT;
+`,
+  },
+  {
+    version: 37,
+    name: 'message_mode_source',
+    sql: `
+-- ---------- M88：消息级范式来源（可审计：为什么这一棒进了规划/评审） ----------
+-- user = 用户显式；rule / router = 自动判定；policy = 会话策略；NULL = 未判定（旧消息）。
+ALTER TABLE messages ADD COLUMN mode_source TEXT;
+`,
+  },
 ]

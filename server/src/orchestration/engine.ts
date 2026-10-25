@@ -20,9 +20,10 @@ import type {
   Session,
   ToolCallRecord,
   TurnMode,
+  TurnIntent,
   UsageSnapshot,
 } from '@multi-agent/shared'
-import { BLANK_SCENE_ID, baseAgentId, extractDeliveredPaths, sanitizeModelText, soulIdOfMember } from '@multi-agent/shared'
+import { BLANK_SCENE_ID, baseAgentId, extractDeliveredPaths, resolveRelayMode, sanitizeModelText, soulIdOfMember } from '@multi-agent/shared'
 import type { AppConfig } from '../config.js'
 import type { ApprovalOutcome, ApprovalService } from '../approval.js'
 import type { PlanReviewService } from '../plan-review.js'
@@ -40,6 +41,7 @@ import {
   type LlmUsage,
 } from '../llm/provider.js'
 import type { ArtifactStore } from '../store/artifacts.js'
+import { normalizeRelPath, type ArtifactIndex, type ArtifactIndexInput } from '../store/artifact-index.js'
 import { MAX_VERSION_CONTENT_BYTES, type ArtifactVersionStore } from '../store/artifact-versions.js'
 import type { MemoryStore } from '../store/memory.js'
 import { MemoryDigester, type DigestResult } from '../memory/digest.js'
@@ -85,6 +87,13 @@ import type { ToolDiscoveryService, ToolSearchEntry } from '../tools/discovery.j
 import { inviteMembersCore } from '../tools/roster.js'
 import { buildRosterCatalogBlock } from './roster-catalog.js'
 import { runPlatformRoute, type RouteAssignment } from './platform-router.js'
+import {
+  legacyIntentOf,
+  mergeRouterIntent,
+  modeOfIntent,
+  planExecutionIntent,
+  resolveIntent,
+} from './intent.js'
 import { countTokensCalibrated } from '../context/tokenizer.js'
 import { matchedSensitivePattern, normalizeRel } from '../tools/sensitive.js'
 import { writeSse } from '../sse.js'
@@ -118,6 +127,8 @@ export interface EngineDeps {
   skills: SkillLibrary
   sessions: SessionStore
   artifacts: ArtifactStore
+  /** M87：交付件索引（路由去重 / 写时登记 / 交接包补全；缺省 = 不启用） */
+  index?: ArtifactIndex
   /** 会话长期记忆（remember 工具 / 上下文装配） */
   memory: MemoryStore
   /** M25：向量记忆服务（L1.5 召回 / remember 嵌入加速；缺省 = 休眠零影响） */
@@ -242,6 +253,15 @@ interface RunRecord {
   state: 'waiting' | 'running' | 'awaiting_approval' | 'awaiting_plan' | 'done'
   /** M24：本 Run 起步范式（首波默认；其后波复位 execute；派发步骤的 review 按成员覆盖） */
   mode: TurnMode
+  /** M88：本 Run 的编排判定（可解释；收口评审门 / 运行期纠偏 / 前端 Run Board 依据） */
+  intent?: TurnIntent
+  /** M88：收口评审波（agentId + 波序号）——计划完成时由 maybeAppendSynthesisWave 写入 */
+  reviewCloseoutAgentId?: string
+  reviewCloseoutWave?: number
+  /** M88：运行期“建议先规划”已提示（每 Run 仅一次） */
+  planSuggestNotified?: boolean
+  /** M86：接力控制（manual = 成员 handoff 仅记录建议、不自动接棒；缺省 = auto） */
+  relayMode?: 'auto' | 'manual'
   /** M24：计划派发登记（agentId → 分配给他的步骤 id 序列） */
   planDispatch: Map<string, string[]>
   /** M24：本 Run 关联的活跃计划（派发 / 步骤推进 / 收口扫描输入） */
@@ -278,12 +298,16 @@ interface TurnProposal {
   source: 'tool' | 'text'
 }
 
-/** M24：交接条目（handoff 工具一次调用的收集单位：来源 + 目标 + 原因 + 期望产出） */
+/** M24：交接条目（handoff 工具一次调用的收集单位：来源 + 目标 + 原因 + 期望产出 + 交接包） */
 interface HandoffEntry {
   from: string
   targets: string[]
   reason?: string
   expectedOutput?: string
+  /** M87：交接包（工作区相对路径；缺省 = 本轮已产出） */
+  artifacts: string[]
+  /** M87：交接口径（约束 / 验收 / 坑） */
+  notes?: string
 }
 
 export interface LaunchResult {
@@ -376,8 +400,22 @@ export class Engine {
           : []
     // M48：空队列 = 交给平台路由步（未 @ 消息 / 空编制开场；runLoop 开头消费）
     const needsRouting = queue.length === 0
-    // M24：起步范式（显式消息级 > 会话规划先行 > 执行）；execute 不落库不广播（零差异）
-    const mode: TurnMode = opts.mode ?? (session.planFirst ? 'plan' : 'execute')
+    // M24 / M88：起步范式 —— 用户显式 > 会话策略 > 意图判定（规则）；关闭自动编排时回到旧语义
+    const hasActivePlan =
+      (this.deps.plans?.list(sessionId) ?? []).some(
+        (plan) => plan.status === 'executing' || plan.status === 'approved' || plan.status === 'submitted',
+      )
+    const intent = this.deps.cfg.autonomyEnabled
+      ? resolveIntent({
+          text: userMessage.content,
+          attachments: userMessage.attachments?.length ?? 0,
+          autonomy: session.autonomy,
+          planFirst: session.planFirst,
+          hasActivePlan,
+          explicitMode: opts.mode,
+        })
+      : legacyIntentOf({ explicitMode: opts.mode, autonomy: session.autonomy, planFirst: session.planFirst })
+    const mode: TurnMode = opts.mode ?? modeOfIntent(intent)
     // 用户消息 mentions 持久化为解析结果（@chip 渲染依据）；M24：同时持久化消息级范式
     // M79-E：人类定向（humanMentions；@真人 / 行首 @用户 提及）随行持久化
     const launchHumans = this.deps.sessionHumans?.(session.id) ?? []
@@ -385,6 +423,8 @@ export class Engine {
     this.deps.sessions.patchMessage(sessionId, userMessageId, {
       mentions: mentioned,
       mode: mode === 'execute' ? undefined : mode,
+      // M88：范式来源（用户显式 / 规则 / 路由 / 策略），供消息徒章与审计
+      ...(mode !== 'execute' ? { modeSource: intent.source } : {}),
       ...(launchHumanParsed.humanMentions.length > 0 ? { humanMentions: launchHumanParsed.humanMentions } : {}),
     })
     this.deps.sessions.saveNow(sessionId)
@@ -419,6 +459,9 @@ export class Engine {
       discoveryByAgent: new Map(),
       state: 'waiting',
       mode,
+      intent,
+      // M86：接力控制随会话策略落 Run（manual = agent 不自动接棒，只给建议）
+      relayMode: resolveRelayMode(session),
       planDispatch: new Map(),
       activePlanIds: new Set(),
       pendingPlanIds: new Set(),
@@ -472,6 +515,10 @@ export class Engine {
     if (approved.status !== 'approved') throw new Error(`计划状态为 ${approved.status}，无法发起执行`)
     const queue = this.planOwnerQueue(approved)
     if (queue.length === 0) throw new Error('计划没有可执行的步骤')
+    // M88：计划执行 Run 的意图 —— 已批准 = needsPlan 已满足；有验收标准才开评审门
+    const intent = planExecutionIntent(
+      approved.steps.some((step) => Boolean(step.acceptance || step.expectedOutput)),
+    )
 
     const record: RunRecord = {
       id: `run_${randomUUID().slice(0, 8)}`,
@@ -501,6 +548,9 @@ export class Engine {
       discoveryByAgent: new Map(),
       state: 'waiting',
       mode: 'execute',
+      intent,
+      // M86：执行 Run 沿用会话接力策略（计划派发由批准后的步骤负责人决定，不受手动接力影响）
+      relayMode: resolveRelayMode(session),
       planDispatch: new Map(),
       activePlanIds: new Set(),
       pendingPlanIds: new Set(),
@@ -537,6 +587,130 @@ export class Engine {
   }
 
   /**
+   * M86：用户手动派发下一棒（manual 接力的唯一接棒入口）。
+   * - 活跃 Run：目标插到队首（不打断当前发言人；已在队列则仅提前），广播 queue:updated；
+   * - 空闲：新起一个 Run（队列 = [目标]，不经过平台路由重新组队），并给目标留一条派发便条。
+   * 与 auto 接力的区别：只有人能发起，且不触发「未在场角色自动召集」。
+   */
+  dispatchTo(
+    sessionId: string,
+    agentId: string,
+    opts: { note?: string; byUserId?: string } = {},
+  ): LaunchResult {
+    const { sessions } = this.deps
+    const session = sessions.getSession(sessionId)
+    if (!session) throw new Error('会话不存在')
+    if (!session.participantIds.includes(agentId)) throw new Error('目标不在会话中')
+    const note = opts.note?.trim()
+    const active = this.activeRunOf(sessionId)
+    if (active) {
+      const record = this.runs.get(active.runId)!
+      if (note) {
+        const notes = record.handoffNotes.get(agentId) ?? []
+        notes.push({ from: 'user', targets: [agentId], reason: note, expectedOutput: note, artifacts: [] })
+        record.handoffNotes.set(agentId, notes)
+      }
+      record.queue = [agentId, ...record.queue.filter((id) => id !== agentId)]
+      this.deps.runs.update(record.id, { queue: [...record.queue] })
+      this.emit(record, {
+        type: 'queue:updated',
+        runId: record.id,
+        sessionId,
+        queue: [...record.queue],
+      })
+      this.trace(record, 'dispatch:manual', {
+        agentId,
+        byUserId: opts.byUserId,
+        note: note?.slice(0, 120),
+        target: 'queue',
+      })
+      return { runId: record.id, queue: [...record.queue], queued: false }
+    }
+
+    this.assertUserCapacity(sessionId)
+    const queue = [agentId]
+    // M88：手动派发也走意图判定（note 里写「先出计划 / 评审一下」同样生效）
+    const intent = this.deps.cfg.autonomyEnabled
+      ? resolveIntent({
+          text: note ?? '',
+          autonomy: session.autonomy,
+          planFirst: session.planFirst,
+        })
+      : legacyIntentOf({ autonomy: session.autonomy, planFirst: session.planFirst })
+    const mode = modeOfIntent(intent)
+    const record: RunRecord = {
+      id: `run_${randomUUID().slice(0, 8)}`,
+      sessionId,
+      controller: new AbortController(),
+      triggerUserId: opts.byUserId,
+      subscribers: new Set(),
+      queue,
+      spoken: [],
+      activeMembers: [],
+      fallbackUsed: false,
+      // 目标已由用户明确指定：跳过平台路由（不再重新组队/换人）
+      routingPending: false,
+      handedToUser: false,
+      handedTo: [],
+      messageHumanMentions: new Map(),
+      pendingUserMessages: [],
+      pendingHandoffs: new Map(),
+      handoffNotes: new Map(),
+      waveSignatures: [],
+      waveTexts: [],
+      waveWriteCounts: [],
+      waveWrites: newWaveWriteBuffer(),
+      forceNextParallel: false,
+      turnIndex: 0,
+      todosByAgent: new Map(),
+      skillCache: new Map(),
+      activatedTools: new Set(),
+      discoveryByAgent: new Map(),
+      state: 'waiting',
+      mode,
+      intent,
+      relayMode: resolveRelayMode(session),
+      planDispatch: new Map(),
+      activePlanIds: new Set(),
+      pendingPlanIds: new Set(),
+      synthesisAdded: false,
+      planSubmissions: 0,
+      planRefillStreak: 0,
+    }
+    if (note)
+      record.handoffNotes.set(agentId, [
+        { from: 'user', targets: [agentId], reason: note, expectedOutput: note, artifacts: [] },
+      ])
+    this.runs.set(record.id, record)
+    this.sessionRuns.set(sessionId, record.id)
+    this.deps.runs.create({ id: record.id, sessionId, state: 'waiting', queue, userId: session.ownerId })
+    // 可审计的派发痕迹（下一棒的起点清晰可见；不占用 Agent 回合）
+    const label = this.memberLabelOf(sessionId, agentId)
+    const message = sessions.appendMessage({
+      sessionId,
+      role: 'system',
+      content: `你派发了下一棒给 ${label}${note ? `：${note}` : ''}`,
+      mentions: [],
+      status: 'complete',
+    })
+    this.deps.notify.publish({ type: 'notify:turn-end', sessionId, payload: { message } })
+
+    const queued = this.activeCount >= this.deps.cfg.asyncRunMax
+    if (queued) {
+      this.waiting.push(record)
+      this.deps.notify.publish({
+        type: 'notify:run-started',
+        sessionId,
+        runId: record.id,
+        payload: { queue: [...queue], queued: true },
+      })
+    } else {
+      this.startRun(record)
+    }
+    return { runId: record.id, queue: [...queue], queued }
+  }
+
+  /**
    * 订阅运行流：注册 + 快照重放（已产出内容先补再续流，§18.2）。
    * M79-AF：userId 随订阅记录 —— 审批事件的 SSE 补发 / 广播按「触发者 ∪ 会话属主」定向过滤
    * （缺省 undefined = 兼容模式 / 旧调用方，全部放行零差异）。
@@ -552,6 +726,7 @@ export class Engine {
       runId: record.id,
       sessionId: record.sessionId,
       queue: [...record.queue],
+      ...(record.intent ? { intent: record.intent } : {}),
     })
     // M16：并行波恢复 —— activeMembers 非空时先补波次标记（前端按波归组多路流）
     if (record.activeMembers.length > 0) {
@@ -702,6 +877,10 @@ export class Engine {
       discoveryByAgent: new Map(),
       state: 'waiting',
       mode: 'execute',
+      // M88：断点继续无新用户文本 —— 仅沿用会话策略（不重新推断）
+      intent: legacyIntentOf({ autonomy: session.autonomy, planFirst: session.planFirst }),
+      // M86：断点继续沿用会话接力策略（不因恢复而恢复自动接棒）
+      relayMode: resolveRelayMode(session),
       planDispatch: new Map(),
       activePlanIds: new Set(),
       pendingPlanIds: new Set(),
@@ -709,6 +888,8 @@ export class Engine {
       planSubmissions: 0,
       planRefillStreak: 0,
     }
+    // M87：恢复未消费的交接包（便条仅存内存；从该 Run 的 handoff 工具调用重建）
+    record.handoffNotes = this.restoreHandoffNotes(sessionId, snapshot.id, queue)
     // 旧快照标记已恢复（防止重复继续）
     this.deps.runs.update(snapshot.id, { state: 'done', endedAt: nowIso() })
 
@@ -1275,8 +1456,9 @@ export class Engine {
       runId: record.id,
       sessionId: record.sessionId,
       queue: [...record.queue],
+      ...(record.intent ? { intent: record.intent } : {}),
     })
-    this.trace(record, 'run:start', { queue: [...record.queue] })
+    this.trace(record, 'run:start', { queue: [...record.queue], intent: record.intent })
     this.deps.notify.publish({
       type: 'notify:run-started',
       sessionId: record.sessionId,
@@ -1433,6 +1615,26 @@ export class Engine {
       // M61-D3/D5：波内写跟踪结算（计数入列 → 冲突检测 → 重置；先于 merge 使停滞检测含本波）
       const waveWrites = record.waveWrites
       record.waveWriteCounts.push(waveWrites.count)
+      // M88：运行期纠偏 —— 写扩散到多成员/多文件且尚未进入规划 → 提议下一条改用「规划」（不强制改判）
+      if (
+        this.deps.cfg.autonomyEnabled &&
+        record.mode !== 'plan' &&
+        !record.planSuggestNotified &&
+        record.intent?.needsPlan !== true &&
+        waveWrites.count >= 3 &&
+        waveWrites.byAgent.size >= 2
+      ) {
+        record.planSuggestNotified = true
+        const agents = [...waveWrites.byAgent.keys()].slice(0, 4)
+        this.trace(record, 'intent:suggest-plan', { writes: waveWrites.count, agents }, waveIndex)
+        this.emit(record, {
+          type: 'intent:suggest-plan',
+          runId: record.id,
+          sessionId: record.sessionId,
+          writes: waveWrites.count,
+          agents,
+        })
+      }
       record.waveWrites = newWaveWriteBuffer()
       // 计划补回防死循环：本波有写进展 → 清零连续补回计数（空转累加在 refillPlanQueue 内）
       if (waveWrites.count > 0) record.planRefillStreak = 0
@@ -1445,15 +1647,18 @@ export class Engine {
           .join('\n\n'),
       )
       const merge = mergeWaveSchedule({
-        decisions: handles.map((handle, i) => ({
-          agentId: handle.agentId,
-          ...decideHandoff({
+        decisions: handles.map((handle, i) => {
+          const decision = decideHandoff({
             mentions: results[i].proposal.mentions,
             handedToUser: results[i].proposal.handedToUser,
             participants: session.participantIds,
             currentAgentId: handle.agentId,
-          }),
-        })),
+          })
+          // M86：手动接力双保险——即使有路径绕过回合末归一，也不把接棒写进下一波队列
+          return record.relayMode === 'manual'
+            ? { agentId: handle.agentId, accepted: [], handedToUser: true, dropped: decision.dropped }
+            : { agentId: handle.agentId, ...decision }
+        }),
         participants: session.participantIds,
         queue: record.queue,
         signatures: record.waveSignatures,
@@ -1871,7 +2076,13 @@ export class Engine {
           : mode === 'review'
             ? '（平台建议：按评审范式核对后 submit_review）'
             : ''
-      notes.push({ from: '平台', targets: [agentId], reason, expectedOutput: hint ? `${task}${hint}` : task })
+      notes.push({
+        from: '平台',
+        targets: [agentId],
+        reason,
+        expectedOutput: hint ? `${task}${hint}` : task,
+        artifacts: [],
+      })
       record.handoffNotes.set(agentId, notes)
       record.queue.push(agentId)
     }
@@ -1893,22 +2104,61 @@ export class Engine {
     return [...session.participantIds].sort((a, b) => rankOf(a) - rankOf(b))
   }
 
-  /** M61-D1：工作区交付件清单（浅层扫描 ≤30 条 / 截断 600 字符；失败静默返回空串） */
-  private listDeliverables(sessionId: string): string {
-    try {
-      const root = this.deps.artifacts.ensureSessionDir(sessionId)
-      const out: string[] = []
-      const walk = (dir: string, prefix: string, depth: number): void => {
-        if (out.length >= 30 || depth > 2) return
-        for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-          if (out.length >= 30) return
-          if (entry.name.startsWith('.')) continue
-          const rel = prefix ? `${prefix}/${entry.name}` : entry.name
-          if (entry.isDirectory()) walk(path.join(dir, entry.name), rel, depth + 1)
-          else out.push(rel)
+  /**
+   * M87：从已完成消息重建待消费的交接包（resume 专用）。
+   * 以 message.mentions（已解析成员键）为目标的权威来源，避免重新解析 raw target 姓名。
+   */
+  private restoreHandoffNotes(sessionId: string, runId: string, queue: string[]): Map<string, HandoffEntry[]> {
+    const out = new Map<string, HandoffEntry[]>()
+    const queued = new Set(queue)
+    for (const message of this.deps.sessions.messages(sessionId)) {
+      if (message.runId !== runId || message.role !== 'agent' || !message.agentId) continue
+      const targets = (message.mentions ?? []).filter((id) => queued.has(id))
+      if (targets.length === 0) continue
+      for (const call of message.toolCalls ?? []) {
+        if (call.name !== 'handoff' || call.status !== 'ok') continue
+        const args = call.args ?? {}
+        const declared = Array.isArray(args.artifacts)
+          ? args.artifacts.filter((p): p is string => typeof p === 'string')
+          : []
+        const entry: HandoffEntry = {
+          from: message.memberKey ?? message.agentId,
+          targets,
+          ...(typeof args.reason === 'string' ? { reason: args.reason } : {}),
+          ...(typeof args.expected_output === 'string' ? { expectedOutput: args.expected_output } : {}),
+          artifacts: (declared.length > 0 ? declared : (message.artifacts ?? [])).slice(0, 8),
+          ...(typeof args.notes === 'string' ? { notes: args.notes } : {}),
+        }
+        for (const target of targets) {
+          const list = out.get(target) ?? []
+          list.push(entry)
+          out.set(target, list)
         }
       }
-      walk(root, '', 0)
+    }
+    return out
+  }
+
+  /**
+   * M61-D1 / M87：路由用交付件清单 —— 索引读取（本轮产出在前，最近交付补足，≤12 条）。
+   * 不再现场遍历工作区（旧实现存在三处重复扫盘，且“前 30 个”按遍历序取，不代表最近）。
+   */
+  private async listDeliverables(record: RunRecord): Promise<string> {
+    const index = this.deps.index
+    if (!index) return ''
+    try {
+      await index.ensureReady(record.sessionId, { onlyIfMissing: true })
+      const seen = new Set<string>()
+      const out: string[] = []
+      for (const entry of [...index.byRun(record.sessionId, record.id), ...index.recent(record.sessionId, 12)]) {
+        if (seen.has(entry.path)) continue
+        seen.add(entry.path)
+        const author = entry.authorAgentId
+          ? (this.deps.prompts.get(entry.authorAgentId)?.name ?? entry.authorAgentId)
+          : undefined
+        out.push(author ? `${entry.path}（${author}）` : entry.path)
+        if (out.length >= 12) break
+      }
       return out.join('、').slice(0, 600)
     } catch {
       return ''
@@ -1957,6 +2207,9 @@ export class Engine {
     ]
       .map((id) => `${this.memberLabelOf(record.sessionId, id)}(${id})`)
       .join('、')
+    // M87：索引摘要读取是异步的；期间用户停止则不再向已中止的流发起路由调用
+    const deliverables = await this.listDeliverables(record)
+    if (record.controller.signal.aborted) return
     const outcome = await runPlatformRoute({
       cfg: this.deps.cfg,
       provider: this.deps.provider,
@@ -1965,7 +2218,7 @@ export class Engine {
       contextText,
       stage: agentMsgs.length === 0 ? 'opening' : 'ongoing',
       recentHandlers,
-      deliverables: this.listDeliverables(record.sessionId),
+      deliverables,
       presentIds: [...session.participantIds],
       // M50：空场景成员不进 PRS 可召集集（幻觉输出同样被 coerceRoutePlan 丢弃）
       knownIds: new Set(
@@ -2008,6 +2261,33 @@ export class Engine {
         '平台路由失败，交由首位成员接手',
       )
       return
+    }
+    // M88：PRS 的结构化判定与规则意图合并（首波尚未开始，可安全改判；用户显式/会话策略在 merge 内保留）
+    if (this.deps.cfg.autonomyEnabled && outcome.intent) {
+      const before = record.intent
+      const merged = mergeRouterIntent(
+        before ?? legacyIntentOf({ autonomy: session.autonomy, planFirst: session.planFirst }),
+        outcome.intent,
+      )
+      const nextMode = modeOfIntent(merged)
+      const changed = nextMode !== record.mode || before?.needsReview !== merged.needsReview
+      record.intent = merged
+      record.mode = nextMode
+      if (changed) {
+        sessions.patchMessage(record.sessionId, userMessage.id, {
+          mode: nextMode === 'execute' ? undefined : nextMode,
+          ...(nextMode !== 'execute' ? { modeSource: merged.source } : {}),
+        })
+        sessions.saveNow(record.sessionId)
+        this.emit(record, {
+          type: 'intent:decided',
+          runId: record.id,
+          sessionId: record.sessionId,
+          intent: merged,
+          mode: nextMode,
+        })
+        this.trace(record, 'intent:decided', { ...merged, mode: nextMode, phase: 'router' })
+      }
     }
     // 召集（PRS 决策的成员先落库，再派发；事件条「平台 召集了 …」可审计）
     if (outcome.members.length > 0) {
@@ -2070,6 +2350,14 @@ export class Engine {
         turnIndex,
       )
     }
+    // M87：交接包补全（一次索引查询拿到版本 / 体积；无索引时仅保留路径）
+    const handoffPaths = [...new Set(incomingHandoffs.flatMap((h) => h.artifacts ?? []))]
+    const handoffMeta = new Map<string, { version?: number; size?: number }>()
+    if (handoffPaths.length > 0 && this.deps.index) {
+      for (const entry of this.deps.index.getMany(record.sessionId, handoffPaths)) {
+        handoffMeta.set(entry.path, { version: entry.version, size: entry.size })
+      }
+    }
     const turnExtra = {
       mode: opts.mode,
       planSteps: appliedSteps
@@ -2084,7 +2372,11 @@ export class Engine {
       reviewTargets,
       handoffs: incomingHandoffs.map((h) => ({
         from: prompts.get(h.from)?.name ?? h.from,
-        expectedOutput: h.expectedOutput,
+        ...(h.expectedOutput ? { expectedOutput: h.expectedOutput } : {}),
+        ...(h.artifacts.length > 0
+          ? { artifacts: h.artifacts.map((p) => ({ path: p, ...handoffMeta.get(p) })) }
+          : {}),
+        ...(h.notes ? { notes: h.notes } : {}),
       })),
     }
 
@@ -2127,6 +2419,8 @@ export class Engine {
       toolDiscoveryBlock: this.discoveryBlockFor(record, discovery),
       ...turnExtra,
     })
+    // 竞态兜底：装配期间用户停止 / 超时 → 不再向已中止的流发起模型调用
+    if (record.controller.signal.aborted) throw abortError()
     if (prepared.compression) this.publishCompression(record, prepared.compression)
     // M25：语义召回事件（L1.5 注入明细；未装配 memories 时 recalled 恒为 undefined）
     if (prepared.recalled) {
@@ -2345,12 +2639,14 @@ export class Engine {
       }
       const entries = record.pendingHandoffs.get(message.id) ?? []
       record.pendingHandoffs.delete(message.id)
+      // M86：手动接力 —— 成员之间不自动接棒（不投便条、不召集），只把目标作为「建议」记账
+      const manualRelay = record.relayMode === 'manual'
       const toolHandoffs: string[] = []
       const enlistTargets = new Set<string>()
       for (const entry of entries) {
         for (const target of entry.targets) {
           if (!toolHandoffs.includes(target)) toolHandoffs.push(target)
-          if (target === 'user') continue
+          if (target === 'user' || manualRelay) continue
           const notes = record.handoffNotes.get(target) ?? []
           notes.push(entry)
           record.handoffNotes.set(target, notes)
@@ -2365,10 +2661,22 @@ export class Engine {
       const toolToUser = toolHandoffs.includes('user')
       const toolTargets = toolHandoffs.filter((t) => t !== 'user')
       const hasToolHandoff = toolHandoffs.length > 0
+      if (manualRelay && toolTargets.length > 0) {
+        this.trace(
+          record,
+          'handoff:suggested',
+          { agentId, targets: toolTargets.slice(0, 4), reason: entries[0]?.reason?.slice(0, 120) },
+          turnIndex,
+        )
+      }
 
       let mentions: string[] = []
       let handedToUser = false
-      if (cfg.handoffMode === 'text') {
+      if (manualRelay) {
+        // M86：手动接力下，成员提议一律不生效（也不解析正文 @），Run 收尾交还用户由其派发
+        mentions = []
+        handedToUser = true
+      } else if (cfg.handoffMode === 'text') {
         mentions = parsed.mentions
         handedToUser = parsed.handedToUser
       } else if (hasToolHandoff) {
@@ -2533,6 +2841,8 @@ export class Engine {
       runId: record.id,
       agentId: message.agentId!,
       memberKey: memberId,
+      // M86：接力控制（manual = handoff 工具只登记建议，不自动接棒）
+      relayMode: record.relayMode ?? 'auto',
       // M57：会话属主（remember 的 global 记忆按用户隔离；单用户兼容模式缺省）
       userId: this.deps.sessions.getSession(record.sessionId)?.ownerId,
       // M57 P2：触发者（共享会话连接最小权限复核：以发起本 Run 的成员为准，而非会话属主）
@@ -2540,6 +2850,7 @@ export class Engine {
       connectionGuard: this.deps.connectionGuard,
       workspace: artifacts.ensureSessionDir(record.sessionId),
       artifacts,
+      index: this.deps.index,
       skills: this.deps.skills,
       memory: this.deps.memory,
       // M25：向量记忆（remember 写入后 poke；project scope 归属由会话 projectId 决定）
@@ -3101,6 +3412,8 @@ export class Engine {
     if (this.planStepsFor(record, agentId).some((s) => s.ownerAgentId === agentId && s.mode === 'review')) {
       return 'review'
     }
+    // M88：收口评审门 —— 计划含验收标准且无显式评审步骤时，作者收口波以 review 范式发言
+    if (record.reviewCloseoutAgentId === agentId && record.reviewCloseoutWave === waveIndex) return 'review'
     return waveIndex === 0 ? record.mode : 'execute'
   }
 
@@ -3257,7 +3570,16 @@ export class Engine {
       if (plan.status !== 'done') continue
       record.activePlanIds.delete(planId)
       record.synthesisAdded = true
-      if (!record.queue.includes(plan.agentId)) record.queue.push(plan.agentId)
+      const alreadyQueued = record.queue.includes(plan.agentId)
+      if (!alreadyQueued) record.queue.push(plan.agentId)
+      // M88：收口评审门 —— 意图要求验收（计划带 acceptance/expectedOutput）且无显式评审步骤时，
+      // 让作者在收口波以 review 范式做一次结构化验收（不新增步骤，不改计划谱系）。
+      // 注意：作者可能已被「队列空 → 未发言成员兜底」提前排队，故不能用 alreadyQueued 当前提。
+      if (record.intent?.needsReview === true && !plan.steps.some((step) => step.mode === 'review')) {
+        record.reviewCloseoutAgentId = plan.agentId
+        record.reviewCloseoutWave = waveIndex + 1
+        this.trace(record, 'review:closeout-gate', { planId: plan.id, agentId: plan.agentId }, waveIndex)
+      }
       this.trace(record, 'plan:done', { planId: plan.id, synthesisAgent: plan.agentId }, waveIndex)
       break
     }
@@ -3363,13 +3685,28 @@ export class Engine {
     if (result.handoff) {
       // M24：条目化（来源 + 目标 + 原因 + expected_output；来源 id 在注入接收方指令时转为姓名）
       const list = record.pendingHandoffs.get(message.id) ?? []
+      // M87：显式交接包优先；缺省自动带出本轮已产出（message.artifacts 为内存事实，零 IO）
+      const declared = (result.handoff.artifacts ?? [])
+        .map((p) => normalizeRelPath(p))
+        .filter((p): p is string => Boolean(p))
+      const artifacts = (declared.length > 0 ? declared : (message.artifacts ?? [])).slice(0, 8)
       list.push({
         from: message.agentId ?? 'unknown',
         targets: [...result.handoff.targets],
         reason: result.handoff.reason,
         expectedOutput: result.handoff.expected_output,
+        artifacts,
+        ...(result.handoff.notes ? { notes: result.handoff.notes } : {}),
       })
       record.pendingHandoffs.set(message.id, list)
+      if (artifacts.length > 0 || result.handoff.notes) {
+        this.trace(record, 'handoff:package', {
+          from: message.memberKey ?? message.agentId,
+          targets: result.handoff.targets.slice(0, 4),
+          artifacts,
+          ...(result.handoff.notes ? { notes: result.handoff.notes.slice(0, 200) } : {}),
+        })
+      }
     }
     // M3：任务清单更新广播（SSE + WS 双通道）
     if (result.tasks) {
@@ -3395,12 +3732,22 @@ export class Engine {
       })
     }
 
-    // 交付件联动：消息 artifacts + artifact:updated（SSE / WS 双通道，§22.4）
+    // 交付件联动：消息 artifacts + 索引登记 + artifact:updated（SSE / WS 双通道，§22.4）
     if (result.artifacts?.length) {
       const list = message.artifacts ?? []
+      const indexEntries: ArtifactIndexInput[] = []
       for (const artifactPath of result.artifacts) {
         if (!list.includes(artifactPath)) list.push(artifactPath)
-        this.recordArtifactVersion(record, message, artifactPath)
+        const recorded = this.recordArtifactVersion(record, message, artifactPath)
+        indexEntries.push({
+          path: artifactPath,
+          origin: 'tool',
+          authorAgentId: message.agentId,
+          runId: record.id,
+          messageId: message.id,
+          ...(recorded.size !== undefined ? { size: recorded.size } : {}),
+          ...(recorded.version !== undefined ? { version: recorded.version } : {}),
+        })
         this.emit(record, {
           type: 'artifact:updated',
           path: artifactPath,
@@ -3415,6 +3762,12 @@ export class Engine {
       }
       message.artifacts = list
       sessions.touch(record.sessionId, message.id)
+      // 写时登记：一次事务 + 一次 revision 推进（索引失败不阻断工具主流程）
+      try {
+        this.deps.index?.upsert(record.sessionId, indexEntries)
+      } catch {
+        // 索引不可用时由后续校准补齐
+      }
     }
 
     // 回灌（参数校验失败 / 执行失败 → 错误摘要让模型自我修正，§21.2）
@@ -3436,13 +3789,20 @@ export class Engine {
     })
   }
 
-  /** M8：交付件版本记录（读磁盘现值入 artifact_versions；失败不影响主流程） */
-  private recordArtifactVersion(record: RunRecord, message: ChatMessage, relPath: string): void {
+  /**
+   * M8：交付件版本记录（读磁盘现值入 artifact_versions；失败不影响主流程）。
+   * M87：返回落库版本与体积，供索引登记复用（避免索引再次读盘）；内容去重时不推进版本。
+   */
+  private recordArtifactVersion(
+    record: RunRecord,
+    message: ChatMessage,
+    relPath: string,
+  ): { version?: number; size?: number } {
     const versions = this.deps.versions
-    if (!versions) return
+    if (!versions) return {}
     try {
       const read = this.deps.artifacts.read(record.sessionId, relPath, MAX_VERSION_CONTENT_BYTES)
-      versions.record({
+      const recorded = versions.record({
         sessionId: record.sessionId,
         path: relPath,
         content: read.content,
@@ -3450,8 +3810,11 @@ export class Engine {
         authorAgentId: message.agentId,
         messageId: message.id,
       })
+      const version = recorded?.version ?? versions.latest(record.sessionId, relPath)?.version
+      return { size: read.size, ...(version !== undefined ? { version } : {}) }
     } catch {
       // 版本记录失败（二进制 / 已删除 / 超限）：观测数据缺失不影响协作
+      return {}
     }
   }
 

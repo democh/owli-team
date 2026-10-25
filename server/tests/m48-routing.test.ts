@@ -282,6 +282,8 @@ describe('M48：未在场 handoff 自动增援', () => {
   it('成员转交资产存在但未在场的角色 → 平台落库召集（事件条 + trace）后接手', async () => {
     const env = makeEnv()
     const session = env.sessions.create(['backend'], 'M48 自动增援')
+    // M86：单助手会话缺省为手动接力（不自动召唤）；本用例验证自动接力能力，显式开启
+    env.sessions.setRelay(session.id, 'auto')
     const { requests } = installScript(env, (req) => {
       if (req.meta.agentId === 'backend') {
         return afterToolResult(req) ? [textChunk('已转交设计增援。')] : [handoffChunk('architect')]

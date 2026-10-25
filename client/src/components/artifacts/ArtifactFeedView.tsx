@@ -10,12 +10,11 @@
 import * as React from 'react'
 import { toast } from 'sonner'
 import { ChevronRight, Copy, Download, Maximize2, PackageOpen, Pin, Quote } from 'lucide-react'
-import type { Artifact } from '@multi-agent/shared'
-import { apiGet } from '../../lib/api'
 import { artifactContentUrl, baseName, isTextKind } from '../../lib/artifacts'
 import { humanSize } from '../../lib/time'
 import { cn } from '../../lib/utils'
 import { useAgentStore } from '../../stores/agent-store'
+import { useArtifactStore } from '../../stores/artifact-store'
 import { useLivePanelStore } from '../../stores/live-panel-store'
 import { useSessionStore } from '../../stores/session-store'
 import { useUiStore } from '../../stores/ui-store'
@@ -35,29 +34,13 @@ export function ArtifactFeedView(): React.JSX.Element {
   const pinArtifact = useLivePanelStore((s) => s.pinArtifact)
   const agents = useAgentStore((s) => s.agents)
 
-  const [list, setList] = React.useState<Artifact[]>([])
-  const [listLoading, setListLoading] = React.useState(false)
-
-  // 列表加载（artifactVersion 双通道刷新；会话切换重取）
+  // M87：列表来自交付件单一数据源；事件合并 / 增量刷新由 store 统一收敛
+  const list = useArtifactStore((s) => s.artifacts)
+  const listLoading = useArtifactStore((s) => s.loading)
+  const ensureArtifacts = useArtifactStore((s) => s.ensure)
   React.useEffect(() => {
-    if (!currentId) {
-      setList([])
-      return
-    }
-    let alive = true
-    setListLoading(true)
-    void apiGet<{ artifacts: Artifact[] }>(`/api/sessions/${currentId}/artifacts`)
-      .then((res) => {
-        if (alive) setList(res.artifacts)
-      })
-      .catch(() => undefined)
-      .finally(() => {
-        if (alive) setListLoading(false)
-      })
-    return () => {
-      alive = false
-    }
-  }, [currentId, artifactVersion])
+    if (currentId) void ensureArtifacts(currentId)
+  }, [currentId, artifactVersion, ensureArtifacts])
 
   // 选中决策：钉住 > 软跟随 > 最近更新 > 列表最新（均为列表内路径，失效自动落回）
   const artifact = React.useMemo(() => {

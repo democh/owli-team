@@ -25,7 +25,7 @@ import { SceneContext, type SceneCtx } from '../src/components/scene/context'
 import { TooltipProvider } from '../src/components/ui/tooltip'
 import { acceptanceOf } from '../src/lib/acceptance'
 import { stageOf, waveStage } from '../src/lib/stage-map'
-import { useArtifactMetaStore } from '../src/lib/use-artifact-meta'
+import { useArtifactStore } from '../src/stores/artifact-store'
 import { useAgentStore } from '../src/stores/agent-store'
 import { useLivePanelStore } from '../src/stores/live-panel-store'
 import { useRunStore } from '../src/stores/run-store'
@@ -138,7 +138,7 @@ beforeEach(() => {
   useAgentStore.setState({ agents: ALL, groups: GROUPS, skills: [], loaded: true, loading: false, statuses: {} })
   useSessionStore.setState({ currentId: 'sa', byId: new Map(), order: [], artifactVersion: 0 })
   useRunStore.setState({ active: false, queue: [] })
-  useArtifactMetaStore.setState({ sessionId: undefined, version: -1, byPath: new Map() })
+  useArtifactStore.setState({ sessionId: undefined, revision: 0, artifacts: [], byPath: new Map(), loaded: false, loading: false })
   useUiStore.setState({ composerInsert: undefined, quietMode: false, mainTab: 'chat' })
   useLivePanelStore.setState({
     face: 'browser',

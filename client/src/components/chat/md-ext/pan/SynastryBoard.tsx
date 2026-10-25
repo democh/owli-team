@@ -11,7 +11,6 @@ import type { SynastryModel, SynastryAspect } from './model'
 import { AskBar, Legend } from './parts'
 
 const ASP_TYPES = ['合相', '六合', '刑相', '拱相', '对分'] as const
-type AspType = (typeof ASP_TYPES)[number]
 const ASP_CLASS: Record<string, string> = {
   合相: 'pn-asp-he',
   六合: 'pn-asp-liu',

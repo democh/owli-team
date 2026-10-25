@@ -18,6 +18,7 @@ import { MemoryPanel } from '../team/MemoryPanel'
 import { MetricsPanel } from '../team/MetricsPanel'
 import { SchedulePanel } from '../team/SchedulePanel'
 import { TaskView } from '../team/TaskView'
+import { RunBoard } from '../run/RunBoard'
 
 /** 图谱按需懒加载（@xyflow/react + dagre 独立 chunk，不进首屏） */
 const GraphView = React.lazy(() => import('../team/GraphView'))
@@ -64,6 +65,19 @@ export const PANEL_DEFS: PanelDef[] = [
     ),
   },
   { id: 'stats', label: '战绩', group: 'team', render: (slots) => slots.stats },
+  {
+    // M88：运行面板（Run Board）—— 阶段条 / 判定依据 / 计划步骤 / 决策收件箱
+    id: 'run',
+    label: '运行',
+    group: 'ops',
+    fill: true,
+    badge: (pendingPlans) => pendingPlans,
+    render: () => (
+      <div className="h-full">
+        <RunBoard />
+      </div>
+    ),
+  },
   {
     id: 'tasks',
     label: '任务',

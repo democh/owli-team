@@ -91,7 +91,14 @@ interface TaskResult {
 interface BaselineFile {
   ts: string
   mode: 'mock' | 'judge'
-  tasks: Record<string, { ok: boolean }>
+  /** M89：基线同时记录运行指标（仅 mock 模式具备确定性，可做相对回归） */
+  tasks: Record<
+    string,
+    {
+      ok: boolean
+      stats?: { turns: number; promptTokens: number; completionTokens: number; durationMs: number }
+    }
+  >
 }
 
 // ---------- 隔离环境 ----------
@@ -269,6 +276,8 @@ async function runTask(
       task.name,
       task.serial === false ? { serial: false } : undefined,
     )
+    // M86：评测验证的是「协作链路能力」，不受会话默认接力策略（单助手 = manual）影响——显式开启自动接力
+    env.sessions.setRelay(session.id, 'auto')
     // M25：播种记忆（agent/session/global；owner 缺省按 scope 推导）→ poke 等到嵌入完成后开始 Run
     const seeds = task.memorySeed ?? []
     if (seeds.length > 0) {
@@ -480,7 +489,20 @@ async function main(): Promise<void> {
     const next: BaselineFile = {
       ts,
       mode: judgeEnabled ? 'judge' : 'mock',
-      tasks: Object.fromEntries(results.map((r) => [r.id, { ok: r.ok }])),
+      tasks: Object.fromEntries(
+        results.map((r) => [
+          r.id,
+          {
+            ok: r.ok,
+            stats: {
+              turns: r.stats.turns,
+              promptTokens: r.stats.promptTokens,
+              completionTokens: r.stats.completionTokens,
+              durationMs: r.durationMs,
+            },
+          },
+        ]),
+      ),
     }
     fs.writeFileSync(BASELINE_FILE, `${JSON.stringify(next, null, 2)}\n`)
     console.log(`基线已${baseline ? '更新' : '建立'}：evals/baseline.json`)
@@ -488,6 +510,20 @@ async function main(): Promise<void> {
     for (const task of results) {
       const base = baseline.tasks[task.id]
       if (base?.ok && !task.ok) regressions.push(`${task.id}：基线通过 → 当前失败`)
+      // M89：性能回归（仅 mock 基线；回合 / 输入 token 相对基线 +20% 告警、+50% 失败）
+      if (base?.stats) {
+        const metrics: Array<{ label: string; now: number; base: number }> = [
+          { label: '回合', now: task.stats.turns, base: base.stats.turns },
+          { label: '输入 token', now: task.stats.promptTokens, base: base.stats.promptTokens },
+        ]
+        for (const m of metrics) {
+          if (m.base <= 0 || m.now <= m.base * 1.2) continue
+          const pct = Math.round(((m.now - m.base) / m.base) * 100)
+          const detail = `${task.id}：${m.label} ${m.base} → ${m.now}（+${pct}%）`
+          if (m.now > m.base * 1.5) regressions.push(`${detail}，超过 +50% 阈值`)
+          else console.warn(`   ⚠ ${detail}，建议复查`)
+        }
+      }
     }
   }
 

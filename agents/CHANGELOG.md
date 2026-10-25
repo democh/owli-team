@@ -8,6 +8,15 @@
 
 ## 变更记录
 
+### v109 — 场景资产清理：三席同域重复角色下线（2026-10-25）
+
+- **动因**：全量盘点（41 场景 / 166 角色）后，按 ADR 0212 的「同质化 / 职能重复」口径筛出三席死资产——职责已被同场景主角色覆盖，且未接入任何 `chain` / 预设 / 评测，只在 mock 与名录里占位。
+- **下线三席**：`funding/datroom-keeper` 理卷（数据室清单已在 `fundraiser` 职责第 4 条、尽调四线在 `dd-analyst`）· `sre/capacity-planner` 度峰（`sre` 职责明含「容量与性能」）· `bi/viz-designer` 绘数（`bi` 定位含「数据可视化」）。
+- **明确保留**：`sre/chaos-officer`（演练设计 ≠ 事故处置）· `ops/trainer`（`hr` 职责写明「培训衔接归 @段言」）· `bi/metric-governor`（口径治理有评测与 handoff 承载）· `marketing/influencer`（红人投放独立职能）。
+- **镜像面**：mock 四件套（SCRIPTS / artifactFor / DISPLAY_NAMES / preferredOf）· `e2e/helpers.ts` AGENT_NAME · `metric-governor` 的 handoff 收敛为 `[bi]` · `agents/README.md`（bi 预载行 / 41 场景 / 162 业务角色）· 根 README 与 `docs/owli-team-intro.md` 角色计数 166 → 163 · design.md §19.3 设定表三行、图片计数（41 场景 162 张）与 markitdown 授权行。
+- **核验**：check:agents **163/163 + 协议 41/41 + 声纹 24/24 ✅**；mock-coverage / m21 / m35 **35/35 ✅**；双端 + e2e typecheck 0 错。
+- 相关文档：本文件、`agents/README.md`、`design.md §19`、根 README、`docs/owli-team-intro.md`。
+
 ### v108 — bullbear 五席头像批与 M83/M84 审计收口（2026-09-25）
 
 - **动因**：M84 收口审计——补齐 5 席头像资产、落地两处观察项微增强，并修复 M83 审计暴露的块模板解析缺陷；角色人设 / 协议 / 技能零改动（仅资产与客户端）。

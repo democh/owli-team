@@ -10,10 +10,10 @@
  */
 import * as React from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
-import { ArrowDown, Bot, Eye, Hourglass, LayoutList, LayoutPanelLeft, Loader2, Rocket, RotateCcw, Users } from 'lucide-react'
+import { ArrowDown, Bot, Eye, Hand, Hourglass, LayoutList, LayoutPanelLeft, Loader2, Rocket, RotateCcw, Users } from 'lucide-react'
 import { toast } from 'sonner'
 import type { AgentDefinition } from '@multi-agent/shared'
-import { baseAgentId } from '@multi-agent/shared'
+import { baseAgentId, resolveRelayMode } from '@multi-agent/shared'
 import { labelOfMemberKey } from '../../lib/members'
 import { apiPatch, apiPost } from '../../lib/api'
 import { cn } from '../../lib/utils'
@@ -184,7 +184,8 @@ export function ChatArea(): React.JSX.Element {
   const peerEntry = session?.kind === 'direct' ? Object.entries(humanProfiles).find(([id]) => id !== myUserId) : undefined
   const chatMemberCount = session ? session.participantIds.length + Object.keys(humanProfiles).length : 0
   const routeMode = session?.routeMode ?? 'auto'
-  const waitingIds = session?.waitingOn ?? []
+  const waitingOn = session?.waitingOn
+  const waitingIds = React.useMemo(() => waitingOn ?? [], [waitingOn])
   const waitingLabel = React.useMemo(() => {
     const names = waitingIds.map((id) => humanProfiles[id]?.name ?? '成员')
     return names.length > 2 ? `${names[0]} 等 ${names.length} 人` : names.join('、')
@@ -196,6 +197,23 @@ export function ChatArea(): React.JSX.Element {
       const res = await apiPatch<{ session: typeof session }>(`/api/sessions/${session.id}`, { routeMode: next })
       useSessionStore.getState().applySession(res.session)
       toast(next === 'mention' ? '已切换为仅点名唤起（AI 不响应未点名消息）' : '已恢复 AI 自动应答')
+    } catch (err) {
+      toast.error((err as Error).message)
+    }
+  }
+  // M86：接力控制 —— manual = 成员不自动转交下一棒（由你点按派发）；缺省按会话形态推导
+  const relayMode = session ? resolveRelayMode(session) : 'auto'
+  const toggleRelay = async (): Promise<void> => {
+    if (!session) return
+    const next = relayMode === 'manual' ? 'auto' : 'manual'
+    try {
+      const res = await apiPatch<{ session: typeof session }>(`/api/sessions/${session.id}`, { relay: next })
+      useSessionStore.getState().applySession(res.session)
+      toast(
+        next === 'manual'
+          ? '已切换为手动接力：成员不再自动转交，由你派发下一棒'
+          : '已切换为自动接力：成员可自行转交下一棒',
+      )
     } catch (err) {
       toast.error((err as Error).message)
     }
@@ -443,6 +461,27 @@ export function ChatArea(): React.JSX.Element {
           >
             <Bot className="size-3.5" />
             {routeMode === 'mention' ? '仅点名唤起' : 'AI 自动应答'}
+          </button>
+        )}
+        {/* M86：接力控制（有 agent 编制时才可接棒；仅属主可切换） */}
+        {session && participants.length > 0 && isOwner && (
+          <button
+            type="button"
+            title={
+              relayMode === 'manual'
+                ? '手动接力：成员不自动把下一棒交给别人，也不自动召集未在场角色——点按切换为自动接力'
+                : '自动接力：成员可在发言后自行转交下一棒（含未在场角色自动召集）——点按切换为手动接力'
+            }
+            className={cn(
+              'flex shrink-0 items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] transition-colors',
+              relayMode === 'manual'
+                ? 'border-primary/40 bg-primary/[0.08] text-primary'
+                : 'text-muted-foreground hover:border-primary/30 hover:text-primary',
+            )}
+            onClick={() => void toggleRelay()}
+          >
+            <Hand className="size-3.5" />
+            {relayMode === 'manual' ? '手动接力' : '自动接力'}
           </button>
         )}
         {/* M52-G：标题栏头像组已移除（纯装饰且与输入条成员条 / 场景席位重复）——成员展示收口到

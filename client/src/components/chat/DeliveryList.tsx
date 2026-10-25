@@ -8,7 +8,7 @@
  * 消息内行经 DeliveryFiles 透传消息作者。
  */
 import * as React from 'react'
-import { toast } from 'sonner'
+// import { toast } from 'sonner' // 临时隐藏「送上画布」（仅该入口用到）
 import {
   BarChart3,
   File as FileIcon,
@@ -16,7 +16,7 @@ import {
   FileSpreadsheet,
   FileText,
   FileType2,
-  Frame,
+  // Frame, // 临时隐藏「送上画布」（恢复时取消注释）
   Globe,
   Image as ImageIcon,
   Package,
@@ -24,13 +24,13 @@ import {
   Video,
 } from 'lucide-react'
 import type { AgentDefinition, Artifact, ArtifactKind } from '@multi-agent/shared'
-import { useArtifactMeta } from '../../lib/use-artifact-meta'
+import { useArtifactMeta } from '../../stores/artifact-store'
 import { baseName, extOf } from '../../lib/artifacts'
 import { stageOf } from '../../lib/stage-map'
 import { humanSize } from '../../lib/time'
 import { cn } from '../../lib/utils'
 import { useAgentStore } from '../../stores/agent-store'
-import { useCanvasStore } from '../../stores/canvas-store'
+// import { useCanvasStore } from '../../stores/canvas-store' // 临时隐藏「送上画布」
 import { useUiStore } from '../../stores/ui-store'
 import { AgentAvatar } from '../agents/AgentAvatar'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip'
@@ -131,10 +131,11 @@ export function ArtifactRow({
   const name = baseName(path)
   const dir = dirOf(path)
   const kind = meta?.kind ?? EXT_KIND[extOf(path)] ?? 'other'
-  const toCanvas = async (): Promise<void> => {
-    const id = await useCanvasStore.getState().sendArtifact(path)
-    if (id) toast.success('已送上画布 · 顶部「画布」Tab 查看')
-  }
+  // 临时隐藏画布：送上画布动作已注释（恢复时取消注释）
+  // const toCanvas = async (): Promise<void> => {
+  //   const id = await useCanvasStore.getState().sendArtifact(path)
+  //   if (id) toast.success('已送上画布 · 顶部「画布」Tab 查看')
+  // }
   return (
     <div
       data-delivery-row={path}
@@ -182,7 +183,7 @@ export function ArtifactRow({
               {author ? ` · ${author.name}` : ''}
               {stage ? ` · ${stage}` : ''}
             </div>
-            <div className="text-muted-foreground/75">点击打开交付件 · 行尾「送上画布」</div>
+            <div className="text-muted-foreground/75">点击打开交付件</div>
           </div>
         </TooltipContent>
       </Tooltip>
@@ -197,6 +198,7 @@ export function ArtifactRow({
         />
       )}
       {meta && <span className="shrink-0 text-[10.5px] tabular-nums text-muted-foreground/80">{humanSize(meta.size)}</span>}
+      {/* 临时隐藏「送上画布」按钮（恢复时取消本段注释）
       <button
         type="button"
         onClick={() => void toCanvas()}
@@ -206,6 +208,7 @@ export function ArtifactRow({
       >
         <Frame className="size-3" />
       </button>
+      */}
     </div>
   )
 }

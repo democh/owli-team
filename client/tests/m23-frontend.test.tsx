@@ -323,7 +323,7 @@ describe('M23：数据库工作台 store', () => {
   })
 
   it('runSql 空语句与失败：错误就地反馈且不产生请求', async () => {
-    fetchMock.mockImplementation((url: string, init?: RequestInit) => {
+    fetchMock.mockImplementation((url: string, _init?: RequestInit) => {
       if (url === '/api/connections/conn_pg/sql') return Promise.resolve(jsonResponse({ error: '连接未开启允许写入' }, 403))
       return Promise.resolve(jsonResponse({ connections: [PG] }))
     })

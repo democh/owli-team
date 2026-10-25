@@ -43,6 +43,10 @@ interface SessionRow {
   dm_key?: string | null
   /** M79-E：触发策略（auto / mention；存量默认 auto） */
   route_mode?: string
+  /** M86：接力控制（auto / manual；NULL = 按会话形态推导） */
+  relay_mode?: string | null
+  /** M88：自动编排策略（auto / always-plan / never-plan；NULL = auto） */
+  autonomy?: string | null
   /** M79-E：持球方（JSON string[]；NULL = 无） */
   waiting_on?: string | null
   /** M79-E：人类定向（userIds JSON；NULL = 无） */
@@ -73,6 +77,8 @@ interface MessageRow {
   reasoning: string | null
   /** M24：消息范式标记（plan / review；NULL = 执行） */
   mode: string | null
+  /** M88：范式来源（user / rule / router / policy；NULL = 未判定 / 旧消息） */
+  mode_source?: string | null
   /** M33：消息附件（MessageAttachment[] JSON；NULL = 无附件） */
   attachments: string | null
   /** M35：定时任务触发注入的消息挂任务 id（NULL = 普通消息） */
@@ -129,6 +135,14 @@ function rowToSession(row: SessionRow): Session {
     ...(row.kind && row.kind !== 'team' ? { kind: row.kind as Session['kind'] } : {}),
     // M79-E：触发策略与持球方（auto / 空 = 缺省，不落字段保持零差异）
     ...(row.route_mode && row.route_mode !== 'auto' ? { routeMode: row.route_mode as Session['routeMode'] } : {}),
+    // M86：接力控制（NULL = 缺省，由 resolveRelayMode 按会话形态推导）
+    ...(row.relay_mode === 'auto' || row.relay_mode === 'manual'
+      ? { relay: row.relay_mode as Session['relay'] }
+      : {}),
+    // M88：自动编排策略（NULL / auto = 缺省，保持零差异）
+    ...(row.autonomy === 'always-plan' || row.autonomy === 'never-plan' || row.autonomy === 'auto'
+      ? { autonomy: row.autonomy as Session['autonomy'] }
+      : {}),
     ...(() => {
       const waiting = parseJson<string[]>(row.waiting_on ?? null, [])
       return waiting.length > 0 ? { waitingOn: waiting } : {}
@@ -162,6 +176,7 @@ function rowToMessage(row: MessageRow): ChatMessage {
     toolCalls: parseJson<ToolCallRecord[] | undefined>(row.tool_calls, undefined) as ToolCallRecord[] | undefined,
     reasoning: row.reasoning ?? undefined,
     mode: (row.mode as ChatMessage['mode']) ?? undefined,
+    modeSource: (row.mode_source as ChatMessage['modeSource']) ?? undefined,
     attachments: parseJson<MessageAttachment[] | undefined>(row.attachments, undefined),
     scheduleId: row.schedule_id ?? undefined,
     userId: row.user_id ?? undefined,
@@ -220,15 +235,17 @@ export class SessionStore {
     const ownerParams = ownerId === null ? [] : [ownerId]
     const rows = this.db.all<SummaryRowFull>(
       `SELECT s.*,
-              (SELECT COUNT(*) FROM messages m WHERE m.session_id = s.id) AS message_count,
+              COALESCE(agg.message_count, 0) AS message_count,
               lm.role AS last_role, lm.agent_id AS last_agent_id, lm.member_key AS last_member_key,
               lm.content AS last_content, lm.created_at AS last_created_at,
               lm.user_id AS last_user_id,
               (SELECT u.display_name FROM users u WHERE u.id = lm.user_id) AS last_user_name
        FROM sessions s
-       LEFT JOIN messages lm ON lm.session_id = s.id AND lm.seq = (
-         SELECT MAX(m2.seq) FROM messages m2 WHERE m2.session_id = s.id
-       )
+       LEFT JOIN (
+         SELECT session_id, COUNT(*) AS message_count, MAX(seq) AS last_seq
+         FROM messages GROUP BY session_id
+       ) agg ON agg.session_id = s.id
+       LEFT JOIN messages lm ON lm.session_id = s.id AND lm.seq = agg.last_seq
        WHERE s.deleted_at IS NULL ${ownerFilter}
        ORDER BY s.updated_at DESC`,
       ...ownerParams,
@@ -245,16 +262,18 @@ export class SessionStore {
     const rows = this.db.all<SummaryRowFull>(
       `SELECT s.*,
               CASE WHEN s.owner_id = ? THEN 'owner' ELSE m.role END AS access_role,
-              (SELECT COUNT(*) FROM messages m2 WHERE m2.session_id = s.id) AS message_count,
+              COALESCE(agg.message_count, 0) AS message_count,
               lm.role AS last_role, lm.agent_id AS last_agent_id, lm.member_key AS last_member_key,
               lm.content AS last_content, lm.created_at AS last_created_at,
               lm.user_id AS last_user_id,
               (SELECT u.display_name FROM users u WHERE u.id = lm.user_id) AS last_user_name
        FROM sessions s
        LEFT JOIN session_members m ON m.session_id = s.id AND m.user_id = ?
-       LEFT JOIN messages lm ON lm.session_id = s.id AND lm.seq = (
-         SELECT MAX(m3.seq) FROM messages m3 WHERE m3.session_id = s.id
-       )
+       LEFT JOIN (
+         SELECT session_id, COUNT(*) AS message_count, MAX(seq) AS last_seq
+         FROM messages GROUP BY session_id
+       ) agg ON agg.session_id = s.id
+       LEFT JOIN messages lm ON lm.session_id = s.id AND lm.seq = agg.last_seq
        WHERE s.deleted_at IS NULL AND (s.owner_id = ? OR m.user_id IS NOT NULL)
        ORDER BY s.updated_at DESC`,
       userId,
@@ -488,6 +507,28 @@ export class SessionStore {
     return entry.session
   }
 
+  /** M86：接力控制（undefined = 恢复按会话形态推导；auto / manual = 显式设置） */
+  setRelay(id: string, relay: 'auto' | 'manual' | undefined): Session | undefined {
+    const entry = this.entry(id)
+    if (!entry) return undefined
+    entry.session.relay = relay
+    entry.session.updatedAt = nowIso()
+    entry.metaDirty = true
+    this.scheduleSave(id)
+    return entry.session
+  }
+
+  /** M88：自动编排策略（undefined = auto；always-plan / never-plan = 强制） */
+  setAutonomy(id: string, autonomy: 'auto' | 'always-plan' | 'never-plan' | undefined): Session | undefined {
+    const entry = this.entry(id)
+    if (!entry) return undefined
+    entry.session.autonomy = autonomy
+    entry.session.updatedAt = nowIso()
+    entry.metaDirty = true
+    this.scheduleSave(id)
+    return entry.session
+  }
+
   /** M79-E：写入持球方（Run 收尾 handedTo 非空时；与既有值并集去重） */
   setWaitingOn(id: string, userIds: string[]): Session | undefined {
     const entry = this.entry(id)
@@ -680,7 +721,7 @@ export class SessionStore {
     // 审核 M-1：先落库成功再清脏标记（tx 失败时脏数据保留，避免静默丢写；下次触发重试）
     this.db.tx(() => {
       this.db.run(
-        `UPDATE sessions SET title = ?, participant_ids = ?, member_souls = ?, project_id = ?, workspace_dir = ?, plan_first = ?, serial = ?, owner_id = ?, route_mode = ?, waiting_on = ?, space_id = ?, updated_at = ?
+        `UPDATE sessions SET title = ?, participant_ids = ?, member_souls = ?, project_id = ?, workspace_dir = ?, plan_first = ?, serial = ?, owner_id = ?, route_mode = ?, relay_mode = ?, autonomy = ?, waiting_on = ?, space_id = ?, updated_at = ?
          WHERE id = ?`,
         session.title,
         JSON.stringify(session.participantIds),
@@ -691,6 +732,8 @@ export class SessionStore {
         session.serial ? 1 : 0,
         session.ownerId ?? null,
         session.routeMode ?? 'auto',
+        session.relay ?? null,
+        session.autonomy ?? null,
         session.waitingOn && session.waitingOn.length > 0 ? JSON.stringify(session.waitingOn) : null,
         session.spaceId ?? 'default',
         session.updatedAt,
@@ -705,13 +748,14 @@ export class SessionStore {
 
   private insertMessage(message: ChatMessage): void {
     this.db.run(
-      `INSERT INTO messages (id, session_id, run_id, turn_index, seq, role, agent_id, member_key, user_id, content, mentions, human_mentions, status, artifacts, tool_calls, reasoning, mode, attachments, schedule_id, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO messages (id, session_id, run_id, turn_index, seq, role, agent_id, member_key, user_id, content, mentions, human_mentions, status, artifacts, tool_calls, reasoning, mode, mode_source, attachments, schedule_id, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET
          turn_index = excluded.turn_index,
          content = excluded.content, mentions = excluded.mentions, human_mentions = excluded.human_mentions,
          status = excluded.status,
          artifacts = excluded.artifacts, tool_calls = excluded.tool_calls, reasoning = excluded.reasoning, mode = excluded.mode,
+         mode_source = excluded.mode_source,
          attachments = excluded.attachments, schedule_id = excluded.schedule_id, user_id = excluded.user_id`,
       message.id,
       message.sessionId,
@@ -730,6 +774,7 @@ export class SessionStore {
       message.toolCalls ? JSON.stringify(message.toolCalls) : null,
       message.reasoning ?? null,
       message.mode ?? null,
+      message.modeSource ?? null,
       message.attachments && message.attachments.length > 0 ? JSON.stringify(message.attachments) : null,
       message.scheduleId ?? null,
       message.createdAt,

@@ -18,6 +18,7 @@ import type { ChatRequest, LlmChunk } from '../src/llm/provider.js'
 import { Engine } from '../src/orchestration/engine.js'
 import { sessionHumans as sessionHumansOf } from '../src/orchestration/humans.js'
 import { ArtifactStore } from '../src/store/artifacts.js'
+import { ArtifactIndex } from '../src/store/artifact-index.js'
 import { ArtifactVersionStore } from '../src/store/artifact-versions.js'
 import { ApiKeyStore, AuthSessionStore } from '../src/store/auth-sessions.js'
 import { openDatabase } from '../src/store/db.js'
@@ -77,6 +78,9 @@ export function makeEnv(overrides: Partial<AppConfig> = {}) {
   const projects = new ProjectStore(db, cfg.allowedRoots)
   const workspace = new WorkspaceService({ cfg, sessions, projects })
   const artifacts = new ArtifactStore(cfg.workspaceDir, (sid) => workspace.resolveDir(sid))
+  const index = new ArtifactIndex(db, artifacts, {
+    changedArtifacts: (sid) => (workspace.isGitMode(sid) ? workspace.changedArtifacts(sid) : Promise.resolve(null)),
+  })
   const versions = new ArtifactVersionStore(db)
   const memory = new MemoryStore(db)
   const summaries = new SummaryStore(db)
@@ -119,7 +123,20 @@ export function makeEnv(overrides: Partial<AppConfig> = {}) {
   // M57 P3：配额（缺省不限；存储体积按工作区目录计量）
   const quotaStore = new QuotaStore(db)
   const quotaService = new QuotaService({ cfg, quotas: quotaStore, sessions, usage, dirOf: (sid) => workspace.resolveDir(sid) })
-  const context = new ContextService({ cfg, prompts, skills, sessions, artifacts, memory, summaries, compressor, plans, members: sessionMembers, users })
+  const context = new ContextService({
+    cfg,
+    prompts,
+    skills,
+    sessions,
+    artifacts,
+    index,
+    memory,
+    summaries,
+    compressor,
+    plans,
+    members: sessionMembers,
+    users,
+  })
   // M7：审批服务（测试默认短超时场景由用例覆写 cfg.approvalTimeoutMs）；审核 M-4：留痕落库
   const approvals = new ApprovalService({ timeoutMs: cfg.approvalTimeoutMs, db })
   const engine = new Engine({
@@ -128,6 +145,7 @@ export function makeEnv(overrides: Partial<AppConfig> = {}) {
     skills,
     sessions,
     artifacts,
+    index,
     memory,
     context,
     provider,
@@ -162,6 +180,7 @@ export function makeEnv(overrides: Partial<AppConfig> = {}) {
     skills,
     sessions,
     artifacts,
+    index,
     versions,
     projects,
     workspace,

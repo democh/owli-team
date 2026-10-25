@@ -26,6 +26,8 @@ export const RuntimeSettingsSchema = z.object({
   toolDetailKeep: z.number().int().min(0).max(50),
   toolTimeoutMs: z.number().int().min(1_000).max(600_000),
   handoffMode: z.enum(['auto', 'tool', 'text']),
+  /** M88：自动编排（意图判定）总开关（热切换；关闭后仅尊重显式 mode / planFirst） */
+  autonomyEnabled: z.boolean(),
   approvalMode: z.enum(['off', 'risky', 'all']),
   approvalTimeoutMs: z.number().int().min(5_000).max(3_600_000),
   allowRunCommand: z.boolean(),

@@ -8,6 +8,7 @@ import * as React from 'react'
 import { toast } from 'sonner'
 import { Brain, Calculator, ChevronDown, ClipboardList, Clock, Loader2, SearchCheck } from 'lucide-react'
 import { apiPatch, apiPost } from '../../lib/api'
+import type { IntentSource } from '@multi-agent/shared'
 import { baseAgentId } from '@multi-agent/shared'
 import { labelOfMemberKey } from '../../lib/members'
 import { useAgentStore } from '../../stores/agent-store'
@@ -69,22 +70,27 @@ function CalcBadge({ expr }: { expr: string }): React.JSX.Element {
 }
 
 /** M24：回合范式徽章（规划 / 评审；执行缺省不渲染，保持旧消息零差异） */
-function ModeBadge({ mode }: { mode: 'plan' | 'review' }): React.JSX.Element {
+function ModeBadge({ mode, source }: { mode: 'plan' | 'review'; source?: IntentSource }): React.JSX.Element {
+  // M88：自动判定来源（规则 / 平台）——hover 可见，避免用户误以为是自己选的
+  const autoHint =
+    source && source !== 'user'
+      ? `（自动判定：${source === 'router' ? '平台' : source === 'policy' ? '会话策略' : source === 'rule' ? '规则' : '默认'}）`
+      : ''
   return mode === 'plan' ? (
     <span
       className="inline-flex items-center gap-0.5 rounded-full bg-violet-500/10 px-1.5 py-px text-[10px] font-medium text-violet-600"
-      title="本回合为规划范式：只读调研并提交计划（待你批准后执行）"
+      title={`本回合为规划范式：只读调研并提交计划（待你批准后执行）${autoHint}`}
     >
       <ClipboardList className="size-2.5" />
-      规划
+      规划{autoHint ? ' · 自动' : ''}
     </span>
   ) : (
     <span
       className="inline-flex items-center gap-0.5 rounded-full bg-sky-500/10 px-1.5 py-px text-[10px] font-medium text-sky-600"
-      title="本回合为评审范式：输出结构化评审判定"
+      title={`本回合为评审范式：输出结构化评审判定${autoHint}`}
     >
       <SearchCheck className="size-2.5" />
-      评审
+      评审{autoHint ? ' · 自动' : ''}
     </span>
   )
 }
@@ -351,7 +357,7 @@ function MessageItemInner({ messageId }: { messageId: string }): React.JSX.Eleme
           <div className="max-w-[78%]">
             <div className="mb-1 flex items-center justify-end gap-2 text-[11.5px] text-muted-foreground">
               {message.scheduleId && <ScheduleBadge />}
-              {message.mode && message.mode !== 'execute' && <ModeBadge mode={message.mode} />}
+              {message.mode && message.mode !== 'execute' && <ModeBadge mode={message.mode} source={message.modeSource} />}
               <span>{formatClock(message.createdAt)}</span>
               <span className="font-medium text-foreground">{senderName}</span>
               <span className="flex items-center opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100 max-md:opacity-100">
@@ -383,7 +389,7 @@ function MessageItemInner({ messageId }: { messageId: string }): React.JSX.Eleme
             <span className="text-[12.5px] font-semibold text-foreground">{senderName}</span>
             {headline && <span className="turn-role">{headline}</span>}
             {message.scheduleId && <ScheduleBadge />}
-            {message.mode && message.mode !== 'execute' && <ModeBadge mode={message.mode} />}
+            {message.mode && message.mode !== 'execute' && <ModeBadge mode={message.mode} source={message.modeSource} />}
             <span className="text-[10.5px]">·</span>
             <span>{formatClock(message.createdAt)}</span>
             <span className="ml-auto flex items-center opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100 max-md:opacity-100">
@@ -416,7 +422,7 @@ function MessageItemInner({ messageId }: { messageId: string }): React.JSX.Eleme
           <span className="text-[12.5px] font-semibold text-foreground">{authorLabel ?? message.agentId}</span>
           {agent && <span className="turn-role">{agent.role}</span>}
           {message.mode && message.mode !== 'execute' &&
-            (review ? <ReviewVerdictBadge verdict={review.verdict} /> : <ModeBadge mode={message.mode} />)}
+            (review ? <ReviewVerdictBadge verdict={review.verdict} /> : <ModeBadge mode={message.mode} source={message.modeSource} />)}
           {typeof message.turnIndex === 'number' && message.turnIndex >= 0 && (
             <span className="turn-wave" title={`本轮第 ${message.turnIndex + 1} 波发言`}>
               第 {message.turnIndex + 1} 波

@@ -410,14 +410,24 @@ export function TaskView(): React.JSX.Element {
     void loadPlans(currentId)
   }
 
-  /** M24：「规划先行」会话开关（PATCH /sessions/:id；默认关闭） */
-  const togglePlanFirst = async (): Promise<void> => {
+  /** M88：自动编排策略三态（auto / always-plan / never-plan）——取代旧 planFirst 单一开关（字段保留兼容） */
+  const autonomy = session?.autonomy ?? (session?.planFirst ? 'always-plan' : 'auto')
+  const toggleAutonomy = async (): Promise<void> => {
     if (!currentId || !session || savingPlanFirst) return
     setSavingPlanFirst(true)
+    const next = autonomy === 'auto' ? 'always-plan' : autonomy === 'always-plan' ? 'never-plan' : 'auto'
     try {
-      const res = await apiPatch<{ session: Session }>(`/api/sessions/${currentId}`, { planFirst: !session.planFirst })
+      const res = await apiPatch<{ session: Session }>(`/api/sessions/${currentId}`, {
+        autonomy: next === 'auto' ? null : next,
+      })
       useSessionStore.getState().applySession(res.session)
-      toast(res.session.planFirst ? '已开启「规划先行」：新消息默认进入规划范式' : '已关闭「规划先行」')
+      toast(
+        next === 'auto'
+          ? '已切换为自动编排：按需求自动决定是否先出计划'
+          : next === 'always-plan'
+            ? '已切换为规划先行：新消息默认先出计划'
+            : '已切换为直接执行：新消息默认不规划（高风险动作仍会先请你拍板）',
+      )
     } catch (err) {
       toast.error((err as Error).message)
     } finally {
@@ -452,21 +462,23 @@ export function TaskView(): React.JSX.Element {
     <button
       type="button"
       disabled={savingPlanFirst}
-      onClick={() => void togglePlanFirst()}
+      onClick={() => void toggleAutonomy()}
       title={
-        session.planFirst
-          ? '规划先行已开启：未显式选择范式的新消息默认规划（规划 → 批准 → 执行）；点按关闭'
-          : '开启后：未显式选择范式的新消息默认进入规划范式（规划 → 批准 → 执行）'
+        autonomy === 'auto'
+          ? '自动编排：按需求判定是否先出计划（多环节 / 高风险 → 规划）；点按改为「规划先行」'
+          : autonomy === 'always-plan'
+            ? '规划先行：新消息默认先出计划（规划 → 批准 → 执行）；点按改为「直接执行」'
+            : '直接执行：新消息默认不规划（高风险动作仍会强制先拍板）；点按改回「自动编排」'
       }
       className={cn(
         'flex shrink-0 items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10.5px] transition-colors disabled:opacity-50',
-        session.planFirst
+        autonomy !== 'auto'
           ? 'border-primary/40 bg-primary/10 font-medium text-primary'
           : 'text-muted-foreground hover:border-primary/30 hover:text-foreground',
       )}
     >
       <ClipboardList className="size-3" />
-      规划先行{session.planFirst ? '已开' : ''}
+      {autonomy === 'auto' ? '自动编排' : autonomy === 'always-plan' ? '规划先行' : '直接执行'}
     </button>
   )
 

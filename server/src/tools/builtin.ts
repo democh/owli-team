@@ -12,6 +12,7 @@ import type { MemoryKind, MemoryScope } from '@multi-agent/shared'
 import { measureDoc, USER_ALIASES } from '@multi-agent/shared'
 import type { AppConfig } from '../config.js'
 import { classifyKind, isBinaryExt } from '../store/artifacts.js'
+import { normalizeRelPath } from '../store/artifact-index.js'
 import { DOCUMENT_EXTS, extractDocumentText } from '../util/document-extract.js'
 import { ATTACHMENT_AUDIO_EXT } from '../util/mime.js'
 import { PathEscapeError, resolveInRoot, writeFileAtomic } from '../util/paths.js'
@@ -614,10 +615,20 @@ const writeTodosTool = {
   },
 }
 
+/** M87：交接包路径存在性（索引优先；未装配索引时回退磁盘校验，越界路径视为不存在） */
+function artifactExists(ctx: ToolRuntime, relPath: string): boolean {
+  try {
+    if (ctx.index) return ctx.index.getMany(ctx.sessionId, [relPath]).length > 0
+    return fs.statSync(resolveInRoot(ctx.workspace, relPath)).isFile()
+  } catch {
+    return false
+  }
+}
+
 const handoffTool = {
   name: 'handoff',
   description:
-    '结构化转交：把接力棒交给某位（或多位）成员（或 "user" 交还用户）。多目标 = 并行 fan-out：这些成员会同时开工、各自独立产出。有明确下游时优先用本工具，而不是只在正文里 @。目标尚未在场但资产存在时平台会自动召集后接手；完全未知的目标会收到错误提示，请按提示重选。',
+    '结构化转交：把接力棒交给某位（或多位）成员（或 "user" 交还用户）。多目标 = 并行 fan-out：这些成员会同时开工、各自独立产出。有明确下游时优先用本工具，而不是只在正文里 @。目标尚未在场但资产存在时平台会自动召集后接手；完全未知的目标会收到错误提示，请按提示重选。转交时用 artifacts 列出接手方要用的交付物路径（省略时自动带出本轮已产出），notes 写清口径 / 验收 / 已知坑。',
   parameters: {
     type: 'object',
     properties: {
@@ -635,6 +646,13 @@ const handoffTool = {
       },
       reason: { type: 'string', description: '为什么转交给 TA（一句话）' },
       expected_output: { type: 'string', description: '期望接手方产出什么' },
+      artifacts: {
+        type: 'array',
+        items: { type: 'string' },
+        maxItems: 8,
+        description: '交接包：接手方需要查看的交付物路径（≤8，工作区相对路径；省略时自动带出本轮产出）',
+      },
+      notes: { type: 'string', description: '交接口径：约束 / 验收 / 已知坑（≤300 字）' },
     },
     required: ['target', 'reason'],
   },
@@ -642,9 +660,17 @@ const handoffTool = {
     target: z.union([z.string().min(1).max(40), z.array(z.string().min(1).max(40)).min(2).max(4, '并行目标最多 4 个')]),
     reason: z.string().min(1).max(200),
     expected_output: z.string().max(300).optional(),
+    artifacts: z.array(z.string().min(1).max(300)).max(8, '交接包最多 8 个路径').optional(),
+    notes: z.string().max(300).optional(),
   }),
   async execute(
-    args: { target: string | string[]; reason: string; expected_output?: string },
+    args: {
+      target: string | string[]
+      reason: string
+      expected_output?: string
+      artifacts?: string[]
+      notes?: string
+    },
     ctx: ToolRuntime,
   ): Promise<ToolResult> {
     const rawList = (Array.isArray(args.target) ? args.target : [args.target])
@@ -655,12 +681,27 @@ const handoffTool = {
     if (userHit && rawList.length > 1) {
       return { ok: false, summary: '"user" 只能单独使用（多目标 = 并行 fan-out，交还用户 = 收尾语义）' }
     }
+    // M87：交接包路径校验（索引优先；未知路径忽略并回灌提示，不拖累转交本身）
+    const declared = [...new Set((args.artifacts ?? []).map((p) => normalizeRelPath(p)).filter((p): p is string => Boolean(p)))]
+    const accepted: string[] = []
+    const missing: string[] = []
+    for (const relPath of declared.slice(0, 8)) {
+      if (artifactExists(ctx, relPath)) accepted.push(relPath)
+      else missing.push(relPath)
+    }
+    const packageNote = accepted.length > 0 ? `；交接包 ${accepted.length} 件` : ''
+    const missingNote =
+      missing.length > 0 ? `（${missing.length} 个交付物路径不存在已忽略：${missing.slice(0, 3).join('、')}）` : ''
+    const extras = {
+      ...(accepted.length > 0 ? { artifacts: accepted } : {}),
+      ...(args.notes ? { notes: args.notes } : {}),
+    }
     if (userHit) {
       return {
         ok: true,
-        summary: `已交还用户（${args.reason}）`,
-        detail: `转交意图已记录：→ user。原因：${args.reason}`,
-        handoff: { targets: ['user'], reason: args.reason, expected_output: args.expected_output },
+        summary: `已交还用户（${args.reason}）${packageNote}`,
+        detail: `转交意图已记录：→ user。原因：${args.reason}${args.notes ? `。口径：${args.notes}` : ''}${missingNote}`,
+        handoff: { targets: ['user'], reason: args.reason, expected_output: args.expected_output, ...extras },
       }
     }
     // 逐个解析目标：在场成员直接放行；资产存在但未在场 → 放行并标注（M48：引擎收集 handoff 时自动召集，同一波内接手）
@@ -692,13 +733,24 @@ const handoffTool = {
     if (enlisted.length > 0) notes.push(`将自动召集：${enlisted.map((p) => p.name).join('、')}`)
     if (problems.length > 0) notes.push(`部分未转交：${problems.join('；')}`)
     const problemNote = notes.length > 0 ? `（${notes.join('；')}）` : ''
+    // M86：手动接力——不自动接棒，只登记「建议下一棒」，由用户点按派发（引擎侧同样不会入队）
+    if (ctx.relayMode === 'manual') {
+      return {
+        ok: true,
+        summary: parallel ? `已记录并行派发建议 @${names}` : `已记录派发建议 @${names}`,
+        detail: `当前会话为手动接力：已记录「建议下一棒 → ${resolved.join('、')}」，不会自动接棒，等待用户点按派发。原因：${args.reason}${
+          args.expected_output ? `。期望产出：${args.expected_output}` : ''
+        }${args.notes ? `。口径：${args.notes}` : ''}${problemNote}${missingNote}`,
+        handoff: { targets: resolved, reason: args.reason, expected_output: args.expected_output, ...extras },
+      }
+    }
     return {
       ok: true,
-      summary: parallel ? `已并行转交 @${names}（${args.reason}）` : `已转交 @${names}（${args.reason}）`,
+      summary: `${parallel ? `已并行转交 @${names}` : `已转交 @${names}`}（${args.reason}）${packageNote}`,
       detail: `转交意图已记录：→ ${resolved.join('、')}${parallel ? '（并行 fan-out，各自独立产出）' : ''}。原因：${args.reason}${
         args.expected_output ? `。期望产出：${args.expected_output}` : ''
-      }${problemNote}`,
-      handoff: { targets: resolved, reason: args.reason, expected_output: args.expected_output },
+      }${args.notes ? `。口径：${args.notes}` : ''}${problemNote}${missingNote}`,
+      handoff: { targets: resolved, reason: args.reason, expected_output: args.expected_output, ...extras },
     }
   },
 }

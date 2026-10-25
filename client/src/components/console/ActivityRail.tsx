@@ -5,7 +5,7 @@
  * 控件台视图不卸载 AppLayout（WS 生命周期与运行状态保持），仅切换主区内容。
  */
 import * as React from 'react'
-import { Bot, Cable, Images, MessagesSquare, Plug, Settings, Sparkles, UserCog } from 'lucide-react'
+import { Bot, Cable, MessagesSquare, Plug, Settings, Sparkles, UserCog } from 'lucide-react'
 import { cn } from '../../lib/utils'
 import { useAuthStore } from '../../stores/auth-store'
 import { useUiStore, type AppView } from '../../stores/ui-store'
@@ -71,9 +71,10 @@ export function ActivityRail(): React.JSX.Element {
   }, [isAdmin, appView, setAppView])
 
   // M68：素材库为全员可见的个人资源（非管理面）；M57：成员仅工作台 + 素材库 + 设置
+  // 临时隐藏：素材库入口已注释（后端 / 视图代码保留，恢复时取消注释即可）
   const items: RailItem[] = [
     { view: 'workspace', label: '工作台', icon: MessagesSquare },
-    { view: 'materials', label: '素材库', icon: Images },
+    // { view: 'materials', label: '素材库', icon: Images },
     ...(isAdmin ? ADMIN_ITEMS : []),
   ]
 

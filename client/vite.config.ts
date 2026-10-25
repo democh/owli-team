@@ -6,17 +6,13 @@ import { defineConfig } from 'vite'
 const MD_VENDOR_RE =
   /node_modules\/(react-markdown|remark-[^/]+|rehype-[^/]+|mdast-util-[^/]+|hast-util-[^/]+|micromark[^/]*|unified|unist-util-[^/]+|vfile[^/]*|devlop|bail|trough|zwitch|ccount|character-[^/]+|decode-named-character-reference|parse-entities|stringify-entities|property-information|space-separated-tokens|comma-separated-tokens|html-url-attributes|html-void-elements|trim-lines|is-plain-obj|longest-streak|markdown-table|style-to-object|estree-util-is-identifier-name)\//
 
-/** M24：shiki 词法内核四件套（core / oniguruma 引擎 / 主题 / 内联 wasm）在首次高亮时同波懒加载，
- * 合并为单 chunk：字节数与加载时机不变，仅少 3 个产物文件（design.md §12.2 ≤ 50）。
- * 注意不匹配 @shikijs/langs（语言按需 chunk）——并入会把 35 个语法拉进静态图。 */
-const SHIKI_CORE_RE =
-  /node_modules\/(?:shiki\/dist\/(?:core\.mjs|wasm\.mjs|themes\/)|@shikijs\/(?:core|engine-oniguruma|vscode-textmate|types|themes)\/)/
+/** M24：shiki 词法内核四件套（core / oniguruma 引擎 / 主题 / 内联 wasm）在首次高亮时同波懒加载。
+ * 注意：不要用 manualChunks 指定 three / shiki 分组——它们会被并入 entry 的静态依赖图，
+ * 导致 index.html 在首屏 modulepreload 整块 three-stack（~840KB）与 shiki-core（~780KB），
+ * 反而击穿「不进首屏」约束。交给 Rollup 按动态 import 自然分包即可。 */
 
-/** M65-B0：three 栈独立 chunk（three + R3F + drei 及其传递件）——全部在 React.lazy 边界内被引用
- * （§6.2 红线：首屏零增量）；归并 three-stdlib / three-mesh-bvh / camera-controls /
- * @use-gesture / meshline / troika-* 避免其落入业务 chunk 造成重复。 */
-const THREE_STACK_RE =
-  /node_modules\/(three|three-stdlib|three-mesh-bvh|@react-three|camera-controls|@use-gesture|meshline|troika-[^/]+)\//
+/** M65-B0：three 栈（three + R3F + drei 及传递件）仅经 `studio-lazy.tsx` 动态导入，
+ * 由 Rollup 自动拆分为 StudioCanvas 的懒加载依赖，不做手动分包。 */
 
 export default defineConfig({
   plugins: [react()],
@@ -32,7 +28,8 @@ export default defineConfig({
   },
   build: {
     outDir: 'dist',
-    chunkSizeWarningLimit: 1500,
+    // 预算门禁：单 chunk 超过 900KB 视为拆分缺失（CI 另有 scripts/check-bundle.mjs 校验首屏体积）
+    chunkSizeWarningLimit: 900,
     rollupOptions: {
       output: {
         // M13：稳定依赖拆独立 vendor chunk（版本不变时命中浏览器缓存，主包只装业务代码）
@@ -41,8 +38,6 @@ export default defineConfig({
           if (/node_modules\/(react|react-dom|scheduler)\//.test(id)) return 'react-vendor'
           if (id.includes('node_modules/@radix-ui/')) return 'radix-vendor'
           if (MD_VENDOR_RE.test(id)) return 'md-vendor'
-          if (SHIKI_CORE_RE.test(id)) return 'shiki-core'
-          if (THREE_STACK_RE.test(id)) return 'three-stack'
           return undefined
         },
       },

@@ -16,7 +16,7 @@ import userEvent from '@testing-library/user-event'
 import type { AgentDefinition, AgentGroup, ChatMessage } from '@multi-agent/shared'
 import { CloseoutCard } from '../src/components/chat/CloseoutCard'
 import { TooltipProvider } from '../src/components/ui/tooltip'
-import { useArtifactMetaStore } from '../src/lib/use-artifact-meta'
+import { useArtifactStore } from '../src/stores/artifact-store'
 import { useAgentStore } from '../src/stores/agent-store'
 import { useLivePanelStore } from '../src/stores/live-panel-store'
 import { useRunStore } from '../src/stores/run-store'
@@ -92,7 +92,7 @@ beforeEach(() => {
   useAgentStore.setState({ agents: [PM, ARCHITECT], groups: GROUPS, skills: [], loaded: true, loading: false, statuses: {} })
   useSessionStore.setState({ currentId: 'sa', byId: new Map(), order: [], artifactVersion: 0 })
   useRunStore.setState({ active: false, queue: [] })
-  useArtifactMetaStore.setState({ sessionId: undefined, version: -1, byPath: new Map() })
+  useArtifactStore.setState({ sessionId: undefined, revision: 0, artifacts: [], byPath: new Map(), loaded: false, loading: false })
   useUiStore.setState({ requestedArtifactPath: undefined, mainTab: 'chat', deepFrom: undefined, rightView: 'members', quietMode: false })
   // M49：跟随状态归零（交付件行点击 → 实况订阅响应为切实况 + 钉住）
   useLivePanelStore.setState({

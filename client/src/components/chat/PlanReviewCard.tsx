@@ -24,6 +24,7 @@ import {
 } from 'lucide-react'
 import type { AgentDefinition, Plan, PlanStatus, PlanStep, ReviewRecord, ReviewVerdict } from '@multi-agent/shared'
 import { useAgentStore } from '../../stores/agent-store'
+import { useUiStore } from '../../stores/ui-store'
 import { usePlanStore } from '../../stores/plan-store'
 import { useSessionStore, useCurrentSession } from '../../stores/session-store'
 import { cn } from '../../lib/utils'
@@ -164,6 +165,14 @@ function CardHeader({ plan, author }: { plan: Plan; author?: AgentDefinition }):
           {done}/{plan.steps.length}
         </span>
       )}
+      <button
+        type="button"
+        title="在右侧「运行」面板查看完整阶段、判定依据与步骤证据"
+        onClick={() => useUiStore.getState().setRightView('run')}
+        className="rounded-full border px-1.5 py-px text-[10px] text-muted-foreground transition-colors hover:border-primary/40 hover:text-primary"
+      >
+        运行面板
+      </button>
       <span className="ml-auto text-[10.5px] text-muted-foreground/70">{formatClock(plan.updatedAt)}</span>
     </div>
   )
@@ -181,10 +190,14 @@ function PlanApprovalCard({ plan, members }: { plan: Plan; members: AgentDefinit
   const [title, setTitle] = React.useState(plan.title)
   const [draft, setDraft] = React.useState<DraftStep[]>(() => toDraft(plan))
 
-  // 外部版本变化（保存回执 / WS 同步 / 驳回后 v2 重提）：静默重置草稿
+  // 外部版本变化（保存回执 / WS 同步 / 驳回后 v2 重提）：静默重置草稿。
+  // plan 对象每次渲染可能换引用（不应因此丢弃草稿），故按「版本三元组」触发、经 ref 取最新值。
+  const planRef = React.useRef(plan)
+  planRef.current = plan
   React.useEffect(() => {
-    setTitle(plan.title)
-    setDraft(toDraft(plan))
+    const source = planRef.current
+    setTitle(source.title)
+    setDraft(toDraft(source))
   }, [plan.id, plan.version, plan.updatedAt])
 
   const baseSteps = React.useMemo(() => JSON.stringify(toDraft(plan)), [plan])
@@ -561,7 +574,6 @@ function PlanProgressCard({ plan, members, reviews }: { plan: Plan; members: Age
 
 export function PlanReviewCard(): React.JSX.Element | null {
   const currentId = useSessionStore((s) => s.currentId)
-  const sessions = useSessionStore((s) => s.sessions)
   const agents = useAgentStore((s) => s.agents)
   const plans = usePlanStore((s) => s.plans)
   const reviews = usePlanStore((s) => s.reviews)

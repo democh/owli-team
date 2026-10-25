@@ -121,6 +121,7 @@ export function createCanvasRouter(deps: ApiDeps): Router {
     fs.mkdirSync(dir, { recursive: true })
     const relPath = `canvas/media/up-${Date.now().toString(36)}-${slugify(rawName)}${ext}`
     fs.writeFileSync(path.join(deps.artifacts.sessionDir(sessionId), relPath), body)
+    deps.index.upsert(sessionId, [{ path: relPath, origin: 'canvas' }])
     deps.notify.publish({
       type: 'notify:artifact-updated',
       sessionId,

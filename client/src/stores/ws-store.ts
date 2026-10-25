@@ -251,6 +251,8 @@ export function handleNotify(env: NotifyEnvelope): void {
     }
 
     case 'notify:artifact-updated': {
+      // M87：同一 Run 的 SSE `artifact:updated` 已在消费端递增版本，这里去重（防双通道 O(2N) 刷新）
+      if (handledBySse) break
       if (sameSession) sessions.bumpArtifacts()
       useUiStore.getState().noteArtifact(String(env.payload.path ?? ''))
       // M49：实况·交付件面软跟随（仅当前会话；面板未停在交付件面时不打扰）

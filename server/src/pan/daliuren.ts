@@ -24,7 +24,6 @@ const GAN_WX: Record<string, 'wood' | 'fire' | 'earth' | 'metal' | 'water'> = {
   甲: 'wood', 乙: 'wood', 丙: 'fire', 丁: 'fire', 戊: 'earth',
   己: 'earth', 庚: 'metal', 辛: 'metal', 壬: 'water', 癸: 'water',
 }
-const SHENG: Record<string, string> = { wood: 'fire', fire: 'earth', earth: 'metal', metal: 'water', water: 'wood' }
 const KE: Record<string, string> = { wood: 'earth', earth: 'water', water: 'fire', fire: 'metal', metal: 'wood' }
 
 /** 地支克（a 克 b） */

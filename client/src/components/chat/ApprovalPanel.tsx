@@ -72,7 +72,7 @@ function PendingCard({
     }
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
-  }, [hotkey, customOpen])
+  }, [hotkey, customOpen, readOnly])
 
   return (
     <div className="mx-4 mb-2 overflow-hidden rounded-xl border border-amber-300/70 bg-amber-50/80 shadow-soft">

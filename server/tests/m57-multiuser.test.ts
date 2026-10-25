@@ -15,14 +15,15 @@ import { describe, expect, it } from 'vitest'
 import { AuthService } from '../src/auth/service.js'
 import { AccessService } from '../src/auth/access.js'
 import { StreamTokenService } from '../src/browser/stream-token.js'
+import type { AppConfig } from '../src/config.js'
 import { createAuthMiddleware } from '../src/middleware.js'
 import { createAuthRouter } from '../src/routes/auth.js'
 import { ApiKeyStore, AuthSessionStore } from '../src/store/auth-sessions.js'
 import { UserStore } from '../src/store/users.js'
 import { makeEnv, waitRunFinished } from './helpers.js'
 
-function makeAuthEnv() {
-  const env = makeEnv()
+function makeAuthEnv(overrides: Partial<AppConfig> = {}) {
+  const env = makeEnv(overrides)
   const users = new UserStore(env.db)
   const authSessions = new AuthSessionStore(env.db)
   const apiKeys = new ApiKeyStore(env.db)
@@ -93,6 +94,40 @@ describe('M57：多用户（P1）', () => {
       // 登出撤销
       expect((await fetch(`${base}/api/auth/logout`, { method: 'POST', headers: { cookie } })).status).toBe(200)
       expect((await fetch(`${base}/api/auth/me`, { headers: { cookie } })).status).toBe(401)
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()))
+      env.sessions.close()
+      env.db.close()
+    }
+  })
+
+  it('登出清 legacy auth_token cookie：AUTH_TOKEN 入口用户不会 reload 后又回到应用', async () => {
+    const { env, users, auth } = makeAuthEnv({ authToken: 'entry-secret' })
+    await auth.setup({ username: 'admin', password: 'Str0ngPass!x' })
+    const app = express()
+    app.use(express.json())
+    app.use('/api', createAuthMiddleware(env.cfg, auth))
+    app.use(
+      '/api',
+      createAuthRouter({ cfg: env.cfg, auth, users, loginLimiter: (_req, _res, next) => next() }),
+    )
+    const server = app.listen(0)
+    await new Promise<void>((resolve) => server.once('listening', resolve))
+    const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`
+    try {
+      // 浏览器曾用 /?token= 进入：同时持有 sid 与 legacy auth_token
+      const login = await auth.login({ username: 'admin', password: 'Str0ngPass!x' })
+      const logout = await fetch(`${base}/api/auth/logout`, {
+        method: 'POST',
+        headers: { cookie: `sid=${encodeURIComponent(login.rawToken)}; auth_token=entry-secret` },
+      })
+      expect(logout.status).toBe(200)
+      const setCookie = logout.headers.getSetCookie().join('\n')
+      expect(setCookie).toContain('sid=;')
+      expect(setCookie).toContain('auth_token=;')
+
+      // 两个 cookie 都被 Max-Age=0 清除后（浏览器落地）→ /me 必须回到未登录
+      expect((await fetch(`${base}/api/auth/me`)).status).toBe(401)
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()))
       env.sessions.close()

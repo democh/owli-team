@@ -5,12 +5,14 @@
  * snapshot：  供前端「上下文抽屉」展示 L0-L5 分层、水位、摘要与记忆。
  */
 import type { ChatMessage, ContextLayer, ContextSnapshot, RecalledMemory, TurnMode } from '@multi-agent/shared'
+import { resolveRelayMode } from '@multi-agent/shared'
 import fs from 'node:fs'
 import path from 'node:path'
 import type { AppConfig } from '../config.js'
 import type { LlmMessageInput } from '../llm/provider.js'
 import type { MemoryService, RecallOutcome } from '../memory/service.js'
 import type { ArtifactStore } from '../store/artifacts.js'
+import type { ArtifactIndex } from '../store/artifact-index.js'
 import type { MemoryStore } from '../store/memory.js'
 import type { PlanStore } from '../store/plans.js'
 import type { PromptLibrary } from '../store/prompts.js'
@@ -19,8 +21,9 @@ import type { SessionStore } from '../store/sessions.js'
 import type { SkillLibrary } from '../store/skills.js'
 import type { SummaryStore } from '../store/summaries.js'
 import type { UserStore } from '../store/users.js'
-import { buildActivePlansBlock, buildSystemPrompt, buildTurnInstruction, buildWindow, foldWorkspaceListing, VISION_MAX_BYTES } from './assembler.js'
+import { buildActivePlansBlock, buildSystemPrompt, buildTurnInstruction, buildWindow, VISION_MAX_BYTES } from './assembler.js'
 import type { RosterMember, TurnInstructionExtra } from './assembler.js'
+import { buildWorkspaceDigest, type DigestEntry } from './workspace-digest.js'
 import { parseDeliverableSpec, type DeliverableTier } from './deliverable-spec.js'
 import { resolveMembers } from '../orchestration/members.js'
 import { createUserLabelResolver } from './user-label.js'
@@ -37,6 +40,8 @@ export interface ContextServiceDeps {
   skills: SkillLibrary
   sessions: SessionStore
   artifacts: ArtifactStore
+  /** M87：交付件索引（工作区摘要 / 本轮增量；缺省 = 不注入摘要） */
+  index?: ArtifactIndex
   memory: MemoryStore
   summaries: SummaryStore
   compressor: Compressor
@@ -111,6 +116,14 @@ export class ContextService {
 
   async prepareTurn(input: PrepareTurnInput): Promise<PreparedTurn> {
     const { cfg } = this.deps
+    // M87：会话首次访问时校准索引（已有校准记录则零 IO，不给每回合引入扫描延迟）
+    if (this.deps.index && !input.signal?.aborted) {
+      try {
+        await this.deps.index.ensureReady(input.sessionId, { onlyIfMissing: true })
+      } catch {
+        // 索引不可用不影响装配（摘要退化为空）
+      }
+    }
     // M25：语义召回（超时 / 失败静默；同一回合的多次重装配复用同一结果）
     const recall = await this.recallFor(input)
     const first = this.assemble(input, recall)
@@ -303,7 +316,7 @@ export class ContextService {
       selfKey: input.agentId,
       preloadedSkills: preloaded,
       skillsIndex: skills.indexText(),
-      workspaceListing: foldWorkspaceListing(this.describeWorkspace(input.sessionId)),
+      workspaceListing: this.workspaceDigest(input.sessionId, input.runId),
       memoryBlock,
       recalledBlock,
       summaryBlock,
@@ -346,6 +359,8 @@ export class ContextService {
         handoffs: input.handoffs,
         selfKey: input.agentId,
         deliverableSpec,
+        // M86：接力控制（manual = 回合指令不得再说「平台会自动召集后接手」）
+        relayMode: resolveRelayMode(session),
         voiceExample,
         // M79-J（§8.8）：人类交还指令（无人类 → 不注入）
         humans: input.humans?.map((h) => ({ displayName: h.displayName })),
@@ -505,13 +520,33 @@ export class ContextService {
     }
   }
 
-  /** 工作区文件清单（>20 行由 foldWorkspaceListing 折叠为目录统计） */
-  private describeWorkspace(sessionId: string): string {
-    const files = this.deps.artifacts.list(sessionId)
-    if (files.length === 0) return ''
-    return files
-      .slice(0, 40)
-      .map((f) => `- ${f.path}（${Math.max(1, Math.round(f.size / 1024))}KB）`)
-      .join('\n')
+  /**
+   * 工作区摘要（M87）：索引读取 + 最近产出 + 本轮增量，零文件系统调用。
+   * 作者 id → 展示名在装配侧解析（索引只存事实）。
+   */
+  private workspaceDigest(sessionId: string, runId?: string): string {
+    const index = this.deps.index
+    if (!index) return ''
+    try {
+      const page = index.list(sessionId, { limit: 1 })
+      if (page.total === 0) return ''
+      const nameOf = (id?: string): string | undefined => {
+        if (!id) return undefined
+        return this.deps.prompts.get(id)?.name ?? id
+      }
+      const toDigest = (entry: ReturnType<ArtifactIndex['recent']>[number]): DigestEntry => ({
+        path: entry.path,
+        size: entry.size,
+        version: entry.version,
+        ...(entry.authorAgentId ? { author: nameOf(entry.authorAgentId) } : {}),
+      })
+      return buildWorkspaceDigest({
+        total: page.total,
+        recent: index.recent(sessionId, 6).map(toDigest),
+        currentRun: runId ? index.byRun(sessionId, runId).map(toDigest) : [],
+      })
+    } catch {
+      return ''
+    }
   }
 }

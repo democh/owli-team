@@ -4,7 +4,8 @@
 import { describe, expect, it } from 'vitest'
 import type { AgentDefinition, ChatMessage } from '@multi-agent/shared'
 import type { ChatRequest } from '../src/llm/provider.js'
-import { buildSystemPrompt, buildWindow, foldWorkspaceListing } from '../src/context/assembler.js'
+import { buildSystemPrompt, buildWindow } from '../src/context/assembler.js'
+import { buildWorkspaceDigest } from '../src/context/workspace-digest.js'
 import { extractJson, pickCompressionRange, renderForSummary, SUMMARY_AGENT_ID } from '../src/context/compressor.js'
 import {
   countTokens,
@@ -166,13 +167,23 @@ describe('M2：五层装配器', () => {
     expect(withHumans.text).toContain('在回复行首用 @显示名')
   })
 
-  it('foldWorkspaceListing：>20 行折叠为目录统计，少量文件原样返回', () => {
-    const listing = Array.from({ length: 30 }, (_, i) => `- docs/f${i}.md（1KB）`).join('\n')
-    const folded = foldWorkspaceListing(listing)
-    expect(folded).toContain('docs/：30 个文件')
-    expect(folded).not.toContain('docs/f0.md')
-    const small = Array.from({ length: 5 }, (_, i) => `- a${i}.md（1KB）`).join('\n')
-    expect(foldWorkspaceListing(small)).toBe(small)
+  it('buildWorkspaceDigest：保留最近文件名 + 本轮增量，无交付件不注入', () => {
+    expect(buildWorkspaceDigest({ total: 0, recent: [], currentRun: [] })).toBe('')
+    const digest = buildWorkspaceDigest({
+      total: 12,
+      recent: [
+        { path: 'docs/需求.md', size: 2048, author: '费利' },
+        { path: 'docs/接口.md', size: 8192, version: 3 },
+      ],
+      currentRun: [{ path: 'docs/接口.md', size: 8192, version: 3 }],
+    })
+    expect(digest).toContain('已有 12 个交付件')
+    expect(digest).toContain('docs/需求.md（2KB · 费利）')
+    expect(digest).toContain('docs/接口.md（8KB · v3）')
+    expect(digest).toContain('本轮新增/变更：docs/接口.md（v3）')
+    expect(digest).toContain('read_file')
+    // 不再输出「目录计数」（旧折叠策略会让模型丢失文件名锚点）
+    expect(digest).not.toMatch(/：\d+ 个文件/)
   })
 
   it('buildWindow：预算驱动从后往前填充，丢弃最旧组保留最近回合', () => {

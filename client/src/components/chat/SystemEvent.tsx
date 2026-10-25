@@ -8,7 +8,7 @@
  * M16：新增 SystemMessage —— role='system' 成员事件条（加入 / 移出 / 换灵魂）。
  */
 import * as React from 'react'
-import { ArrowRight, CircleSlash, FileText, Wrench } from 'lucide-react'
+import { ArrowRight, CircleSlash, FileText, Package, Wrench } from 'lucide-react'
 import type { ChatMessage } from '@multi-agent/shared'
 import { useAgentStore } from '../../stores/agent-store'
 import { useSessionStore } from '../../stores/session-store'
@@ -48,6 +48,36 @@ function HandoffMeta({ message }: { message: ChatMessage }): React.JSX.Element |
         </span>
       )}
     </>
+  )
+}
+
+/**
+ * M87：交接包徽标 —— 只展示 handoff 工具显式声明的 artifacts / notes（自动带出的本轮产出
+ * 已在 HandoffMeta 中展示，不重复）。点击打开交付件面板并定位首件。
+ */
+function HandoffPackage({ message }: { message: ChatMessage }): React.JSX.Element | null {
+  const call = (message.toolCalls ?? []).find((c) => c.name === 'handoff' && c.status === 'ok')
+  if (!call) return null
+  const args = call.args ?? {}
+  const paths = Array.isArray(args.artifacts)
+    ? args.artifacts.filter((p): p is string => typeof p === 'string' && p.length > 0)
+    : []
+  const notes = typeof args.notes === 'string' && args.notes.trim() ? args.notes.trim() : undefined
+  if (paths.length === 0 && !notes) return null
+  return (
+    <button
+      type="button"
+      data-handoff-package=""
+      title={`${paths.length > 0 ? `交接包：${paths.join('、')}` : '交接口径'}${notes ? `\n口径：${notes}` : ''}`}
+      className="inline-flex shrink-0 items-center gap-1 rounded-full bg-primary/10 px-1.5 py-0.5 text-[10.5px] font-medium text-primary transition-colors hover:bg-primary/15"
+      onClick={() => {
+        if (paths[0]) useUiStore.getState().requestArtifact(paths[0])
+        useUiStore.getState().expandWorkspace('artifacts')
+      }}
+    >
+      <Package className="size-2.5" aria-hidden />
+      {paths.length > 0 ? `交接包 ${paths.length}` : '交接口径'}
+    </button>
   )
 }
 
@@ -103,6 +133,7 @@ export function HandoffBar({ message }: { message: ChatMessage }): React.JSX.Ele
             {names.join('、')}
           </span>
           <HandoffMeta message={message} />
+          <HandoffPackage message={message} />
         </div>
       </div>
     )
@@ -118,6 +149,7 @@ export function HandoffBar({ message }: { message: ChatMessage }): React.JSX.Ele
           <ArrowRight className="mx-0.5 size-3 shrink-0 text-muted-foreground/60" />
           <span className="font-medium text-primary">你的回合</span>
           <HandoffMeta message={message} />
+          <HandoffPackage message={message} />
         </div>
       </div>
     )
@@ -151,6 +183,7 @@ export function HandoffBar({ message }: { message: ChatMessage }): React.JSX.Ele
           </div>
           <span className="min-w-0 truncate font-medium text-primary">{names.join('、')}</span>
           <HandoffMeta message={message} />
+          <HandoffPackage message={message} />
         </div>
       </div>
     )

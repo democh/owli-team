@@ -46,7 +46,6 @@ import {
   errorText,
   financeGuard,
   fmtAmount,
-  fmtAsOf,
   fmtBarTime,
   fmtNum,
   fmtPct,

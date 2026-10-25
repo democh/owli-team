@@ -14,6 +14,8 @@
  */
 import { extractJson } from '../context/compressor.js'
 import { baseAgentId } from '@multi-agent/shared'
+import type { TurnIntent } from '@multi-agent/shared'
+import { coerceRouterIntent } from './intent.js'
 import { resilientStream } from '../llm/resilience.js'
 import type { ChatRequest, LlmProvider, LlmUsage } from '../llm/provider.js'
 import { getLogger } from '../logger.js'
@@ -57,6 +59,28 @@ export const ROUTE_SCHEMA: Record<string, unknown> = {
       description: '任务派发（按处理顺序 1-4 位，首位最先开工）',
     },
     reason: { type: 'string', description: '一句话决策理由（写入审计轨迹）' },
+    intent: {
+      type: 'object',
+      properties: {
+        needsPlan: {
+          type: 'boolean',
+          description: '是否需要先产出计划并等用户批准（多环节 / 需拍板 / 高风险 → true；简单直答 → false）',
+        },
+        needsReview: {
+          type: 'boolean',
+          description: '交付后是否需要结构化评审（有验收标准 / 交付件 / 高风险 → true）',
+        },
+        riskLevel: { type: 'string', enum: ['low', 'medium', 'high'], description: '动作风险等级（不可逆 / 对外 / 涉及资金合规 = high）' },
+        confidence: { type: 'number', description: '判定置信度 0-1（拿不准就低）' },
+        reasons: {
+          type: 'array',
+          items: { type: 'string' },
+          description: '面向用户的判定理由（≤3 条，短句）',
+        },
+      },
+      required: ['needsPlan', 'needsReview', 'riskLevel', 'confidence'],
+      additionalProperties: false,
+    },
   },
   required: ['members', 'assignments', 'reason'],
   additionalProperties: false,
@@ -70,6 +94,8 @@ const ROUTE_SYSTEM = `你是多 Agent 协作平台的路由器。根据用户的
 - 去重纪律：不要重复派给「最近接手」且已交付的角色；同一交付件不要重复创建（参考已有交付件清单）；
 - 阶段纪律：开场（opening）优先派最上游角色（需求澄清 / 研究定位类）；进行中（ongoing）接续未完成的环节，不重头开始；
 - mode：默认 execute；多环节复杂需求且建议用户先拍板 → plan；纯核对 / 验收类 → review（软建议，平台不会强制切换）；
+- intent（本回合的编排意图，比 mode 更重要）：needsPlan = 要不要先出计划等用户批准（多环节 / 需拍板 / 高风险 → true）；needsReview = 交付后要不要验收（有验收标准 / 交付件 / 高风险 → true）；riskLevel 按动作爆炸半径（不可逆 / 对外 / 涉及资金合规 = high）；confidence 拿不准就给低值；reasons ≤3 条短句（给用户看「为什么进规划」）；
+- 简单直答（闲聊 / 单一问题 / 轻量查询）→ needsPlan=false, needsReview=false；不要为了保险而一律规划；
 - members：仅当现有在场成员明显无法覆盖需求时，才从目录中召集未在场角色（id 列表，可空）；被召集者会自动加入会话；
 - 不要把任务派给 "user"；不要发明目录之外的 id；@ 直达的消息不会经过你（无需处理）；
 - reason：一句话决策理由（供用户审计）；
@@ -115,6 +141,8 @@ export interface PlatformRouteOutcome {
   /** 任务派发（有序；首位首发） */
   assignments: RouteAssignment[]
   reason: string
+  /** M88：本回合编排意图（needsPlan / needsReview / 风险 / 置信度；缺省 = 模型未给） */
+  intent?: TurnIntent
   error?: string
 }
 
@@ -206,7 +234,7 @@ export async function runPlatformRoute(input: PlatformRouteInput): Promise<Platf
 export function coerceRoutePlan(
   raw: unknown,
   opts: { presentIds: string[]; knownIds: Set<string> },
-): { members: string[]; assignments: RouteAssignment[]; reason: string } | null {
+): { members: string[]; assignments: RouteAssignment[]; reason: string; intent?: TurnIntent } | null {
   const obj = raw as { members?: unknown; assignments?: unknown; reason?: unknown } | undefined
   if (!obj || typeof obj !== 'object') return null
   const present = new Set(opts.presentIds)
@@ -241,5 +269,7 @@ export function coerceRoutePlan(
   if (assignments.length === 0) return null
 
   const reason = String(obj.reason ?? '').trim().slice(0, 200)
-  return { members, assignments, reason }
+  // M88：编排意图（模型未给 / 不合法 → undefined，由规则层意图兑底）
+  const intent = coerceRouterIntent((obj as { intent?: unknown }).intent)
+  return { members, assignments, reason, ...(intent ? { intent } : {}) }
 }

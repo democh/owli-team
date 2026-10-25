@@ -31,8 +31,11 @@ jobs:
       - name: Lint
         run: npm run lint
 
-      - name: Test（server + client，mock 模式，无外部依赖）
-        run: npm test
+      - name: Test（server + client，mock 模式，无外部依赖；含覆盖率门禁）
+        run: npm run test:coverage
+
+      - name: Build client + 首屏体积预算
+        run: npm run build -w @multi-agent/client && npm run check:bundle
 
       - name: Eval（mock 确定性断言 + 基线回归门禁）
         run: npm run eval

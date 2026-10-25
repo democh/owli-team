@@ -7,7 +7,7 @@
 import * as React from 'react'
 import { Check, Copy, Gauge, KeyRound, Loader2, Plus, ShieldCheck, Trash2, UserCheck, UserX, Users } from 'lucide-react'
 import { toast } from 'sonner'
-import { ApiError, apiDelete, apiGet, apiPatch, apiPost } from '../../lib/api'
+import { apiDelete, apiGet, apiPatch, apiPost } from '../../lib/api'
 import type { UserInfo } from '@multi-agent/shared'
 import { useAuthStore } from '../../stores/auth-store'
 import { Button } from '../ui/button'

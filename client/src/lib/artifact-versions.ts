@@ -2,7 +2,7 @@
  * M44（AF-1 / AF-2 / AF-5）：交付件版本列表共享缓存——按（会话 + 路径 + artifactVersion）拉取
  * `GET /api/sessions/:id/artifacts/versions`；供锚定条（vN + 版本线 + 修改者头像流）、变更卡
  * （vN 徽章）与签收块（vN）共用；失败静默（undefined → 降级「仅文件名」）。
- * 与 use-artifact-meta 同构：会话切换重置；版本递增保留旧表避免闪烁、按需重拉。
+ * 与 artifact-store 同构：会话切换重置；版本递增保留旧表避免闪烁、按需重拉。
  */
 import * as React from 'react'
 import { create } from 'zustand'

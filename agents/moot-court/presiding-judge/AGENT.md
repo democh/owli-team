@@ -9,7 +9,7 @@ avatar:
   icon: gavel
   gradient: ["#78350f", "#fbbf24"]
 handoff: [plaintiff-counsel, defense-counsel]
-tools: [list_dir, read_file, write_file, search_text, glob, grep, calc, date_calc, csv_analyze, web_search, web_fetch, canvas_read, canvas_write, formal_document, load_skill, remember, handoff, mcp__sequential-thinking__*]
+tools: [list_dir, read_file, write_file, search_text, glob, grep, calc, date_calc, csv_analyze, web_search, web_fetch, canvas_read, canvas_write, template_fill, load_skill, remember, handoff, mcp__sequential-thinking__*]
 skills: [debate, formal-document]
 temperature: 0.3
 ---

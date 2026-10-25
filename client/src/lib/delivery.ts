@@ -6,8 +6,10 @@
  *   落盘约定（server/src/finance），`data` / `raw` / `cache` / `tmp` / `temp` / `logs` 为
  *   通用中间态目录；快照数据行（实测 kind=code）会淹没结论性交付，故不进默认视图；
  * - 重要度分层：文档（md / office / pdf）> 图示与页面（html / mermaid）> 媒体 > 源码文本 > 数据（csv / json）；
- * - 全部纯前端派生（ADR 62）：零协议、服务端零改动；展开 / 收起为卡片本地态。
+ * - M87 起分层优先用服务端索引的 `deliveryClass`（单点判定）；旧服务端 / 测试替身缺省时
+ *   回退路径启发式。展开 / 收起仍为卡片本地态。
  */
+import type { DeliveryClass } from '@multi-agent/shared'
 import { extOf } from './artifacts'
 
 /** 默认展示的最终交付行数上限（超出部分进「其他」组） */
@@ -34,8 +36,12 @@ export function firstSegment(filePath: string): string {
   return i > 0 ? filePath.slice(0, i) : ''
 }
 
-/** 过程产物（快照 / 中间态数据）：位于过程目录下 */
-export function isProcessArtifact(filePath: string): boolean {
+/**
+ * 过程产物（快照 / 中间态数据）：服务端索引的 deliveryClass 优先（单点判定，含 uploads 附件），
+ * 旧服务端 / 测试替身无该字段时回退路径首段启发式。
+ */
+export function isProcessArtifact(filePath: string, deliveryClass?: DeliveryClass): boolean {
+  if (deliveryClass) return deliveryClass === 'process' || deliveryClass === 'attachment'
   return PROCESS_DIRS.has(firstSegment(filePath))
 }
 
@@ -57,13 +63,13 @@ export interface DeliveryPartition<T> {
 }
 
 /** 分层：最终交付按重要度取前 limit；过程产物与溢出项进「其他」（保持原交付顺序） */
-export function partitionDelivery<T extends { path: string }>(
+export function partitionDelivery<T extends { path: string; deliveryClass?: DeliveryClass }>(
   entries: T[],
   limit: number = DELIVERY_PRIMARY_LIMIT,
 ): DeliveryPartition<T> {
   const ranked = entries
     .map((entry, index) => ({ entry, index, tier: deliveryTier(entry.path) }))
-    .filter((d) => !isProcessArtifact(d.entry.path))
+    .filter((d) => !isProcessArtifact(d.entry.path, d.entry.deliveryClass))
     .sort((a, b) => a.tier - b.tier || a.index - b.index)
     .map((d) => d.entry)
   const primary = ranked.slice(0, limit)

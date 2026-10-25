@@ -14,11 +14,13 @@ import { Tabs, TabsList, TabsTrigger } from '../ui/tabs'
 export function MainTabs(): React.JSX.Element {
   const mainTab = useUiStore((s) => s.mainTab)
   const setMainTab = useUiStore((s) => s.setMainTab)
-  const newCanvasCount = useUiStore((s) => s.newCanvasCount)
+  // 临时隐藏：画布页签已注释，未读角标同步不再读取
+  // const newCanvasCount = useUiStore((s) => s.newCanvasCount)
   return (
     <Tabs value={mainTab} onValueChange={(v) => setMainTab(v as MainTab)}>
       <TabsList>
         <TabsTrigger value="chat">对话</TabsTrigger>
+        {/* 临时隐藏「画布」页签（恢复时取消本段注释）
         <TabsTrigger value="canvas">
           画布
           {newCanvasCount > 0 && (
@@ -30,6 +32,7 @@ export function MainTabs(): React.JSX.Element {
             </span>
           )}
         </TabsTrigger>
+        */}
       </TabsList>
     </Tabs>
   )

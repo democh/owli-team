@@ -230,6 +230,20 @@ export function createLoginLimiter(cfg: AppConfig): RequestHandler {
   })
 }
 
+/**
+ * 上传通道限流（IP 维度；上传路由在登录态解析之前，拿不到 req.user）。
+ * 默认 120 次/分钟：正常批量上传绰绰有余，同时封住「反复发 200MB 请求」的磁盘/内存耗尽路径。
+ */
+export function createUploadLimiter(): RequestHandler {
+  return rateLimit({
+    windowMs: 60_000,
+    limit: 120,
+    standardHeaders: 'draft-7',
+    legacyHeaders: false,
+    message: { error: '上传过于频繁（上限 120 次/分钟），请稍后再试' },
+  })
+}
+
 /** 统一 404/401 语义的守卫包装（Express 同步 next(err) 语义） */
 export function guard(handler: (req: Request, res: Response) => void): RequestHandler {
   return (req, res, next: NextFunction) => {

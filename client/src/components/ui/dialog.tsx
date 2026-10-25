@@ -34,8 +34,9 @@ const DialogContent = React.forwardRef<
       {...props}
     >
       {children}
+      {/* z-20：防止被弹窗内的 header / sticky 层盖住 */}
       {!hideClose && (
-        <DialogPrimitive.Close className="absolute right-3 top-3 rounded-sm p-1 text-muted-foreground opacity-70 transition-opacity hover:opacity-100 focus:outline-none">
+        <DialogPrimitive.Close className="absolute right-2.5 top-2.5 z-20 flex size-7 items-center justify-center rounded-md text-muted-foreground/80 transition-colors hover:bg-accent hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-ring">
           <X className="size-4" />
           <span className="sr-only">关闭</span>
         </DialogPrimitive.Close>

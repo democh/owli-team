@@ -48,7 +48,6 @@ import { MainTabs, PanelToggleButton } from './MainTabs'
 import { AgentAvatar } from '../agents/AgentAvatar'
 import { SessionList } from '../sessions/SessionList'
 import { ChatArea } from '../chat/ChatArea'
-import { ArtifactsView } from '../artifacts/ArtifactsView'
 import { TeamPanel } from '../team/TeamPanel'
 import { CommandPalette } from './CommandPalette'
 import { ConnectionBanner } from './ConnectionBanner'
@@ -62,18 +61,34 @@ import { PanTossHost } from '../chat/md-ext/pan/TossHost'
 import { TarotRitualHost } from '../chat/md-ext/tarot/TarotRitualHost'
 // M26：左侧图标导航栏 + 资产控制台（Agent / Skill / 连接 管理）
 import { ActivityRail } from '../console/ActivityRail'
-import { AgentConsole } from '../console/AgentConsole'
-import { SkillConsole } from '../console/SkillConsole'
-import { ConnectionsConsole } from '../console/ConnectionsConsole'
+// 包体：管理台 / 设置 / 交付件均为按需视图（不在首屏），统一 React.lazy 分包；
+// 首屏只加载对话 + 团队面板 + 会话列表。
+const AgentConsole = React.lazy(() =>
+  import('../console/AgentConsole').then((m) => ({ default: m.AgentConsole })),
+)
+const SkillConsole = React.lazy(() =>
+  import('../console/SkillConsole').then((m) => ({ default: m.SkillConsole })),
+)
+const ConnectionsConsole = React.lazy(() =>
+  import('../console/ConnectionsConsole').then((m) => ({ default: m.ConnectionsConsole })),
+)
 // M68：用户素材库（全员可见的个人资源视图）
-import { MaterialsConsole } from '../console/MaterialsConsole'
+const MaterialsConsole = React.lazy(() =>
+  import('../console/MaterialsConsole').then((m) => ({ default: m.MaterialsConsole })),
+)
 // M27：MCP 管理台（服务器 CRUD / 生命周期 / 会话绑定 / 工具可达性）
-import { McpConsole } from '../mcp/McpConsole'
+const McpConsole = React.lazy(() => import('../mcp/McpConsole').then((m) => ({ default: m.McpConsole })))
 // M36：设置（自弹窗升级为主区页：26 项运行期设置 + 资源概览 + 系统信息；M57：成员见个人偏好视图）
-import { SettingsView } from '../settings/SettingsView'
-import { PersonalSettingsView } from '../settings/PersonalSettingsView'
+const SettingsView = React.lazy(() =>
+  import('../settings/SettingsView').then((m) => ({ default: m.SettingsView })),
+)
+const PersonalSettingsView = React.lazy(() =>
+  import('../settings/PersonalSettingsView').then((m) => ({ default: m.PersonalSettingsView })),
+)
 // M57：用户管理（admin；邀请制建号 / 禁用 / 重置密码）
-import { UsersConsole } from '../console/UsersConsole'
+const UsersConsole = React.lazy(() =>
+  import('../console/UsersConsole').then((m) => ({ default: m.UsersConsole })),
+)
 
 /** 主区懒加载（M23）：数据库工作台 / SSH 终端按需分包（xterm + fit 约 300KB，不进首屏） */
 const DatabaseWorkbench = React.lazy(() =>
@@ -83,6 +98,11 @@ const TerminalView = React.lazy(() => import('../terminal/TerminalView').then((m
 
 /** 主区懒加载（M31）：画布与媒体创作（React Flow 舞台 + 生成面板，不进首屏） */
 const CanvasView = React.lazy(() => import('../canvas/CanvasView').then((m) => ({ default: m.CanvasView })))
+
+/** 主区懒加载：交付件视图（非对话主路径，按需分包） */
+const ArtifactsViewLazy = React.lazy(() =>
+  import('../artifacts/ArtifactsView').then((m) => ({ default: m.ArtifactsView })),
+)
 
 /** M49：深度工作台标题（主区深看态头部；返回目标见 ui-store.deepFrom） */
 const DEEP_TITLE: Partial<Record<MainTab, string>> = {
@@ -259,6 +279,15 @@ export function AppLayout(): React.JSX.Element {
   const closeWorkspaceView = useUiStore((s) => s.closeWorkspaceView)
   const rightPanelOpen = useUiStore((s) => s.rightPanelOpen)
   const leftPanelOpen = useUiStore((s) => s.leftPanelOpen)
+  // 临时隐藏「画布 / 素材库」：入口（页签 / 侧栏 / 命令面板 / 送上画布按钮）已注释，
+  // 此处兑底把 localStorage 残留的 canvas / materials 状态归一回对话 / 工作台，
+  // 否则旧状态会让隐藏的视图仍然被渲染。恢复时删除这个 effect 即可。
+  const setMainTab = useUiStore((s) => s.setMainTab)
+  const setAppView = useUiStore((s) => s.setAppView)
+  React.useEffect(() => {
+    if (mainTab === 'canvas') setMainTab('chat')
+    if (appView === 'materials') setAppView('workspace')
+  }, [mainTab, appView, setMainTab, setAppView])
   // M79-S：纯人聊天（人物会话且无 agent 编制）隐藏右栏——与 Composer AI 状态条同口径；
   // 不修改用户偏好（切走恢复原态），入口（头部按钮 / 窄屏团队按钮）一并隐藏
   const layoutAgents = useAgentStore((s) => s.agents)
@@ -429,8 +458,9 @@ export function AppLayout(): React.JSX.Element {
           {mainTab === 'chat' ? (
             <ChatArea />
           ) : mainTab === 'artifacts' ? (
-            <ArtifactsView />
+            <ArtifactsViewLazy />
           ) : mainTab === 'canvas' ? (
+            /* 临时隐藏画布（Tab / 命令面板入口已注释；此分支保留供恢复） */
             <CanvasView />
           ) : mainTab === 'database' ? (
             <DatabaseWorkbench />
@@ -476,22 +506,29 @@ export function AppLayout(): React.JSX.Element {
   // M36：设置（appView === 'settings'）同为主区全幅视图
   // M57：管理面控制台仅 admin 渲染；成员设置页 = 个人偏好视图；用户管理（admin ）
   // M68：素材库为全员可见的个人资源视图（无 isAdmin 条件）
-  const consoleView =
-    appView === 'materials' ? (
-      <MaterialsConsole />
-    ) : appView === 'agents' && isAdmin ? (
-      <AgentConsole />
-    ) : appView === 'skills' && isAdmin ? (
-      <SkillConsole />
-    ) : appView === 'mcp' && isAdmin ? (
-      <McpConsole />
-    ) : appView === 'connections' && isAdmin ? (
-      <ConnectionsConsole />
-    ) : appView === 'users' && isAdmin ? (
-      <UsersConsole />
-    ) : appView === 'settings' ? (
-      isAdmin ? <SettingsView /> : <PersonalSettingsView />
-    ) : null
+  // 懒加载边界：控制台 / 设置视图首次进入时才拉取对应 chunk（未进入则不加载）。
+  const consoleView = (
+    <React.Suspense
+      fallback={<div className="flex h-full items-center justify-center text-[12px] text-muted-foreground">正在加载…</div>}
+    >
+      {appView === 'materials' ? (
+        /* 临时隐藏素材库（rail / 命令面板入口已注释；此分支保留供恢复） */
+        <MaterialsConsole />
+      ) : appView === 'agents' && isAdmin ? (
+        <AgentConsole />
+      ) : appView === 'skills' && isAdmin ? (
+        <SkillConsole />
+      ) : appView === 'mcp' && isAdmin ? (
+        <McpConsole />
+      ) : appView === 'connections' && isAdmin ? (
+        <ConnectionsConsole />
+      ) : appView === 'users' && isAdmin ? (
+        <UsersConsole />
+      ) : appView === 'settings' ? (
+        isAdmin ? <SettingsView /> : <PersonalSettingsView />
+      ) : null}
+    </React.Suspense>
+  )
 
   if (narrow) {
     return (

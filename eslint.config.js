@@ -18,6 +18,9 @@ export default tseslint.config(
       'workspace/**',
       'evals/reports/**',
       '**/*.d.ts',
+      // 本地临时探针（git 已忽略，内容随任务变化）与上游数据夹具（保持原样以便对照）
+      'scripts/tmp-*',
+      'server/tests/fixtures/**',
     ],
   },
   js.configs.recommended,

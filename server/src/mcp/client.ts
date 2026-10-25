@@ -15,9 +15,14 @@ import { ToolListChangedNotificationSchema } from '@modelcontextprotocol/sdk/typ
 import type { McpServerConfig, McpTransportKind } from '@multi-agent/shared'
 import { getLogger } from '../logger.js'
 
-/** 连接 / 工具清单请求超时（固定值；工具调用超时按服务器配置） */
-export const MCP_CONNECT_TIMEOUT_MS = 15_000
-export const MCP_LIST_TIMEOUT_MS = 15_000
+/** 连接 / 工具清单请求超时（默认 15s；低配主机上 uvx/npx 冷启动或并发起步会踩线，可用 env 放大） */
+function envTimeoutMs(name: string): number {
+  const raw = Number(process.env[name])
+  return Number.isFinite(raw) && raw >= 1_000 ? raw : 15_000
+}
+
+export const MCP_CONNECT_TIMEOUT_MS = envTimeoutMs('MCP_CONNECT_TIMEOUT_MS')
+export const MCP_LIST_TIMEOUT_MS = envTimeoutMs('MCP_LIST_TIMEOUT_MS')
 
 /** 回灌模型的 detail 硬上限（防大结果撑爆上下文与落库） */
 export const MCP_RESULT_MAX_BYTES = 64 * 1024

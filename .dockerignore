@@ -16,13 +16,29 @@ workspace
 # 测试与报告（构建与运行镜像均不需要）
 e2e
 test-results
+test-results-*
 playwright-report
-evals/reports
+blob-report
+evals
+
+# 文档与设计素材（构建/运行均不需要；docs/intro-shots 约 240MB，含大体积 GIF）
+# 注意：不要用 *.md 之类的全局排除——agents/ 与 skills/ 下的 Markdown 是运行时资产
+docs
+*.gif
+
+# 临时脚本与探针（截图 / 抓取 / 合成）
+tmp-*
+scripts/tmp-*
+.tmp-*
 
 # 本地环境与杂项
 .env
 *.log
 .DS_Store
+# macOS 元数据（从 macOS 打包上传时会带上 AppleDouble：agents/._AGENT.md 等，
+# 会被 PromptLibrary 当成 prompt 解析而启动失败）
+._*
+**/._*
 
 # 仓库根的设计过程截图（仅根级 png，不影响子目录）
 /*.png

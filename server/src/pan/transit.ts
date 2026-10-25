@@ -14,7 +14,6 @@ import {
   computeNatal,
   houseOf,
   localToUtcMs,
-  norm360,
   signOf,
   type BodySpec,
   type NatalPlanet,

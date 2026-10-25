@@ -41,6 +41,8 @@ export interface ToolRuntime {
   agentId: string
   /** M77：本回合说话成员键（同角多魂/分身实例；经典实例缺省 = agentId）——计划作者 / 任务归属 / 成员寻址用 */
   memberKey?: string
+  /** M86：接力控制（manual = handoff 仅记录为建议，不自动接棒；缺省 = auto） */
+  relayMode?: 'auto' | 'manual'
   /** M57：会话属主用户 id（多用户隔离：remember global 记忆 / 归因；单用户兼容模式缺省） */
   userId?: string
   /**
@@ -56,6 +58,8 @@ export interface ToolRuntime {
   /** 会话工作区绝对路径（workspace/<sessionId>） */
   workspace: string
   artifacts: ArtifactStore
+  /** M87：交付件索引（handoff 交接包路径校验 / 补全；缺省 = 回退磁盘存在性校验） */
+  index?: import('../store/artifact-index.js').ArtifactIndex
   skills: SkillLibrary
   /** 会话长期记忆（remember 工具写入，L1 永不裁剪层） */
   memory: MemoryStore
@@ -209,8 +213,15 @@ export interface ToolResult {
   /** write_todos 更新后的任务清单（引擎广播 task:updated） */
   tasks?: TaskItem[]
   /** handoff 工具解析后的转交目标（成员 id 或 'user'；多目标 = fan-out 并行意图；引擎按消息分组收集）
-   *  M24：携带缘由与期望产出 —— 注入接收方回合指令（指派闭环） */
-  handoff?: { targets: string[]; reason?: string; expected_output?: string }
+   *  M24：携带缘由与期望产出 —— 注入接收方回合指令（指派闭环）
+   *  M87：交接包（交付物路径 + 交接口径）—— 缺省时引擎自动带出本轮产出 */
+  handoff?: {
+    targets: string[]
+    reason?: string
+    expected_output?: string
+    artifacts?: string[]
+    notes?: string
+  }
   /** M24：计划变更结果（引擎广播 plan:updated / 收口检测） */
   plan?: Plan
   /** M24：评审记录（引擎广播 review:submitted） */

@@ -68,7 +68,11 @@ const SLASH_COMMANDS: SlashCommand[] = [
  * 「执行」= 不显式指定（尊重会话开关）；「规划 / 评审」随消息提交 mode。
  */
 const MODE_CHIPS: Array<{ mode: TurnMode; label: string; title: string }> = [
-  { mode: 'execute', label: '执行', title: '默认：不显式指定范式（尊重会话「规划先行」开关，否则正常执行）' },
+  {
+    mode: 'execute',
+    label: '自动',
+    title: '自动编排：由意图判定决定（多环节 / 高风险 → 先出计划；验收类 → 评审），可随时在右侧运行面板看到依据',
+  },
   { mode: 'plan', label: '规划', title: '规划范式：首棒只读调研并提交计划，待你批准后执行（仅对下一条消息生效，发送后复位）' },
   { mode: 'review', label: '评审', title: '评审范式：成员输出结构化评审判定（仅对下一条消息生效，发送后复位）' },
 ]
@@ -1056,12 +1060,16 @@ export function Composer({ onReady, locked = false, lockedHint }: ComposerProps)
           </span>
           {mode !== 'execute' ? (
             <span className="text-primary/80">本条以「{MODE_CHIPS.find((c) => c.mode === mode)?.label}」发送，仅生效一次</span>
-          ) : session?.planFirst ? (
+          ) : session?.autonomy === 'always-plan' || (!session?.autonomy && session?.planFirst) ? (
             <span
               className="text-muted-foreground/80"
-              title="会话「规划先行」已开启：未显式选择时默认规划范式（运行中可在任务视图切换）"
+              title="会话「规划先行」已开启：未显式选择时默认规划范式（可在右栏任务视图切换为自动编排）"
             >
               规划先行
+            </span>
+          ) : session?.autonomy === 'never-plan' ? (
+            <span className="text-muted-foreground/80" title="会话「直接执行」已开启：新消息默认不规划（高风险动作仍会先拍板）">
+              直接执行
             </span>
           ) : null}
         </span>

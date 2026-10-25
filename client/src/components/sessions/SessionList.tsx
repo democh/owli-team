@@ -76,7 +76,8 @@ export function SessionList({ onSelect }: SessionListProps): React.JSX.Element {
     [sessions, sessionFilter],
   )
   // M31 修订：其他会话的画布写入标记（agent 写入小点；切到该会话即清零）
-  const otherCanvasWrites = useUiStore((s) => s.otherCanvasWrites)
+  // 临时隐藏画布：小点已注释，数据源同步不再订阅
+  // const otherCanvasWrites = useUiStore((s) => s.otherCanvasWrites)
   React.useEffect(() => {
     if (currentId) useUiStore.getState().clearOtherCanvasWrite(currentId)
   }, [currentId])
@@ -382,6 +383,7 @@ export function SessionList({ onSelect }: SessionListProps): React.JSX.Element {
                       {s.role === 'editor' ? '协作' : '只读'}
                     </Badge>
                   )}
+                  {/* 临时隐藏画布：画布写入小点已注释（恢复时取消本段注释）
                   {otherCanvasWrites[s.id] > 0 && (
                     <span
                       className="size-1.5 shrink-0 rounded-full bg-primary"
@@ -389,6 +391,7 @@ export function SessionList({ onSelect }: SessionListProps): React.JSX.Element {
                       aria-label="画布有新写入"
                     />
                   )}
+                  */}
                   {count > 0 && (
                     <span
                       className="badge-pop inline-flex h-[18px] min-w-[18px] shrink-0 items-center justify-center rounded-full bg-destructive px-1 text-[10px] font-bold leading-none tabular-nums text-destructive-foreground shadow-sm"

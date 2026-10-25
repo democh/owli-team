@@ -176,7 +176,7 @@ export function parseVoiceDoc(body: string): VoiceDoc {
   const bannedLine = body.split('\n').find((l) => l.includes('禁用词表'))
   if (bannedLine) {
     const rest = bannedLine.split(/禁用词表[：:]/)[1] ?? ''
-    for (const w of rest.split(/[\/、，,；;]/)) {
+    for (const w of rest.split(/[、，,；;]|\//)) {
       const word = w.trim().replace(/[。\s].*$/, '')
       if (word) banned.push(word)
     }
@@ -191,6 +191,8 @@ export interface PromptLibraryOptions {
   promptsDir: string
   /** 告警输出（默认 console.warn；测试可注入静音） */
   onWarn?: (message: string) => void
+  /** 热更新扫描节流（毫秒）：窗口内的重复读跳过扫盘；0 = 每次读都扫（测试环境默认 0） */
+  scanIntervalMs?: number
 }
 
 /** 旧 prompts/ 回退模式下的合成场景（DEFAULT_CHAIN 仅用于此处与旧测试） */
@@ -239,10 +241,17 @@ export class PromptLibrary {
   private protocol = ''
   /** 变更签名：参与加载的全部文件（路径 → mtime；avatar.png 记 0，仅存在性） */
   private files = new Map<string, number>()
+  /** 排序后的角色列表（list() 热路径免重复排序；reload 时重建） */
+  private sortedAgents: AgentDefinition[] = []
+  private readonly scanIntervalMs: number
+  private lastScanAt = 0
 
   constructor(opts: PromptLibraryOptions) {
     this.agentsDir = opts.agentsDir
     this.promptsDir = opts.promptsDir
+    // 默认 500ms：扫盘一次约 1.5ms（646 次 stat），运行期每个回合数十次读取需节流；
+    // 测试（NODE_ENV=test）保持 0，维持「写盘即生效」断言口径。
+    this.scanIntervalMs = opts.scanIntervalMs ?? (process.env.NODE_ENV === 'test' ? 0 : 500)
     this.warn = opts.onWarn ?? ((message: string) => console.warn(message))
     this.reload()
   }
@@ -274,15 +283,7 @@ export class PromptLibrary {
   /** 全部角色：按「场景排序 → 场景内编制链序 → id」排序 */
   list(): AgentDefinition[] {
     this.maybeReload()
-    const groupIndex = new Map(this.groupList.map((g, i) => [g.id, i]))
-    const chainIndex = new Map<string, number>()
-    for (const g of this.groupList) g.chain.forEach((id, i) => chainIndex.set(`${g.id}:${id}`, i))
-    const rank = (a: AgentDefinition) => {
-      const gi = groupIndex.get(a.group) ?? 999
-      const ci = chainIndex.get(`${a.group}:${a.id}`) ?? 999
-      return gi * 10_000 + ci
-    }
-    return [...this.agents.values()].sort((a, b) => rank(a) - rank(b) || a.id.localeCompare(b.id))
+    return [...this.sortedAgents]
   }
 
   get(id: string): AgentDefinition | undefined {
@@ -331,6 +332,21 @@ export class PromptLibrary {
     if (fs.existsSync(this.agentsDir)) this.reloadAgents()
     else this.reloadLegacy()
     this.files = this.collectFiles()
+    this.sortedAgents = this.sortAgents()
+    this.lastScanAt = Date.now()
+  }
+
+  /** 角色排序（list() 输出口径；reload 时一次性计算） */
+  private sortAgents(): AgentDefinition[] {
+    const groupIndex = new Map(this.groupList.map((g, i) => [g.id, i]))
+    const chainIndex = new Map<string, number>()
+    for (const g of this.groupList) g.chain.forEach((id, i) => chainIndex.set(`${g.id}:${id}`, i))
+    const rank = (a: AgentDefinition) => {
+      const gi = groupIndex.get(a.group) ?? 999
+      const ci = chainIndex.get(`${a.group}:${a.id}`) ?? 999
+      return gi * 10_000 + ci
+    }
+    return [...this.agents.values()].sort((a, b) => rank(a) - rank(b) || a.id.localeCompare(b.id))
   }
 
   /** 校验模式：直接抛出结构性错误，返回语义问题列表（check:agents 脚本使用） */
@@ -679,6 +695,8 @@ export class PromptLibrary {
   }
 
   private maybeReload(): void {
+    // 节流：窗口内重复读取不扫盘（写入侧经 AssetManager.reload() 主动刷新，不受影响）
+    if (this.scanIntervalMs > 0 && Date.now() - this.lastScanAt < this.scanIntervalMs) return
     try {
       // 模式切换检测：agents/ 出现即升级（运行中完成迁移也可热生效）；消失即回退
       const hasAgents = fs.existsSync(this.agentsDir)

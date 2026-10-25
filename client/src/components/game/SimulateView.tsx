@@ -20,7 +20,6 @@ function ChartShell({ build }: { build: () => ReturnType<typeof buildFanOption> 
       setFailed(true)
       return
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [build])
   return (
     <div className="md-game-chart-frame">

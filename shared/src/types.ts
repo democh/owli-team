@@ -198,12 +198,16 @@ export interface Session {
   kind?: SessionKind
   /** M79：触发策略（auto = 无 @ 消息交给平台路由组队（现状）；mention = 仅点名唤起；缺省 = auto） */
   routeMode?: SessionRouteMode
+  /** M86：接力控制（auto = 成员可自动转交下一棒；manual = 仅用户点按派发才接棒；缺省按会话形态推导，见 resolveRelayMode） */
+  relay?: SessionRelayMode
   /** M79：持球方（被 agent 点名待回复的 userIds；空/缺省 = 无） */
   waitingOn?: string[]
   /** 会话级灵魂覆盖（经典成员键 = agentId → soulId；空 = 用角色默认；M16 起支持随时换装） */
   memberSouls?: Record<string, string>
   /** M24：规划先行（会话级开关；用户未显式指定范式时首波默认进入 plan 范式；默认关闭） */
   planFirst?: boolean
+  /** M88：自动编排策略（auto = 按意图判定；always-plan / never-plan = 强制；缺省 = auto） */
+  autonomy?: SessionAutonomy
   /** M46-2：串行执行（会话级开关；开 = 波次逐位出场，便于跟进与查看；缺省开启；关闭 = 场景可并行成波） */
   serial?: boolean
   /** 关联项目（M6：真实仓库挂载）；缺省 = 会话级沙箱工作区 */
@@ -343,6 +347,8 @@ export interface ChatMessage {
   reasoning?: string
   /** M24：本条消息所属回合范式（规划 / 评审；缺省 = 执行） */
   mode?: TurnMode
+  /** M88：范式来源（user = 用户显式选择；rule / router = 自动判定；plan = 计划派发；缺省 = 未判定） */
+  modeSource?: IntentSource
   /** M35：本条消息由定时任务注入时 = 任务 id（UI 渲染「定时」徽章并可回链任务；缺省 = 普通消息） */
   scheduleId?: string
   /** M80-B：表情回应聚合（服务端投影；mine 按请求者计算；缺省 = 无回应） */
@@ -398,7 +404,11 @@ export type RunEndReason = 'completed' | 'stopped' | 'error' | 'turn-limit' | 'i
 
 export type RunEvent =
   | { type: 'user:message'; message: ChatMessage }
-  | { type: 'run:start'; runId: string; sessionId: string; queue: string[] }
+  | { type: 'run:start'; runId: string; sessionId: string; queue: string[]; intent?: TurnIntent }
+  /** M88：编排判定（首波前 / PRS 合并后；携带可解释理由与派生范式） */
+  | { type: 'intent:decided'; runId: string; sessionId: string; intent: TurnIntent; mode: TurnMode }
+  /** M88：运行期纠偏建议（写扩散到多成员/多文件 → 建议下一条改用「规划」；仅提示，不强制改判） */
+  | { type: 'intent:suggest-plan'; runId: string; sessionId: string; writes: number; agents: string[] }
   /** M16：波次启动（串行波也发，members 长度 1；前端统一处理；M24 起携带本波默认范式） */
   | { type: 'wave:start'; runId: string; sessionId: string; waveIndex: number; members: string[]; mode?: TurnMode }
   | { type: 'turn:start'; runId: string; agentId: string; messageId: string; turnIndex: number; mode?: TurnMode; memberKey?: string }
@@ -552,6 +562,16 @@ export type ArtifactKind =
   | 'pdf'
   | 'other'
 
+/** 交付件来源（索引登记时的写入通道；scan = 低频校准发现的外部文件） */
+export type ArtifactOrigin = 'tool' | 'upload' | 'media' | 'canvas' | 'git' | 'scan'
+
+/**
+ * 交付件分层（服务端单点判定）：
+ * - final：结论性交付；process：行情快照 / 中间态数据；
+ * - attachment：用户上传附件；media：画布素材与媒体生成产物。
+ */
+export type DeliveryClass = 'final' | 'process' | 'attachment' | 'media'
+
 export interface Artifact {
   /** 会话工作区内的相对路径 */
   path: string
@@ -562,6 +582,12 @@ export interface Artifact {
   updatedAt: string
   /** M6：repo / worktree 模式下来自 git 变更集的变更类型（A 新增 / M 修改 / D 删除 / R 重命名…） */
   gitStatus?: string
+  /** 交付件索引：来源 / 分层 / 归属（旧服务端响应缺省这些字段，前端按路径启发式回退） */
+  origin?: ArtifactOrigin
+  deliveryClass?: DeliveryClass
+  runId?: string
+  /** 会话内单调递增的索引版本（增量同步与 ETag 依据） */
+  revision?: number
 }
 
 // ---------- 交付件预览（M24：Office 服务端轻量解析） ----------
@@ -1038,6 +1064,28 @@ export interface MetricsSummary {
   toolCalls: number
   toolFailures: number
   avgTurnMs: number
+}
+
+/**
+ * M89：角色级质量指标（按 agent 聚合）。
+ * 数据源：usage（kind=turn 的 token/费用）、tool_metrics（工具成败）、plans.steps（步骤推进）、reviews（评审判定）。
+ * 用于定位“哪个角色在拖后腿”——回合成本高 / 工具失败多 / 步骤阻塞 / 评审不通过。
+ */
+export interface AgentMetric {
+  agentId: string
+  /** 模型调用轮次（kind=turn；含回合内的工具子轮） */
+  turns: number
+  promptTokens: number
+  completionTokens: number
+  costUsd: number
+  toolCalls: number
+  toolFailures: number
+  /** 计划步骤：完成 / 阻塞（owner 缺省 = 计划作者） */
+  planStepsDone: number
+  planStepsBlocked: number
+  /** 评审次数与未通过次数（作为评审人） */
+  reviews: number
+  reviewFails: number
 }
 
 /** M61-D6：调度健康聚合（路由 / 波次 / 抑制 / 冲突 / 接单）——指标接口来源 */
@@ -2058,6 +2106,48 @@ export const DEFAULT_SPACE_ID = 'default'
 
 /** 触发策略（M79-E）：auto = 无 @ 消息交给平台路由（现状）；mention = 仅点名唤起 */
 export type SessionRouteMode = 'auto' | 'mention'
+
+/**
+ * 接力控制（M86）：agent 之间是否允许自动转交下一棒。
+ * - auto = 现状（成员 handoff 即接棒，含未在场角色自动召集）；
+ * - manual = 对话模式（handoff 仅记录为「建议」，Run 交还用户，由用户点按派发）。
+ * 缺省按会话形态推导（纯人聊天 / 单助手对话 = manual，多成员团队 = auto）。
+ */
+export type SessionRelayMode = 'auto' | 'manual'
+
+/**
+ * 自动编排策略（M88）：决定“这一条消息该不该先出计划”。
+ * - auto = 按意图判定（规则 + PRS 结构化判定）；用户显式 mode 永远优先；
+ * - always-plan = 强制规划（等价于旧 planFirst=true）；
+ * - never-plan = 强制直接执行（高风险动作仍会强制规划，见 intent 阈值）。
+ */
+export type SessionAutonomy = 'auto' | 'always-plan' | 'never-plan'
+
+/** 意图判定来源（可审计：为什么这一棒进了规划/评审） */
+export type IntentSource = 'user' | 'rule' | 'router' | 'policy' | 'default'
+
+/** 意图风险等级（高风险强制规划；阈值按风险分档） */
+export type IntentRisk = 'low' | 'medium' | 'high'
+
+/**
+ * 回合意图（M88）：编排层的判定结果，不是用户输入。
+ * needsPlan / needsReview 是两个独立布尔门（可组合），TurnMode 由它们派生。
+ */
+export interface TurnIntent {
+  needsPlan: boolean
+  needsReview: boolean
+  /**
+   * M89：首波是否直接以评审范式发言（仅“纯验收请求”）。
+   * 交付后的评审门只用 needsReview，不置此位——否则“整理方案并检查”会被误判为只读。
+   */
+  reviewFirst?: boolean
+  risk: IntentRisk
+  /** 判定置信度 0-1（规则命中 / 路由模型自评） */
+  confidence: number
+  /** 可解释理由（≤3 条，面向用户展示） */
+  reasons: string[]
+  source: IntentSource
+}
 
 /** 收件箱事件类型（user_inbox.type） */
 export type InboxType =

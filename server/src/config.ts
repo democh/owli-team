@@ -159,6 +159,8 @@ export interface AppConfig {
   toolResultMaxTokens: number
   toolDetailKeep: number
   handoffMode: 'auto' | 'tool' | 'text'
+  /** M88：自动编排（意图判定）总开关；关闭 = 仅尊重显式 mode / planFirst（旧行为） */
+  autonomyEnabled: boolean
 
   /** Agent 资产包目录（agents/<场景>/<agent>/，M15 起唯一规范位置） */
   agentsDir: string
@@ -505,6 +507,8 @@ export function loadConfig(): AppConfig {
     toolResultMaxTokens: envNum('TOOL_RESULT_MAX_TOKENS', 4_000, 100),
     toolDetailKeep: envNum('TOOL_DETAIL_KEEP', 6, 0),
     handoffMode: envEnum('HANDOFF_MODE', ['auto', 'tool', 'text'] as const, 'auto'),
+    // M88：默认开启（低置信度仍按直接执行，行为差异收敛在“明确的多环节/高风险需求”）
+    autonomyEnabled: envBool('AUTONOMY_ENABLED', true),
 
     agentsDir: resolveDir('AGENTS_DIR', 'agents'),
     promptsDir: resolveDir('PROMPTS_DIR', 'prompts'),

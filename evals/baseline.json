@@ -1,174 +1,510 @@
 {
-  "ts": "2026-09-22T16-23-26",
+  "ts": "2026-10-25T06-12-04",
   "mode": "mock",
   "tasks": {
     "full-relay-login": {
-      "ok": true
+      "ok": true,
+      "stats": {
+        "turns": 7,
+        "promptTokens": 195331,
+        "completionTokens": 3207,
+        "durationMs": 580
+      }
     },
     "three-member-register": {
-      "ok": true
+      "ok": true,
+      "stats": {
+        "turns": 3,
+        "promptTokens": 81152,
+        "completionTokens": 1428,
+        "durationMs": 155
+      }
     },
     "design-flow-payment": {
-      "ok": true
+      "ok": true,
+      "stats": {
+        "turns": 3,
+        "promptTokens": 86904,
+        "completionTokens": 1388,
+        "durationMs": 158
+      }
     },
     "qa-quality-search": {
-      "ok": true
+      "ok": true,
+      "stats": {
+        "turns": 3,
+        "promptTokens": 80375,
+        "completionTokens": 1431,
+        "durationMs": 156
+      }
     },
     "single-backend-message": {
-      "ok": true
+      "ok": true,
+      "stats": {
+        "turns": 1,
+        "promptTokens": 36880,
+        "completionTokens": 558,
+        "durationMs": 111
+      }
     },
     "full-chain-export-budget": {
-      "ok": true
+      "ok": true,
+      "stats": {
+        "turns": 7,
+        "promptTokens": 194889,
+        "completionTokens": 3207,
+        "durationMs": 103
+      }
     },
     "blob-upload-contracts": {
-      "ok": true
+      "ok": true,
+      "stats": {
+        "turns": 4,
+        "promptTokens": 111101,
+        "completionTokens": 1903,
+        "durationMs": 264
+      }
     },
     "seven-relay-permission": {
-      "ok": true
+      "ok": true,
+      "stats": {
+        "turns": 7,
+        "promptTokens": 195050,
+        "completionTokens": 3207,
+        "durationMs": 106
+      }
     },
     "designer-devops-favorite": {
-      "ok": true
+      "ok": true,
+      "stats": {
+        "turns": 4,
+        "promptTokens": 110059,
+        "completionTokens": 1849,
+        "durationMs": 191
+      }
     },
     "judge-comments": {
-      "ok": true
+      "ok": true,
+      "stats": {
+        "turns": 3,
+        "promptTokens": 81183,
+        "completionTokens": 1428,
+        "durationMs": 89
+      }
     },
     "brainstorm-roundtable": {
-      "ok": true
+      "ok": true,
+      "stats": {
+        "turns": 4,
+        "promptTokens": 107179,
+        "completionTokens": 1519,
+        "durationMs": 270
+      }
     },
     "research-verification": {
-      "ok": true
+      "ok": true,
+      "stats": {
+        "turns": 4,
+        "promptTokens": 115860,
+        "completionTokens": 1275,
+        "durationMs": 283
+      }
     },
     "opc-weekly-review": {
-      "ok": true
+      "ok": true,
+      "stats": {
+        "turns": 5,
+        "promptTokens": 122712,
+        "completionTokens": 2587,
+        "durationMs": 265
+      }
     },
     "content-campaign": {
-      "ok": true
+      "ok": true,
+      "stats": {
+        "turns": 4,
+        "promptTokens": 108464,
+        "completionTokens": 1943,
+        "durationMs": 255
+      }
     },
     "memory-recall-injection": {
-      "ok": true
+      "ok": true,
+      "stats": {
+        "turns": 1,
+        "promptTokens": 37059,
+        "completionTokens": 566,
+        "durationMs": 93
+      }
     },
     "invest-quick-review": {
-      "ok": true
+      "ok": true,
+      "stats": {
+        "turns": 3,
+        "promptTokens": 85909,
+        "completionTokens": 1848,
+        "durationMs": 238
+      }
     },
     "invest-strategy-research": {
-      "ok": true
+      "ok": true,
+      "stats": {
+        "turns": 4,
+        "promptTokens": 121076,
+        "completionTokens": 2519,
+        "durationMs": 244
+      }
     },
     "platform-routing": {
-      "ok": true
+      "ok": true,
+      "stats": {
+        "turns": 3,
+        "promptTokens": 81276,
+        "completionTokens": 1447,
+        "durationMs": 92
+      }
     },
     "bull-bear-duel": {
-      "ok": true
+      "ok": true,
+      "stats": {
+        "turns": 5,
+        "promptTokens": 140270,
+        "completionTokens": 3156,
+        "durationMs": 203
+      }
     },
     "blank-scene": {
-      "ok": true
+      "ok": true,
+      "stats": {
+        "turns": 1,
+        "promptTokens": 17724,
+        "completionTokens": 445,
+        "durationMs": 109
+      }
     },
     "negotiation": {
-      "ok": true
+      "ok": true,
+      "stats": {
+        "turns": 3,
+        "promptTokens": 63268,
+        "completionTokens": 1283,
+        "durationMs": 183
+      }
     },
     "society": {
-      "ok": true
+      "ok": true,
+      "stats": {
+        "turns": 3,
+        "promptTokens": 66630,
+        "completionTokens": 1150,
+        "durationMs": 209
+      }
     },
     "career": {
-      "ok": true
+      "ok": true,
+      "stats": {
+        "turns": 4,
+        "promptTokens": 91432,
+        "completionTokens": 1471,
+        "durationMs": 249
+      }
     },
     "gamedesign": {
-      "ok": true
+      "ok": true,
+      "stats": {
+        "turns": 4,
+        "promptTokens": 93647,
+        "completionTokens": 1486,
+        "durationMs": 277
+      }
     },
     "housing": {
-      "ok": true
+      "ok": true,
+      "stats": {
+        "turns": 3,
+        "promptTokens": 69214,
+        "completionTokens": 1167,
+        "durationMs": 223
+      }
     },
     "care": {
-      "ok": true
+      "ok": true,
+      "stats": {
+        "turns": 3,
+        "promptTokens": 65455,
+        "completionTokens": 1130,
+        "durationMs": 220
+      }
     },
     "metaphysics": {
-      "ok": true
+      "ok": true,
+      "stats": {
+        "turns": 3,
+        "promptTokens": 73735,
+        "completionTokens": 1023,
+        "durationMs": 234
+      }
     },
     "routing-finance": {
-      "ok": true
+      "ok": true,
+      "stats": {
+        "turns": 3,
+        "promptTokens": 76856,
+        "completionTokens": 1484,
+        "durationMs": 188
+      }
     },
     "handoff-receipts": {
-      "ok": true
+      "ok": true,
+      "stats": {
+        "turns": 2,
+        "promptTokens": 56487,
+        "completionTokens": 953,
+        "durationMs": 133
+      }
     },
     "scheduling-guards": {
-      "ok": true
+      "ok": true,
+      "stats": {
+        "turns": 3,
+        "promptTokens": 71987,
+        "completionTokens": 1367,
+        "durationMs": 144
+      }
     },
     "parallel-guard": {
-      "ok": true
+      "ok": true,
+      "stats": {
+        "turns": 2,
+        "promptTokens": 50902,
+        "completionTokens": 1237,
+        "durationMs": 121
+      }
     },
     "interior": {
-      "ok": true
+      "ok": true,
+      "stats": {
+        "turns": 4,
+        "promptTokens": 80759,
+        "completionTokens": 1391,
+        "durationMs": 201
+      }
     },
     "metaphysics-transit-synastry": {
-      "ok": true
+      "ok": true,
+      "stats": {
+        "turns": 2,
+        "promptTokens": 47458,
+        "completionTokens": 1859,
+        "durationMs": 170
+      }
     },
     "fengshui": {
-      "ok": true
+      "ok": true,
+      "stats": {
+        "turns": 2,
+        "promptTokens": 42914,
+        "completionTokens": 767,
+        "durationMs": 164
+      }
     },
     "metaphysics-daliuren-qimen": {
-      "ok": true
+      "ok": true,
+      "stats": {
+        "turns": 2,
+        "promptTokens": 49171,
+        "completionTokens": 1223,
+        "durationMs": 181
+      }
     },
     "health": {
-      "ok": true
+      "ok": true,
+      "stats": {
+        "turns": 3,
+        "promptTokens": 61109,
+        "completionTokens": 1582,
+        "durationMs": 192
+      }
     },
     "home": {
-      "ok": true
+      "ok": true,
+      "stats": {
+        "turns": 4,
+        "promptTokens": 75306,
+        "completionTokens": 1924,
+        "durationMs": 227
+      }
     },
     "wealth": {
-      "ok": true
+      "ok": true,
+      "stats": {
+        "turns": 3,
+        "promptTokens": 66930,
+        "completionTokens": 1035,
+        "durationMs": 215
+      }
     },
     "personal": {
-      "ok": true
+      "ok": true,
+      "stats": {
+        "turns": 3,
+        "promptTokens": 58819,
+        "completionTokens": 1243,
+        "durationMs": 194
+      }
     },
     "learning": {
-      "ok": true
+      "ok": true,
+      "stats": {
+        "turns": 3,
+        "promptTokens": 54498,
+        "completionTokens": 1407,
+        "durationMs": 186
+      }
     },
     "travel": {
-      "ok": true
+      "ok": true,
+      "stats": {
+        "turns": 3,
+        "promptTokens": 62681,
+        "completionTokens": 1047,
+        "durationMs": 209
+      }
     },
     "relationship": {
-      "ok": true
+      "ok": true,
+      "stats": {
+        "turns": 3,
+        "promptTokens": 64797,
+        "completionTokens": 855,
+        "durationMs": 216
+      }
     },
     "legal-personal": {
-      "ok": true
+      "ok": true,
+      "stats": {
+        "turns": 3,
+        "promptTokens": 67752,
+        "completionTokens": 890,
+        "durationMs": 230
+      }
     },
     "ops": {
-      "ok": true
+      "ok": true,
+      "stats": {
+        "turns": 4,
+        "promptTokens": 90564,
+        "completionTokens": 1710,
+        "durationMs": 276
+      }
     },
     "tarot": {
-      "ok": true
+      "ok": true,
+      "stats": {
+        "turns": 3,
+        "promptTokens": 68286,
+        "completionTokens": 856,
+        "durationMs": 229
+      }
     },
     "trpg": {
-      "ok": true
+      "ok": true,
+      "stats": {
+        "turns": 4,
+        "promptTokens": 91167,
+        "completionTokens": 1136,
+        "durationMs": 270
+      }
     },
     "philosophy": {
-      "ok": true
+      "ok": true,
+      "stats": {
+        "turns": 3,
+        "promptTokens": 64929,
+        "completionTokens": 837,
+        "durationMs": 208
+      }
     },
     "creator": {
-      "ok": true
+      "ok": true,
+      "stats": {
+        "turns": 4,
+        "promptTokens": 90745,
+        "completionTokens": 1150,
+        "durationMs": 238
+      }
     },
     "ecommerce": {
-      "ok": true
+      "ok": true,
+      "stats": {
+        "turns": 4,
+        "promptTokens": 89521,
+        "completionTokens": 1239,
+        "durationMs": 249
+      }
     },
     "funding-dd": {
-      "ok": true
+      "ok": true,
+      "stats": {
+        "turns": 4,
+        "promptTokens": 93783,
+        "completionTokens": 1471,
+        "durationMs": 256
+      }
     },
     "writing": {
-      "ok": true
+      "ok": true,
+      "stats": {
+        "turns": 4,
+        "promptTokens": 92244,
+        "completionTokens": 1334,
+        "durationMs": 269
+      }
     },
     "moot-court": {
-      "ok": true
+      "ok": true,
+      "stats": {
+        "turns": 3,
+        "promptTokens": 68731,
+        "completionTokens": 817,
+        "durationMs": 205
+      }
     },
     "wellness-mind": {
-      "ok": true
+      "ok": true,
+      "stats": {
+        "turns": 3,
+        "promptTokens": 63578,
+        "completionTokens": 911,
+        "durationMs": 218
+      }
     },
     "finance-deep": {
-      "ok": true
+      "ok": true,
+      "stats": {
+        "turns": 4,
+        "promptTokens": 91839,
+        "completionTokens": 1893,
+        "durationMs": 203
+      }
     },
     "sales": {
-      "ok": true
+      "ok": true,
+      "stats": {
+        "turns": 4,
+        "promptTokens": 91713,
+        "completionTokens": 1960,
+        "durationMs": 233
+      }
     },
     "academic": {
-      "ok": true
+      "ok": true,
+      "stats": {
+        "turns": 4,
+        "promptTokens": 100782,
+        "completionTokens": 1157,
+        "durationMs": 270
+      }
     }
   }
 }

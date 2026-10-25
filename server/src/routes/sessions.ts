@@ -13,6 +13,7 @@ import {
   addMembersSchema,
   confirmSchema,
   createSessionSchema,
+  dispatchSchema,
   editMessageSchema,
   firstIssue,
   forkSchema,
@@ -375,6 +376,8 @@ export function createSessionsRouter(deps: ApiDeps): Router {
       parsed.data.routeMode !== undefined ||
       parsed.data.serial !== undefined ||
       parsed.data.planFirst !== undefined ||
+      parsed.data.relay !== undefined ||
+      parsed.data.autonomy !== undefined ||
       parsed.data.spaceId !== undefined
     if (managed && deps.access.multiUser) {
       const me = userOf(req)
@@ -402,6 +405,36 @@ export function createSessionsRouter(deps: ApiDeps): Router {
         resourceId: session.id,
         sessionId: session.id,
         detail: { routeMode: parsed.data.routeMode },
+      })
+    }
+    // M86：接力控制（auto / manual / null = 恢复按会话形态推导）——广播 session-meta（多端头部开关同步）
+    if (parsed.data.relay !== undefined) {
+      session = deps.sessions.setRelay(session.id, parsed.data.relay ?? undefined) ?? session
+      deps.notify.publish({ type: 'notify:session-meta', sessionId: session.id, payload: { session } })
+      deps.audit?.record({
+        actor: 'user',
+        userId: userOf(req)?.id,
+        ip: req.ip,
+        action: 'session.relay-mode-set',
+        resourceType: 'session',
+        resourceId: session.id,
+        sessionId: session.id,
+        detail: { relay: parsed.data.relay },
+      })
+    }
+    // M88：自动编排策略（auto / always-plan / never-plan / null = auto）——广播 session-meta（多端同步）
+    if (parsed.data.autonomy !== undefined) {
+      session = deps.sessions.setAutonomy(session.id, parsed.data.autonomy ?? undefined) ?? session
+      deps.notify.publish({ type: 'notify:session-meta', sessionId: session.id, payload: { session } })
+      deps.audit?.record({
+        actor: 'user',
+        userId: userOf(req)?.id,
+        ip: req.ip,
+        action: 'session.autonomy-set',
+        resourceType: 'session',
+        resourceId: session.id,
+        sessionId: session.id,
+        detail: { autonomy: parsed.data.autonomy },
       })
     }
     // 空间变更（治理权限与改名同口径：仅属主；装配空间存储时校验存在性）
@@ -450,7 +483,10 @@ export function createSessionsRouter(deps: ApiDeps): Router {
     // M62：会话删除前先关闭其全部浏览器实例（best-effort，不阻断删除；最小夹具未注入 browser 时跳过）
     await deps.browser?.closeForSession(id, 'user').catch(() => undefined)
     deps.sessions.remove(id)
-    if (deleteWorkspace) deps.artifacts.removeSession(id)
+    if (deleteWorkspace) {
+      deps.artifacts.removeSession(id)
+      deps.index.removeSession(id)
+    }
     // M79-X：群聊式全同步——会话删除广播（共享成员与本人多标签列表即时移除；
     // 成员端后续访问自然 404——访问服务按会话存在性校验）；
     // M79-AA 群管理补全：payload.kind 供客户端区分「群聊已被解散」/「本会话已被删除」文案
@@ -806,6 +842,39 @@ export function createSessionsRouter(deps: ApiDeps): Router {
     }
   })
 
+  /**
+   * M86：手动派发下一棒（接力控制 = manual 时的唯一接棒入口）。
+   * - 活跃 Run：目标插到队首（不打断当前发言人）；
+   * - 空闲：新起一个 Run（队列 = [目标]，不经过平台路由重新组队）。
+   * 权限：非 viewer（与发送消息同口径）；目标必须是会话在场成员（支持角色 id / 成员键）。
+   */
+  router.post('/sessions/:id/dispatch', (req, res) => {
+    const session = deps.sessions.getSession(req.params.id)
+    if (!session) return res.status(404).json({ error: '会话不存在' })
+    const parsed = dispatchSchema.safeParse(req.body ?? {})
+    if (!parsed.success) return res.status(400).json({ error: firstIssue(parsed.error) })
+    if (deps.access.multiUser) {
+      const me = userOf(req)
+      const role = me ? deps.access.sessionRole(me, session.id) : undefined
+      if (!me || !role || role === 'viewer') return res.status(403).json({ error: '只读共享成员不可派发' })
+    }
+    // 目标归一：成员键（分身）优先，其次基础角色 id
+    const raw = parsed.data.agentId.trim().replace(/^@/, '')
+    const target =
+      session.participantIds.find((key) => key === raw) ??
+      session.participantIds.find((key) => baseAgentId(key) === raw)
+    if (!target) return res.status(400).json({ error: `目标不在会话中：${raw}` })
+    try {
+      const result = deps.engine.dispatchTo(session.id, target, {
+        note: parsed.data.note,
+        byUserId: userOf(req)?.id,
+      })
+      res.json(result)
+    } catch (err) {
+      res.status(400).json({ error: (err as Error).message })
+    }
+  })
+
   /** M79-D：隐藏会话（仅本人列表；DM「删除」语义——新消息自动复现） */
   router.post('/sessions/:id/hide', (req, res) => {
     const me = userOf(req)
@@ -1003,6 +1072,7 @@ export function createSessionsRouter(deps: ApiDeps): Router {
       const full = path.join(root, rel)
       fs.mkdirSync(path.dirname(full), { recursive: true })
       fs.writeFileSync(full, buffer)
+      deps.index.upsert(session.id, [{ path: rel, origin: 'upload' }])
       res.status(201).json({ path: rel, size: buffer.length })
     } catch (err) {
       res.status(500).json({ error: `上传失败：${(err as Error).message}` })

@@ -175,8 +175,6 @@ export function computeQimen(input: QimenInput): QimenResult {
   const monthGz = lunar.getMonthInGanZhi()
   const dayGz = lunar.getDayInGanZhi()
   const hourGz = lunar.getTimeInGanZhi()
-  const dayGan = dayGz.charAt(0)
-  const dayZhi = dayGz.charAt(1)
   const hourGan = hourGz.charAt(0)
   const hourZhi = hourGz.charAt(1)
 

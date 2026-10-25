@@ -193,7 +193,7 @@ handleEvent → message:delta 写入 deltaBuffer（不直接 setState）
 2. 含 `'user'` → 「{发起人} ⤵ 交还用户 · 等待确认」（琥珀色强调）；
 3. 无任何 @ 但 `queue` 非空（调度器收尾兜底场景）→ 以 `queue[0]` 作为转交目标生成第 1 类事件。
 
-交接条随消息持久化（同一份 `mentions` 同时用于「@用户 收尾」高亮）。**M11**：交接条目标头像可点击——一键向 Composer 插入 `@名字 `（点击接棒）；入场一拍动效 `handoff-in`（安静模式 / reduced-motion 下不播）。
+交接条随消息持久化（同一份 `mentions` 同时用于「@用户 收尾」高亮）。**M11**：交接条目标头像可点击——一键向 Composer 插入 `@名字 `（点击接棒）；入场一拍动效 `handoff-in`（安静模式 / reduced-motion 下不播）。**M87**：`handoff` 增 `artifacts[]` / `notes` 交接包（缺省自动带出本轮产出），交接条显示「交接包 N」徽标，接手方回合指令直接列出交付物路径与交接口径（ADR 0224）。
 
 ### 10.5 @自动补全与提及渲染
 
@@ -754,10 +754,7 @@ agent 包内 avatar.png 自动发现 ──> avatar.image = /api/agents/<id>/ava
 | wealth · insurance-planner | 保宁 · 保险规划师 | 40 · 东亚男 · 稳健可信 | 短寸 + 方正脸 | 深绿西装 | 盾牌徽章 + 保单 |
 | wealth · big-ticket-advisor | 慎衡 · 大额决策顾问 | 43 · 东亚男 · 审慎持重 | 灰发侧分 | 深棕西装 | 计算器 + 购车卡片 |
 | funding · valuation-modeler | 衡价 · 估值建模师 | 34 · 东亚女 · 精密冷静 | 直发掖耳 + 无框眼镜 | 深蓝西装 | 估值折线图板 |
-| funding · datroom-keeper | 理卷 · 数据室管家 | 31 · 东亚女 · 井井有条 | 低马尾 | 浅灰衬衫 + 工作围裙 | 档案盒阵列 |
 | bi · metric-governor | 正尺 · 指标治理官 | 37 · 东亚女 · 严谨校准 | 齐耳短发 + 金丝眼镜 | 墨绿衬衫 | 直尺 + 指标卡 |
-| bi · viz-designer | 绘数 · 可视化设计师 | 28 · 东亚女 · 色彩敏锐 | 挑染卷发 + 耳饰 | 玫瑰粉上衣 | 色卡扇 + 图表板 |
-| sre · capacity-planner | 度峰 · 容量规划师 | 36 · 东亚男 · 沉稳测算 | 黑色短发 + 无框眼镜 | 深灰工装衬衫 | 容量仪表盘 |
 | sre · chaos-officer | 试雷 · 混沌演练官 | 33 · 东亚男 · 冒险气质 | 蓬乱黑发 | 防护马甲 | 故障指示灯 + 扳手 |
 | personal · habit-coach | 立习 · 习惯教练 | 30 · 东亚女 · 清朗亲和 | 利落马尾 | 湖蓝卫衣 | 打卡日历卡 |
 | ops · license-keeper | 执证 · 证照管家 | 45 · 东亚男 · 老成持重 | 银发整齐 | 深蓝工装夹克 | 证照文件袋 + 印章 |
@@ -771,11 +768,11 @@ agent 包内 avatar.png 自动发现 ──> avatar.image = /api/agents/<id>/ava
 | bullbear · bull-quant | 陆准 · 多方证据官 | 33 · 东亚男 · 理性专注 | 黑色寸头 + 方框眼镜 | 藏青马甲 + 白衬衫 + 绯红领带 | 手持计算器 |
 | bullbear · bear-quant | 程实 · 空方证据官 | 31 · 东亚女 · 认真严谨 | 棕色齐肩波波头 + 无框眼镜 | 墨绿衬衫 + 深色背带 + 工牌挂绳 | 笔记本 + 游标卡尺 |
 
-> 注（2026-09-19 M69 头像批）：上述 46 行按成品观测回溯补录（统一风格前缀 v3：半写实 3D 卡通 / 成人比例约 1:4.5 / 纯白背景 / 哑光质感；同批生成 512×512 落盘）；M51 批 40 角色与 interior 批的形象以成品为准（未入表）。2026-09-23 补：v99 新增 四席（funding/dd-analyst 与 wellness-mind 三席）按成品观测补录于表尾；business-sim 三行随场景下线移除。2026-09-25 补：v108 批五席（bullbear 多空对决场）按成品观测补录于表尾（统一风格前缀 v3；场景主题色元素：绯红 #dc2626 / 墨绿 #059669 / 靛蓝 #6366f1；空方证据官首版误出拟人熊形象已重生成，提示词须显式要求 HUMAN/no animal features）。
+> 注（2026-09-19 M69 头像批）：上述 43 行按成品观测回溯补录（统一风格前缀 v3：半写实 3D 卡通 / 成人比例约 1:4.5 / 纯白背景 / 哑光质感；同批生成 512×512 落盘）；M51 批 40 角色与 interior 批的形象以成品为准（未入表）。2026-09-23 补：v99 新增 四席（funding/dd-analyst 与 wellness-mind 三席）按成品观测补录于表尾；business-sim 三行随场景下线移除。2026-09-25 补：v108 批五席（bullbear 多空对决场）按成品观测补录于表尾（统一风格前缀 v3；场景主题色元素：绯红 #dc2626 / 墨绿 #059669 / 靛蓝 #6366f1；空方证据官首版误出拟人熊形象已重生成，提示词须显式要求 HUMAN/no animal features）。2026-10-25 补：v109 清理 `funding/datroom-keeper` / `bi/viz-designer` / `sre/capacity-planner` 三席，对应设定表三行移除（46 → 43 行）。
 
 用户（人类主角）不设头像：界面中不渲染用户形象（消息流、交接条、接力视图均不出现用户头像）。
 
-图片资产位于各 Agent 包内（`agents/<场景>/<id>/avatar.png`，40 场景共 160 张，经 `GET /api/agents/:id/avatar` 直出）；旧版头像备份于 `data/avatar-backup-2026-09-17/`（本仓无 Git，替换不可逆，清理前先确认范围）。生成规格：纯白背景（#ffffff）· 半身像居中（头部占画面高约 55%）· 柔和棚拍光 · 风格化 3D 卡通（成人比例约 1:4 / 五官圆润简化 / 哑光黏土质感），1024px 生成后压缩至 512px 落盘；缺失 / 加载失败回退渐变 + 图标（不影响功能）。
+图片资产位于各 Agent 包内（`agents/<场景>/<id>/avatar.png`，41 场景共 162 张，经 `GET /api/agents/:id/avatar` 直出）；旧版头像备份于 `data/avatar-backup-2026-09-17/`（本仓无 Git，替换不可逆，清理前先确认范围）。生成规格：纯白背景（#ffffff）· 半身像居中（头部占画面高约 55%）· 柔和棚拍光 · 风格化 3D 卡通（成人比例约 1:4 / 五官圆润简化 / 哑光黏土质感），1024px 生成后压缩至 512px 落盘；缺失 / 加载失败回退渐变 + 图标（不影响功能）。
 
 ### 19.4 状态与角标
 
@@ -921,7 +918,7 @@ workspace/<sessionId>/       # 每会话独立工作区（WORKSPACE_DIR 默认 w
 └── …
 ```
 
-- 工作区以**磁盘为唯一真相**（不像消息有内存副本）：交付件扫描直接读盘；
+- 工作区正文以**磁盘为唯一真相**；交付件**元数据**由 `artifacts` 索引承载（M87：写时登记 + 低频校准），每回合上下文只读索引摘要，不再全量扫盘；
 - 删除会话时可选择「连同工作区删除」（默认勾选）；导出会话时附交付件清单；
 - 恢复策略：进程重启后工作区原样可用（无需恢复步骤）。
 
@@ -931,15 +928,21 @@ workspace/<sessionId>/       # 每会话独立工作区（WORKSPACE_DIR 默认 w
 Artifact { path: string; size: number; mtime: number;
            kind: 'markdown' | 'code' | 'html' | 'chart' | 'data'   // M24：9 类，见 §38
                | 'image' | 'office' | 'pdf' | 'other';
-           authorAgentId?: string; updatedAt: string }
+           authorAgentId?: string; updatedAt: string;
+           // M87（索引投影；旧响应缺省时前端按路径启发式回退）
+           origin?: 'tool' | 'upload' | 'media' | 'canvas' | 'git' | 'scan';
+           deliveryClass?: 'final' | 'process' | 'attachment' | 'media';
+           runId?: string; revision?: number }
 ```
 
 - `kind` 由扩展名映射（渲染器选择依据）；M24 起为 9 类、由服务端 `classifyKind` 单点决定（见 §38）；
-- `authorAgentId` 由工具调用方（写文件的 agent）回填；消息上的 `artifacts: string[]` 随消息持久化，历史会话无需重扫即可渲染 chip。
+- `authorAgentId` 由写路径回填（工具 / 上传 / 媒体），索引持久化后重启不丢；消息上的 `artifacts: string[]` 随消息持久化；
+- `deliveryClass` 服务端单点分层（`uploads/` = attachment、`canvas/` = media、过程目录 = process、其余 = final）；`revision` 为会话内单调递增的索引版本（列表 / 增量 / ETag 共用）。
 
 ### 22.3 HTTP API（补充 §9）
 
-- `GET /api/sessions/:id/artifacts`：深度遍历（忽略隐藏文件与 `node_modules`），按 mtime 降序；
+- `GET /api/sessions/:id/artifacts`：读交付件索引（mtime 降序）；支持 `limit/offset` 分页、`paths` 精确元数据（≤100）、`refresh=1` 强制校准；全量响应带 `ETag`（`If-None-Match` → `304`）；
+- `GET /api/sessions/:id/artifacts/changes?since=`：增量同步（`revision > since` 的 upserts + 删除墓碑）；
 - `GET /api/sessions/:id/artifacts/content?path=…`：文本内联返回（≤ `ARTIFACT_MAX_BYTES`，默认 512KB）；`raw=1` 文本原样直出（M24：HTML / PDF 预览 iframe 走浏览器原生解析）；二进制 / 超限走文件流下载；
 - `GET /api/sessions/:id/artifacts/preview?path=…`（M24）：Office 轻量解析（docx → HTML / xlsx → 工作表 / pptx → 幻灯片大纲，8MB 上限），见 §38；
 - 路径安全：`normalize` 后前缀校验 + 拒绝符号链接逃逸，非法路径返回 `400`。
@@ -950,7 +953,7 @@ Artifact { path: string; size: number; mtime: number;
 - **布局**：左文件树（按目录缩进、类型 icon、变更高亮）+ 右预览面板；
 - **预览**：Markdown 渲染（react-markdown）、代码高亮（shiki）+ 行号 + 复制按钮、图片直接预览、超限 / 二进制显示下载按钮；M24 扩展到 9 类（HTML 沙箱直出 / 图表 / 表格 / Office / PDF），文本类提供「预览 / 源码 / Diff」三态切换（见 §38）；
 - **工具条**：作者头像徽标、更新时间、下载、复制路径、刷新；
-- **实时性**：收到 `artifact:updated`（SSE / WS）→ 树局部刷新 + 当前文件若被更新显示「已更新 · 点击重载」提示条；
+- **实时性**：收到 `artifact:updated`（SSE / WS）→ 单一 `artifact-store` 做 250ms 合并，按 `revision` 拉增量（git 模式不再每请求起 `git status`）；当前文件若被更新显示「已更新 · 点击重载」提示条；
 - **空状态**：引导文案「团队还没有产出交付件 — 试试让 PM 规划一份需求文档」。
 
 ### 22.5 组件体系与视觉规范
@@ -4272,7 +4275,7 @@ P1/P2 完成后多用户体系具备隔离与协作能力，但资源消耗仍�
 | memory | 官方参考服务器 | npx stdio | 9 | MEMORY_FILE_PATH → data/mcp/memory.json | 研究 4 / tutor / coach |
 | time | 官方参考服务器 | uvx stdio | 2 | readOnly | travel 3 / assistant |
 | weather | weather-mcp/weather-mcp（MIT） | npx stdio | 12 | 公制 + 24h + standard 工具集 | travel 3 / fitness / wellness |
-| markitdown | microsoft/markitdown | uvx stdio | 1 | timeoutMs 120s | 法务财务族 7 + datroom-keeper + 学术 3 |
+| markitdown | microsoft/markitdown | uvx stdio | 1 | timeoutMs 120s | 法务财务族 7 + 学术 3 |
 | deepwiki | Devin（HTTP 免 Key） | http | 3 | — | 研发 9 角色 |
 | context7 | Upstash（HTTP 免 Key） | http | 2 | — | 研发 9 角色 |
 | arxiv | blazickjp/arxiv-mcp-server | uvx stdio | 19 | --storage-path → data/mcp/arxiv | lit-reviewer / scout / verifier |

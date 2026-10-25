@@ -96,6 +96,7 @@ export function createDesignScenesRouter(deps: ApiDeps): Router {
       return res.status(500).json({ error: `保存失败：${(err as Error).message}` })
     }
     const st = fs.statSync(full)
+    deps.index.upsert(sessionId, [{ path: relPath, origin: 'tool' }])
     deps.notify.publish({ type: 'notify:artifact-updated', sessionId, payload: { path: relPath } })
     res.json({ path: relPath, mtimeMs: st.mtimeMs, size: st.size })
   })

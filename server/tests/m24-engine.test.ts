@@ -59,7 +59,6 @@ interface ScriptOptions {
   text?: string
 }
 
-const textChunk = (text: string): LlmChunk => ({ type: 'text', text })
 const doneChunk: LlmChunk = { type: 'done' }
 const handoffChunk = (target: string): LlmChunk => ({
   type: 'tool_calls',

@@ -99,6 +99,7 @@ export function createAttachmentsRouter(deps: ApiDeps): Router {
       ...(meta.durationMs ? { durationMs: meta.durationMs } : {}),
       uploadedAt: new Date().toISOString(),
     }
+    deps.index.upsert(sessionId, [{ path: relPath, origin: 'upload' }])
     deps.notify.publish({ type: 'notify:artifact-updated', sessionId, payload: { path: relPath } })
     res.status(201).json({ attachment })
   })

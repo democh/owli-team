@@ -287,6 +287,10 @@ export const useSessionStore = create<SessionState>((set, get) => ({
               // 无编制等场景服务端序列化会省略键，浅合并将保留旧值（持球徽章不消失 / 策略开关不复位）
               waitingOn: session.waitingOn ?? [],
               routeMode: session.routeMode,
+              // M86：接力控制（键缺失 = 未显式设置，由 resolveRelayMode 推导）
+              relay: session.relay,
+              // M88：自动编排策略（键缺失 = auto）
+              autonomy: session.autonomy,
               planFirst: session.planFirst,
               serial: session.serial,
               memberSouls: session.memberSouls,

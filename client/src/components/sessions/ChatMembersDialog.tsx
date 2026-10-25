@@ -48,9 +48,11 @@ export function ChatMembersDialog({ session, open, onOpenChange }: ChatMembersDi
   const [disbandBusy, setDisbandBusy] = React.useState(false)
 
   // 打开懒加载；关闭清理绑定与本地选择态
+  // 依赖会话 id（而非 session 对象）：成员面板不因会话对象引用变化而重复拉取
+  const sessionId = session?.id
   React.useEffect(() => {
-    if (open && session) {
-      void useShareStore.getState().load(session.id)
+    if (open && sessionId) {
+      void useShareStore.getState().load(sessionId)
       void useFriendsStore.getState().load()
     }
     if (!open) {
@@ -61,7 +63,7 @@ export function ChatMembersDialog({ session, open, onOpenChange }: ChatMembersDi
       setConfirmingDisband(false)
       setDisbandBusy(false)
     }
-  }, [open, session?.id])
+  }, [open, sessionId])
 
   // 好友候选（排除已成组成员与本人）
   const memberIds = new Set<string>([

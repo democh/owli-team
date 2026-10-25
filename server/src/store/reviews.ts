@@ -116,4 +116,19 @@ export class ReviewStore {
     )
     return rows.length > 0 ? rowToReview(rows[0]) : undefined
   }
+
+  /** M89：按评审人聚合（次数 / 未通过次数；可选时间窗）——角色级质量指标数据源 */
+  statsByAgent(sinceMs?: number): Array<{ agentId: string; reviews: number; fails: number }> {
+    const where = sinceMs ? 'WHERE created_at >= ?' : ''
+    const params: string[] = sinceMs ? [new Date(Date.now() - sinceMs).toISOString()] : []
+    const rows = this.db.all<{ agent_id: string; reviews: number; fails: number }>(
+      `SELECT agent_id,
+              COUNT(*) AS reviews,
+              COALESCE(SUM(CASE WHEN verdict = 'fail' THEN 1 ELSE 0 END), 0) AS fails
+       FROM reviews ${where}
+       GROUP BY agent_id`,
+      ...params,
+    )
+    return rows.map((r) => ({ agentId: r.agent_id, reviews: Number(r.reviews), fails: Number(r.fails) }))
+  }
 }

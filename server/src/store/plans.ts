@@ -269,4 +269,28 @@ export class PlanStore {
     }
     return targets.map((p) => ({ ...p, status: 'superseded' as PlanStatus, updatedAt: ts }))
   }
+
+  /**
+   * M89：按步骤负责人聚合完成 / 阻塞数（owner 缺省 = 计划作者）。
+   * 时间窗按 plans.updated_at 过滤；只统计步骤非 pending 的结果，用于角色级推进质量。
+   */
+  stepStatsByAgent(sinceMs?: number): Array<{ agentId: string; done: number; blocked: number }> {
+    const where = sinceMs ? 'WHERE updated_at >= ?' : ''
+    const params: string[] = sinceMs ? [new Date(Date.now() - sinceMs).toISOString()] : []
+    const rows = this.db.all<{ agent_id: string; steps: string }>(
+      `SELECT agent_id, steps FROM plans ${where}`,
+      ...params,
+    )
+    const map = new Map<string, { done: number; blocked: number }>()
+    for (const row of rows) {
+      for (const step of parseJson<PlanStep[]>(row.steps, [])) {
+        const owner = step.ownerAgentId ?? row.agent_id
+        const entry = map.get(owner) ?? { done: 0, blocked: 0 }
+        if (step.status === 'done' || step.status === 'skipped') entry.done++
+        if (step.status === 'blocked') entry.blocked++
+        map.set(owner, entry)
+      }
+    }
+    return [...map.entries()].map(([agentId, v]) => ({ agentId, ...v }))
+  }
 }

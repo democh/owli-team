@@ -21,6 +21,8 @@ export function AccountDialog({
   const isAdmin = useAuthStore((s) => s.isAdmin)
   const changePassword = useAuthStore((s) => s.changePassword)
   const logout = useAuthStore((s) => s.logout)
+  // 本机开放部署（无账号且无 AUTH_TOKEN）没有登录态，登出无意义
+  const canLogout = useAuthStore((s) => s.status.authRequired)
   const [current, setCurrent] = React.useState('')
   const [next, setNext] = React.useState('')
   const [confirm, setConfirm] = React.useState('')
@@ -148,10 +150,19 @@ export function AccountDialog({
           ) : (
             <span />
           )}
-          <Button size="sm" variant="ghost" className="text-destructive hover:text-destructive" onClick={() => void logout()}>
-            <LogOut className="mr-1 size-3.5" />
-            退出登录
-          </Button>
+          {canLogout ? (
+            <Button
+              size="sm"
+              variant="ghost"
+              className="text-destructive hover:text-destructive"
+              onClick={() => void logout()}
+            >
+              <LogOut className="mr-1 size-3.5" />
+              退出登录
+            </Button>
+          ) : (
+            <span className="text-[11px] text-muted-foreground">本机开放模式，无需登出</span>
+          )}
         </div>
       </DialogContent>
     </Dialog>

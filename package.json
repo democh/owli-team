@@ -7,11 +7,16 @@
     "server",
     "client"
   ],
+  "engines": {
+    "node": ">=22.13"
+  },
   "scripts": {
     "dev": "concurrently -n server,client -c blue,green \"npm run dev -w @multi-agent/server\" \"npm run dev -w @multi-agent/client\"",
     "build": "npm run build -w @multi-agent/server && npm run build -w @multi-agent/client",
     "start": "npm run start -w @multi-agent/server",
     "test": "npm run test -w @multi-agent/server && npm run test -w @multi-agent/client",
+    "test:coverage": "npm run test:coverage -w @multi-agent/server && npm run test:coverage -w @multi-agent/client",
+    "check:bundle": "node scripts/check-bundle.mjs",
     "typecheck": "npm run typecheck -w @multi-agent/server && npm run typecheck -w @multi-agent/client && tsc -p tsconfig.e2e.json",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
@@ -25,8 +30,10 @@
     "eval": "npm run eval -w @multi-agent/server --",
     "memory:reindex": "npm run memory:reindex -w @multi-agent/server --",
     "e2e": "playwright test",
+    "e2e:smoke": "playwright test m12-interactions.spec.ts m16-serial.spec.ts m31-canvas-interactions.spec.ts m79-social.spec.ts",
     "e2e:report": "playwright show-report",
     "e2e:reset": "node scripts/e2e-reset.mjs",
+    "data:prune": "node scripts/prune-data.mjs",
     "llm:ping": "npm run llm:ping -w @multi-agent/server --",
     "avatar:preview": "node -e \"console.log('启动 npm run dev 后打开 http://localhost:5173/#/avatars')\""
   },

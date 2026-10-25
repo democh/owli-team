@@ -8,7 +8,7 @@ capabilities: [口径字典, 指标血缘, 变更管理, 口径评审]
 avatar:
   icon: ruler
   gradient: ["#ec4899", "#f472b6"]
-handoff: [bi, viz-designer]
+handoff: [bi]
 tools: [list_dir, read_file, write_file, search_text, glob, grep, calc, csv_analyze, db_query, db_schema, db_list_connections, web_search, web_fetch, canvas_read, canvas_write, load_skill, remember, handoff]
 skills: [nl2sql, data-visualization, report-authoring]
 temperature: 0.3

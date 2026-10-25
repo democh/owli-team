@@ -18,12 +18,12 @@
  */
 import * as React from 'react'
 import { ChevronRight, Package, PackageCheck, PackageOpen } from 'lucide-react'
-import type { AgentDefinition, ChatMessage } from '@multi-agent/shared'
+import type { AgentDefinition, ChatMessage, DeliveryClass } from '@multi-agent/shared'
 import { useAgentStore } from '../../stores/agent-store'
 import { useRunStore } from '../../stores/run-store'
 import { useSessionStore } from '../../stores/session-store'
 import { useUiStore } from '../../stores/ui-store'
-import { useArtifactMeta } from '../../lib/use-artifact-meta'
+import { useArtifactMeta } from '../../stores/artifact-store'
 import { useArtifactVersions } from '../../lib/artifact-versions'
 import { acceptanceOf, type AcceptanceInfo } from '../../lib/acceptance'
 import { baseName } from '../../lib/artifacts'
@@ -53,6 +53,8 @@ interface DeliveryEntry {
   path: string
   /** 该交付件的交付者（消息级归属，用于清单行头像） */
   agentId?: string
+  /** M87：服务端索引分层（final / process / attachment / media；缺省回退路径启发式） */
+  deliveryClass?: DeliveryClass
 }
 
 interface CloseoutInfo {
@@ -144,7 +146,12 @@ function DeliveryManifest({ info }: { info: CloseoutInfo }): React.JSX.Element {
   }, [info.tailId, info.createdAt])
 
   // M85：仅取核心交付件（过程产物不再展示——partitionDelivery 的 others 部分按用户决策移除）
-  const { primary } = React.useMemo(() => partitionDelivery(info.entries), [info.entries])
+  // M87：分层优先用索引 deliveryClass（服务端单点判定）；元数据未到时回退路径启发式
+  const classified = React.useMemo(
+    () => info.entries.map((entry) => ({ ...entry, deliveryClass: entry.deliveryClass ?? meta.get(entry.path)?.deliveryClass })),
+    [info.entries, meta],
+  )
+  const { primary } = React.useMemo(() => partitionDelivery(classified), [classified])
   const authors: AgentDefinition[] = []
   const authorIds = new Set<string>()
   for (const e of info.entries) {

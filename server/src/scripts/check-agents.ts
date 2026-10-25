@@ -14,6 +14,9 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { loadConfig } from '../config.js'
 import { parseFrontMatter, PromptLibrary } from '../store/prompts.js'
+import { createToolRegistry } from '../tools/builtin.js'
+import { createPlanTools } from '../tools/plan.js'
+import { SkillLibrary } from '../store/skills.js'
 
 /** 专家级六段骨架（顺序即建议顺序；缺任一段即未达标） */
 const QUALITY_SECTIONS = [
@@ -40,7 +43,52 @@ interface QualityFinding {
   missing: string[]
 }
 
-/** 逐角色质量体检（agents 模式；文件缺失 / 解析失败按缺全部段计） */
+/**
+ * M89：资产一致性体检。
+ * - tools：声明了未注册的工具名（拼写错 → 运行时静默失去能力）；MCP 通配（`mcp__*`）由连接门控，不校验；
+ * - skills：预载技能不存在（load_skill 必失败）；
+ * - 可达性：角色是否出现在任一 chain / preset / ritual / stage.seats（否则只能靠 handoff 到达，属于隔离角色）。
+ * tools / skills 问题纳入 strict 门禁；可达性仅报告（供资产精简决策）。
+ */
+function assetReport(
+  cfg: ReturnType<typeof loadConfig>,
+  agents: ReturnType<PromptLibrary['list']>,
+  groups: ReturnType<PromptLibrary['groups']>,
+  presets: ReturnType<PromptLibrary['presets']>,
+): { problems: string[]; isolated: Array<{ id: string; group: string }> } {
+  // 金融工具按 financeEnabled 条件注册：校验时强制开启，否则会把合法声明误报为未注册
+  const registry = createToolRegistry({ ...cfg, financeEnabled: true })
+  const toolNames = new Set(registry.list().map((t) => t.name))
+  for (const tool of createPlanTools()) toolNames.add(tool.name)
+  const skillNames = new Set(new SkillLibrary(cfg.skillsDir).list().map((s) => s.name))
+
+  const problems: string[] = []
+  for (const agent of agents) {
+    for (const name of agent.tools ?? []) {
+      if (name.endsWith('*')) continue
+      if (!toolNames.has(name)) problems.push(`角色 ${agent.group}/${agent.id} 的 tools 声明了未注册工具 "${name}"`)
+    }
+    for (const name of agent.skills ?? []) {
+      if (!skillNames.has(name)) problems.push(`角色 ${agent.group}/${agent.id} 的 skills 声明了不存在的技能 "${name}"`)
+    }
+  }
+
+  const entry = new Set<string>()
+  for (const group of groups) {
+    for (const id of group.chain) entry.add(id)
+    for (const id of group.ritual?.members ?? []) entry.add(id)
+    for (const ids of [group.stage?.seats?.left, group.stage?.seats?.right, group.stage?.seats?.center]) {
+      for (const id of ids ?? []) entry.add(id)
+    }
+  }
+  for (const preset of presets) for (const id of preset.members) entry.add(id)
+
+  return {
+    problems,
+    isolated: agents.filter((a) => !entry.has(a.id)).map((a) => ({ id: a.id, group: a.group })),
+  }
+}
+
 function qualityReport(agentsDir: string, agents: ReturnType<PromptLibrary['list']>): QualityFinding[] {
   const findings: QualityFinding[] = []
   for (const a of agents) {
@@ -182,6 +230,25 @@ function main(): void {
       console.log(`  覆盖 ${voiceTotal}/${total} 角色｜达标 ${voiceReady}/${voiceTotal}`)
       for (const f of voiceFindings.slice(0, QUALITY_LIST_MAX)) console.log(`    - ${f}：未达标`)
       if (voiceFindings.length > QUALITY_LIST_MAX) console.log(`    …（其余 ${voiceFindings.length - QUALITY_LIST_MAX} 个略）`)
+
+      // M89：资产一致性（tools / skills 交叉校验 + 隔离角色）
+      const asset = assetReport(cfg, agents, groups, presets)
+      console.log(`\n◆ 资产一致性报告（tools / skills 交叉校验；${strict ? 'strict 门禁' : '报告模式'}）`)
+      if (asset.problems.length === 0) console.log('  ✓ tools / skills 声明全部有效')
+      else {
+        for (const p of asset.problems.slice(0, QUALITY_LIST_MAX)) console.log(`    - ${p}`)
+        if (asset.problems.length > QUALITY_LIST_MAX)
+          console.log(`    …（其余 ${asset.problems.length - QUALITY_LIST_MAX} 个略）`)
+      }
+      console.log(`  隔离角色（不在 chain / preset / ritual / seats）：${asset.isolated.length}`)
+      for (const a of asset.isolated.slice(0, QUALITY_LIST_MAX)) console.log(`    - ${a.group}/${a.id}`)
+      if (asset.isolated.length > QUALITY_LIST_MAX) {
+        console.log(`    …（其余 ${asset.isolated.length - QUALITY_LIST_MAX} 个略）`)
+      }
+      if (strict && asset.problems.length > 0) {
+        console.error(`\n✗ 资产一致性门槛未通过（${asset.problems.length} 处声明无效）`)
+        process.exit(1)
+      }
     }
   } catch (err) {
     console.error(`✗ agents 解析失败：${(err as Error).message}`)

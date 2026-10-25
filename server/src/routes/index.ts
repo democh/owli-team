@@ -1,8 +1,10 @@
 /**
  * API 路由聚合（§9）：全部挂载于 /api，错误统一 { error }（中文文案）。
  */
+import { randomUUID } from 'node:crypto'
 import { Router } from 'express'
 import type { Request, RequestHandler } from 'express'
+import { getLogger } from '../logger.js'
 import type { AppConfig } from '../config.js'
 import type { AuthUser } from '../auth/service.js'
 import type { AuthService } from '../auth/service.js'
@@ -26,6 +28,7 @@ import type { PlanReviewService } from '../plan-review.js'
 import type { ContextService } from '../context/service.js'
 import type { Engine } from '../orchestration/engine.js'
 import type { ArtifactStore } from '../store/artifacts.js'
+import type { ArtifactIndex } from '../store/artifact-index.js'
 import type { ArtifactVersionStore } from '../store/artifact-versions.js'
 import type { FeedbackStore } from '../store/feedback.js'
 import type { MemoryStore } from '../store/memory.js'
@@ -101,6 +104,8 @@ export interface ApiDeps {
   skills: SkillLibrary
   sessions: SessionStore
   artifacts: ArtifactStore
+  /** M87：交付件索引（列表 / 增量 / 摘要 / 校准） */
+  index: ArtifactIndex
   /** 会话长期记忆（M2：context / memory 接口） */
   memory: MemoryStore
   /** 上下文服务（M2：分层快照） */
@@ -474,6 +479,14 @@ export function apiErrorHandler(
     res.status(413).json({ error: '请求体过大：单文件上传上限 8MB（base64 编码后约 11MB）；其他请求上限 4MB' })
     return
   }
-  const message = err instanceof Error ? err.message : '服务器内部错误'
+  // 5xx 不外泄内部异常信息（SQL / 路径 / 上游响应等）：只给 requestId，细节进日志
+  if (status >= 500) {
+    const requestId = randomUUID().slice(0, 8)
+    getLogger().error({ err, requestId }, 'API 未捕获错误')
+    res.status(500).json({ error: `服务器内部错误，请稍后重试（requestId: ${requestId}）`, requestId })
+    return
+  }
+  // 4xx 为业务校验错误（中文文案由抛出方维护），直接透传
+  const message = err instanceof Error ? err.message : '请求无效'
   res.status(status).json({ error: message })
 }

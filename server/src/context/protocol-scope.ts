@@ -31,7 +31,7 @@ const SEGMENT_RE = /<segment\s+scope="([^"]+)"\s*>([\s\S]*?)<\/segment>/g
 export function filterProtocolByScopes(protocol: string, tools: string[] | undefined): string {
   if (!protocol.includes('<segment')) return protocol
   if (!tools || tools.length === 0) return protocol
-  return protocol.replace(SEGMENT_RE, (whole, scopeAttr: string, body: string) => {
+  return protocol.replace(SEGMENT_RE, (whole, scopeAttr: string, _body: string) => {
     const scopes = scopeAttr
       .split(',')
       .map((s) => s.trim())

@@ -524,13 +524,13 @@ function setupTaskView(over: { plans?: Plan[]; tasks?: TaskItem[]; sessionPatch?
 }
 
 describe('TaskView 2.0（M24 计划板 / 待办清单双形态）', () => {
-  it('无计划：保持待办清单形态（write_todos 条目 + 规划先行 chip）', () => {
+  it('无计划：保持待办清单形态（write_todos 条目 + 自动编排 chip）', () => {
     setupTaskView({ tasks: [makeTask()] })
     render(<TaskView />)
     expect(screen.getByText('任务 0/1')).toBeInTheDocument()
     expect(screen.getByText('调研竞品')).toBeInTheDocument()
     expect(screen.getByText('待办')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '规划先行' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '自动编排' })).toBeInTheDocument()
     expect(screen.queryByText(/计划 \d/)).not.toBeInTheDocument()
   })
 
@@ -562,20 +562,20 @@ describe('TaskView 2.0（M24 计划板 / 待办清单双形态）', () => {
     expect(screen.getByRole('button', { name: '批准执行' })).toBeInTheDocument()
   })
 
-  it('「规划先行」开关：PATCH /sessions/:id 并即时更新 chip', async () => {
+  it('「自动编排」开关：循环到规划先行 → PATCH autonomy 并即时更新 chip', async () => {
     setupTaskView({})
     mockApi({
       'GET /api/sessions/s1/tasks': () => jsonResponse({ tasks: [] }),
       'GET /api/sessions/s1/plans': () => jsonResponse({ plans: [], reviews: [] }),
-      'PATCH /api/sessions/s1': () => jsonResponse({ session: makeSession({ planFirst: true }) }),
+      'PATCH /api/sessions/s1': () => jsonResponse({ session: makeSession({ autonomy: 'always-plan' }) }),
     })
     const user = userEvent.setup()
     render(<TaskView />)
 
-    await user.click(screen.getByRole('button', { name: '规划先行' }))
+    await user.click(screen.getByRole('button', { name: '自动编排' }))
     await waitFor(() => expect(requestCount('/api/sessions/s1', 'PATCH')).toBe(1))
-    expect(requestBodies('/api/sessions/s1', 'PATCH')[0]).toEqual({ planFirst: true })
-    expect(await screen.findByText('规划先行已开')).toBeInTheDocument()
+    expect(requestBodies('/api/sessions/s1', 'PATCH')[0]).toEqual({ autonomy: 'always-plan' })
+    expect(await screen.findByRole('button', { name: '规划先行' })).toBeInTheDocument()
   })
 
   it('待批准计划就地改指派：PUT 步骤数组携带原字段', async () => {
@@ -663,7 +663,7 @@ describe('Composer 范式选择器（M24）', () => {
     mockApi()
     useRunStore.setState({ active: true })
     render(<Composer />)
-    expect(screen.getByRole('button', { name: '执行' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '自动' })).toBeDisabled()
     expect(screen.getByRole('button', { name: '规划' })).toBeDisabled()
     expect(screen.getByRole('button', { name: '评审' })).toBeDisabled()
   })

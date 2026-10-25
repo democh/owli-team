@@ -167,4 +167,40 @@ export class UsageStore {
     }
     return aggregate
   }
+
+  /**
+   * M89：按 agent 聚合（kind=turn 的模型调用；可选时间窗）。
+   * 用于角色级质量指标（成本 / 回合量）；无 agent_id 的系统调用（路由 / 压缩）不计入。
+   */
+  byAgent(sinceMs?: number): Array<{ agentId: string; calls: number; promptTokens: number; completionTokens: number; costUsd: number }> {
+    const conditions = ["kind = 'turn'", 'agent_id IS NOT NULL']
+    const params: string[] = []
+    if (sinceMs) {
+      conditions.push('created_at >= ?')
+      params.push(new Date(Date.now() - sinceMs).toISOString())
+    }
+    const rows = this.db.all<{
+      agent_id: string
+      calls: number
+      prompt_tokens: number
+      completion_tokens: number
+      cost_usd: number
+    }>(
+      `SELECT agent_id, COUNT(*) AS calls,
+              COALESCE(SUM(prompt_tokens), 0) AS prompt_tokens,
+              COALESCE(SUM(completion_tokens), 0) AS completion_tokens,
+              COALESCE(SUM(cost_usd), 0) AS cost_usd
+       FROM usage
+       WHERE ${conditions.join(' AND ')}
+       GROUP BY agent_id`,
+      ...params,
+    )
+    return rows.map((row) => ({
+      agentId: row.agent_id,
+      calls: Number(row.calls),
+      promptTokens: Number(row.prompt_tokens),
+      completionTokens: Number(row.completion_tokens),
+      costUsd: Number(row.cost_usd),
+    }))
+  }
 }

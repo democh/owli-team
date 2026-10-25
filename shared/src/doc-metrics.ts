@@ -24,7 +24,7 @@ export function measureDoc(content: string): DocMetrics {
   // （裸式排除方括号内与词内误伤（如 GPT-S4）；连字符格式来自真实模型探针实测）
   const refs =
     (content.match(/\[(?:S-?\d{1,3}|\d{1,3})\]/g) ?? []).length +
-    (content.match(/(?<![\w\[-])S-?\d{1,3}\b/g) ?? []).length
+    (content.match(/(?<![\w[-])S-?\d{1,3}\b/g) ?? []).length
   return {
     chars: content.replace(/\s+/g, '').length,
     sections: (content.match(/^##\s/gm) ?? []).length,

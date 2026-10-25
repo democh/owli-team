@@ -1,32 +1,165 @@
 # Owli Team
 
-本地运行的多角色 AI 协作应用：40 大场景（研发 / 商业战略 / 深度研究 / 投资研究 / 市场增长 / 销售客户 / 财务法务 / 运营行政 / 融资资本 / 学术论文 / 心理支持 / 玄学文化 / 生活消费 等，覆盖工作与生活）共 161 位角色，在同一会话中自由混搭、共享上下文，通过 `@某角色` 或结构化 `handoff` 工具自主转交、形成接力链，全程流式输出。
+**自部署的多角色 AI 协作工作台。** 41 个专业场景、163 位角色在同一会话里组队干活：`@` 点名出场，或由角色用 `handoff` 自主接棒；需要提速时多人同波并行；角色真的会读写文件、跑 Git、查行情、画 K 线——高风险动作先过审批；每一次运行的波次、工具、token 与费用全部可回放。
 
-系统按「专业级」路线完成十项能力建设：**会不失忆**（五层上下文装配 + 滚动摘要压缩）、**能真干活**（Project 层 + git worktree 隔离 + 文件与 Git 工具集 + HITL 审批）、**可控可证**（会话级 Run 互斥与插话、Run/Task/Trace 落库、指标与评测闭环）。
+不是「给一个模型换套提示词」，而是把**团队协作**做成基础设施：编制、接力、并行、审批、Trace、记忆、评测全部内建，本地或私有服务器一条命令起跑。
 
-场景化扩展（M15–M18）：Agent 单包目录与场景分组、可插拔灵魂人格、动态成员、并行波次、协作图谱——详见 [design.md](design.md) §25–§29。
+![主界面：三栏工作台](docs/screenshots/hero-workbench.webp)
 
-渲染扩展（M19）：消息与交付件支持 mermaid / chart 图表块、分栏与容器语法（callout / 折叠）、代码块工具条（文件名 / 行高亮 / 复制 / 长码折叠）与 TurnCard 展示优化——详见 [design.md](design.md) §30。
+*主界面：左侧会话与联系人、中间消息流、右侧团队面板；底栏实时显示上下文占用（9% · 18.7K / 200.0K tokens）与本次 Run 成本。*
 
-OPC 业务扩展（M21）：9 场景 34 角色全职能虚拟公司、业务工具（calc / date_calc / csv_analyze / template_fill）、业务 Markdown 卡（KPI / 时间轴 / 邮件 / 方案）与快速组队预设——详见 [design.md](design.md) §31–§34。
+> **当前版本说明（2026-10-25）**：画布与素材库的**入口已暂时隐藏**——左侧导航「素材库」、主区「画布」页签、命令面板对应项与「画布」命令组、交付件 / 工具卡的「送上画布」「在画布查看」、快捷键帮助的「画布」分组、会话行的画布写入小点。
+> 后端路由（`/api/canvas`、`/api/library`）、状态与数据**全部保留**，已有画布文档与素材不丢；恢复方式：取消各文件里「临时隐藏」注释，并删掉 `AppLayout` 中把 `canvas → chat` / `materials → workspace` 的归一化 effect。
 
-协作范式与任务指挥（M24）：与角色正交的规划 / 执行 / 评审三范式（显式 opt-in，默认零差异）、计划提交挂起与批准 / 驳回修订 v2、派发执行与步骤进度收口、任务面板 2.0（计划板 / 按成员分组 / 「规划先行」）——详见 [design.md](design.md) §40–§41。
+---
 
-消息密度治理（M81）：过程叙述折叠通道（`::: process`，40 场景协议全量铺设 + 源头降噪协议）与 TurnCard 过程区（思考 → 工具 → 过程 → 正文，过程默认收起、正文唯一主角）——详见 [design.md](design.md) §122。
+## 亮点
 
-**环境要求**：Node.js 22.5+（推荐 24，持久化依赖内置 `node:sqlite`）；系统 `git`（仅 repo / worktree 模式需要）。
+| 亮点 | 具体是什么 |
+| --- | --- |
+| **组队即开工** | 41 大场景 163 位角色，组队台一屏完成「选场景 → 挑人 → 调灵魂」。空编制也合法：不选人直接发消息，平台路由步（PRS）自动组队并派发任务 |
+| **自主接力** | 角色通过 `handoff(target, reason, expected_output)` 把任务交给下一位，附「期望产出」；接力卡一键接棒，接力链按时间轴复盘。循环检测在团队空转时自动收尾交还用户 |
+| **并行波次** | `@` ≥2 人或 handoff 多目标即触发 fan-out：同波成员**相互不可见**（统一基于波前历史独立思考），波末 fan-in 收敛为下一波队列 |
+| **真能干活** | 83 个内置工具（文件 / glob / grep / apply_patch / Git 六件套 / 联网检索 / 浏览器操控 / 数据库 / 行情 / 排盘…），只读并行、写类串行；产物自动登记为可 Diff、可签收的版本化交付件 |
+| **人在回路** | 高风险动作（`git_commit` / `run_command` / 覆盖写 / 敏感文件）弹出审批卡并挂起 Run，批准 / 拒绝 / 超时都会回灌模型继续推理；运行中可停止，再发消息即插话 |
+| **可控可证** | 每个 Run 的波次调度、回合耗时、token、费用、工具调用、摘要压缩全量落库，Trace 与指标面板可逐条回放；64 个评测任务 + 基线回归门禁守住质量 |
+| **不失忆** | L0 协议 → L1 记忆 → L1.5 语义召回 → L2 摘要 → L3 半静态 → L4 最近回合 → L5 工具结果分层装配；超预算 × 0.7 自动按回合组压缩，压缩事件进 Trace |
+| **团队基座** | 灵魂变体（同角色多套人格，可多魂同台）、动态成员、协作图谱、技能库 / MCP / 连接中心、多用户账号与会话共享（editor / viewer）；素材库与画布入口当前已隐藏（代码与数据保留） |
+
+## 界面巡览
+
+### 1. 组队：一屏完成编制
+
+| 组队台 | Agent 名录 |
+| --- | --- |
+| ![组队台](docs/screenshots/team-composer.webp) | ![Agent 名录](docs/screenshots/agent-catalog.webp) |
+| 左侧来源（空场景 / 快速组队预设 / 按场景筛选）× 中间角色池 × 右侧实时编制，顶上实时统计各场景人数 | 全部角色按场景归类，标注中英文名、职责、能力标签、预载技能、可交棒对象与灵魂变体 |
+
+### 2. 编排：接力链与并行波次
+
+| 三波接力链 | 并行协作组 |
+| --- | --- |
+| ![接力链](docs/screenshots/relay-chain.webp) | ![并行波次](docs/screenshots/parallel-wave.webp) |
+| 费利立项 → 交棒艾达 → 艾达交还补充验收口径 → 费利交还用户；每段都带交接条与「过程」折叠 | 两位成员同一时刻（13:13）各自作答，归入「并行协作 2/2」，各自给出下一步并互相 @ 对齐 |
+
+### 3. 交付：从文件到签收
+
+| 协作图谱（圆桌布局） | 交付件与签收 |
+| --- | --- |
+| ![协作图谱](docs/screenshots/collab-graph-roundtable.webp) | ![交付件](docs/screenshots/delivery-signoff.webp) |
+| 节点是成员（发言中 / 排队 / 待你指示），边由消息 mentions 推导：实际接力 / 最近一棒 / 回退接力 / 编制预期 | 艾达把结论写进 `docs/demo-plan.md`（v4, 5.2KB）→ 变更卡、本轮交付、核心交付签收一气呵成 |
+
+### 4. 执行：工具、审批与真实产物
+
+| HITL 审批 | 运行轨迹（Trace） |
+| --- | --- |
+| ![HITL 审批](docs/screenshots/hitl-approval.webp) | ![运行轨迹](docs/screenshots/run-trace.webp) |
+| `request_approval` 触发审批卡并挂起 Run，写明命令、影响面与目的；批准后才真正执行 | Run 3 回合 · token 47,587+368 · $0.0137；波次 / 回合耗时 / 调度决策 / 循环抑制逐条带相对时间戳 |
+
+### 5. 上下文与资产
+
+| 上下文电池 | 技能库 |
+| --- | --- |
+| ![上下文电池](docs/screenshots/context-battery.webp) | ![技能库](docs/screenshots/skill-library.webp) |
+| 输入区实时显示占用（`9% · 18.4K / 200K tokens`），点开看五层装配明细与摘要压缩状态 | 72 个技能按职能分组，标注行数 / 标签 / 说明 / 适用角色数，资产校验通过即带质量徽章 |
+
+### 6. 场景实录（真实运行产物）
+
+| 多空对决 · 论断树 + K 线 | 塔罗研习 · 抽牌台 |
+| --- | --- |
+| ![多空对决](docs/screenshots/arena-kline.webp) | ![塔罗](docs/screenshots/tarot-spread.webp) |
+| 8 人对抗席（多方 / 空方 / 裁决 + 量化）：逐轮立论、`::: verdict` 终局裁决，K 线卡带阶段色带与支撑压力标注（截图为隐藏画布前的版本，「送上画布」入口现已注释） | 静心 → 洗牌 → 切牌 → 选牌 → 揭示 → 解读的仪式化流程，牌阵 / 元素 / 来源种子全程留痕，解读交给研习师角色 |
+
+> 更多截图、操作动图与完整操作实录见 [docs/owli-team-intro.md](docs/owli-team-intro.md)（该文档的原始素材目录不入库，`docs/screenshots/` 为 README 专用的轻量副本）。
 
 ## 快速开始
+
+**环境要求**：Node.js 22.5+（推荐 24，持久化依赖内置 `node:sqlite`）；系统 `git`（仅 repo / worktree 模式需要）。
 
 ```bash
 npm install
 cp .env.example .env    # 必填：填入 LLM_API_KEY（未配置时服务拒绝启动）
-npm run dev             # 同起 server(8787) + client(5173)
+npm run dev             # 同时启动 server(8787) + client(5173)
 ```
 
-打开 http://localhost:5173 ，在左栏新建会话（组队台：选来源（快速组队 / 按场景）→ 角色池增减成员 → 编制与灵魂微调 → 创建），发送消息即可看到接力链实时推进；@ 两位成员可触发并行波次。访问 http://localhost:5173/#/avatars 预览全部角色形象与动画状态，http://localhost:5173/#/agents 浏览全部角色名录。
+打开 http://localhost:5173 后：
 
-离线体验（零网络、无需 Key）：在 `.env` 中设 `LLM_MOCK=true`（仅演示 / 测试，生产勿开）。
+1. 左栏「新建会话」进入**组队台**：选来源（快速组队 / 按场景）→ 角色池增减成员 → 编制与灵魂微调 → 创建；
+2. 直接发消息即可看到接力链实时推进；`@` 两位以上成员触发并行波次；
+3. 想看全貌：`/#/agents` 角色名录、`/#/avatars` 角色形象与动画预览。
+
+**离线体验**（零网络、无需 Key）：在 `.env` 中设 `LLM_MOCK=true`（仅演示 / 测试，生产勿开）。
+
+## 核心机制
+
+**编排**
+
+- 接力与转交：`@某角色` 或 `handoff(target, reason, expected_output)`；`target` 支持多目标（≤4 = fan-out）。同会话永远只有一个活跃 Run，运行中再发消息 = 插话（回合边界注入）；
+- 平台路由步（PRS）：未 @ 的消息与空编制开场由引擎以结构化决策自动「召集 + 派发」，全过程进 Trace（`routing:dispatched`），不产生消息、不占波次；
+- 并行波次：串行 = 单波特例（默认）；波内上下文隔离、波末 fan-in 收敛，`PARALLEL_MAX` 默认 3；
+- 循环检测：波次签名序列 + 内容 3-gram，团队空转时自动收尾。
+
+**角色资产**
+
+- `agents/<场景>/<角色>/` 单目录自包含：`AGENT.md` 人设 + 可选 `souls/` 灵魂变体 + `avatar.png`；协议分层 = 全局协议 + 场景协议（追加语义）+ 人设 + 灵魂段；
+- 灵魂变体：同角色多套人格（如卢娜的「狂野 / 禅意 / 考据派」），创建时可选、运行中可切；职责与协议优先级永远高于灵魂；
+- 同角多魂：不同人格可同时以多个成员实例入编（`agentId~soulId`），`@名字·灵魂名` 点名单个分身；
+- 动态成员：运行中增删成员落 `role:'system'` 事件条，不进 LLM 窗口，加人从下一回合即时生效；
+- 新增角色只需建目录并跑 `npm run check:agents`，无需改代码。
+
+**执行与安全**
+
+- 工具 Harness：83 个内置工具（常驻 + 延迟加载），只读并行 / 写类串行、60s 幂等缓存、超时与取消真中断；
+- 沙箱：以会话隔离的 `workspace/` 为根，`.env` / `.ssh` / `*.pem` 等敏感文件默认拒绝，`run_command` 走白名单；
+- 审批：`APPROVAL_MODE=risky|all|off`，挂起 + 批准 / 拒绝 / 超时回灌，默认超时 10 分钟；服务默认仅监听 `127.0.0.1`；
+- 持久化：SQLite（WAL）+ 迁移器，消息 / 运行 / 任务 / 记忆 / 摘要 / usage / 交付件版本 / 工具指标全落库；崩溃重启后未完成 Run 标记 `interrupted`，可「从断点继续」；
+- 异步与通知：关页后运行继续（`RUN_DETACH_ON_DISCONNECT`），完成 / 出错 / 待审批经 WebSocket 推送（重连补发 + 降级轮询）。
+
+**记忆与观测**
+
+- 五层上下文装配 + 滚动摘要压缩；运行时上下文（日期 / 星期 / 时区 / 环境）全角色注入 `<runtime_context>`（天级稳定，护前缀缓存）；
+- 向量记忆（可选）：会话 / 角色 / 项目 / 全局四层语义记忆，sqlite-vec 双后端，未配置即模块休眠；
+- `run_events` 全链路 Trace、指标面板（token / 费用 / 工具排行 / 调度健康）、FTS 全文检索、反馈闭环；
+- `npm run eval` 以 mock 断言 + baseline 回归门禁守住 prompt 与引擎改动。
+
+## 场景与资产
+
+| 维度 | 规模 |
+| --- | --- |
+| 场景 | 41（空场景 / 研发团队 / 站点可靠性 / 商业战略 / 深度研究 / 市场增长 / 销售客户 / 财务法务 / 运营行政 / 融资资本 / 商业智能 / 电商经营 / 自媒体 / 头脑风暴 / 学术论文 / 谈判桌 / 模拟法庭 / 议题圆桌 / 游戏工坊 / 跑团 / 投资研究 / 多空对决 / 健康生活 / 心理支持 / 学习成长 / 出行旅行 / 财富管理 / 家庭生活 / 置业安家 / 家装设计 / 家庭照护 / 职业发展 / 个人管理 / 情感关系 / 个人法务 / 传统数术 / 星象占星 / 塔罗研习 / 堪舆阳宅 / 哲学茶室 / 创作工作室） |
+| 角色 | 163 位（含通用助手与 9 场景 34 角色的 OPC 全职能虚拟公司） |
+| 技能 | 72 个技能文档（研发 / 设计 / 数据 / 研究 / 营销 / 客服 / 财务法务 / 投资研究 / 运营 / 战略 / 玄学 / 生活等分组） |
+| 工具 | 83 个内置（金融 `fin_*`、数术排盘、浏览器等重工具默认延迟加载） |
+| 质量门禁 | 64 个评测任务（golden + 真实模式探针 + 回归基线）· 64 个 E2E spec / 146 条用例 |
+
+## 目录结构
+
+```
+├── shared/          协议单一事实源（Session / ChatMessage / RunEvent / NotifyEvent / Artifact…）
+├── agents/          Agent 资产包（41 场景 163 角色；每角色 = AGENT.md + 可选 souls/ + avatar.png）
+│   ├── README.md    新增角色操作手册（建目录 → 写 AGENT.md → 可选 souls/ 与 avatar.png → check:agents）
+│   ├── _protocol.md 全局协作协议（分层协议第一层，场景协议追加其后）
+│   ├── _presets.yaml 快速组队预设（周经营例会 / 内容营销战役 / 多空对决…）
+│   └── development/ 研发团队（pm / architect / designer / frontend / backend / qa / devops 等 13 角色）
+├── skills/          技能库 72 个（业务角色显式预载，生活场景角色按需加载）
+├── design.md        架构设计总纲（ADR 全量索引见 docs/adr/README.md）
+├── docs/            api.md · operations.md · adr/ · owli-team-intro.md（图文介绍）· screenshots/（README 截图）
+├── server/          Express + ws
+│   └── src/
+│       ├── orchestration/  parser（@解析）→ scheduler（波次规划 / decideHandoff / mergeWaveSchedule / 循环检测）→ engine（波次循环 + tool loop + 审批挂起）
+│       ├── context/        tokenizer · 五层装配器 · 滚动摘要压缩器
+│       ├── llm/            provider（OpenAI 兼容）+ resilience（重试退避 / 超时分层 / 并发信号量）
+│       ├── tools/          registry（execWithAbort / 并行 / 幂等缓存）+ 83 工具 + MCP 适配层
+│       ├── routes/         agents / sessions / runs / artifacts / context / settings / metrics / feedback / projects…
+│       ├── store/          SQLite（node:sqlite + 迁移器）：会话 / 消息 / 运行 / 任务 / 记忆 / 摘要 / usage / FTS / 工具指标
+│       └── ws.ts           NotifyHub（订阅 / 心跳 / 环形重放）+ AUTH_TOKEN 握手校验
+├── client/          React 18 + Vite + Tailwind（浅色主题 · 紧凑布局）
+│   └── src/         stores（byId + order，O(1) 订阅）· components（三栏布局 / 虚拟消息列表 / 审批卡 / Diff / 上下文电池 / 协作图谱 / Trace 抽屉 / ⌘K）
+├── evals/           评测任务（tasks/*.json）+ baseline.json + reports/
+├── e2e/             Playwright 主链路测试（mock 模式）
+├── data/            SQLite 库 / settings.json / logs / worktrees（运行时生成）
+└── workspace/       交付件根目录（按会话隔离，工具沙箱根）
+```
 
 ## 命令
 
@@ -37,9 +170,9 @@ npm run dev             # 同起 server(8787) + client(5173)
 | `npm start` | 单端口生产托管（默认 8787，含 API + 前端静态资源） |
 | `npm run test` | 全量测试（server + client vitest） |
 | `npm run typecheck` / `npm run lint` | 类型检查 / ESLint |
-| `npm run eval` | mock 基线评测（64 个任务：56 个 golden 任务 + 8 个真实模式探针 + 回归门禁，非零退出码即回归；`--tasks=` 过滤 / `--update-baseline` 刷新基线 / `--judge` 走真实模型 / `--real` 跑探针任务） |
-| `npm run e2e` | Playwright E2E（mock 模式；63 个 spec / 145 条用例，含 approval / auth 多用户实例） |
-| `npm run check:agents` / `npm run check:skills` | 校验 Agent 包（目录 / `_group.yaml` / 灵魂 / 协议 / 六段骨架 + 正文 ≥1200 字符质量报告）与技能文档（front-matter + 正文 ≥60 行质量报告）；**CI 已启用 strict 门禁**（`QUALITY_STRICT` / `SKILL_STRICT`） |
+| `npm run eval` | mock 基线评测（64 个任务；`--tasks=` 过滤 / `--update-baseline` 刷新基线 / `--judge` 真实模型 / `--real` 跑探针） |
+| `npm run e2e` | Playwright E2E（mock 模式；64 个 spec / 146 条用例，含 approval / auth 多用户实例） |
+| `npm run check:agents` / `npm run check:skills` | 校验角色包（目录 / `_group.yaml` / 灵魂 / 协议 / 六段骨架）与技能文档；CI 已启用 strict 门禁 |
 | `npm run migrate:agents` | 幂等迁移旧资产：`prompts/*.md` + 头像 → `agents/` 单包目录（`--prune` 清理旧文件） |
 | `npm run migrate:json` | 旧 `data/sessions/*.json` 一次性导入 SQLite |
 | `npm run llm:ping` | 探测真实模型连通性（需 Key） |
@@ -56,78 +189,57 @@ docker compose up -d --build
 #    http://127.0.0.1:8787/?token=<AUTH_TOKEN>
 ```
 
-- 容器内以 `BIND_ALL=true` 监听 0.0.0.0（端口映射前置条件），`AUTH_TOKEN` 强制校验（HTTP + WebSocket 握手）；compose 未设置 token 会直接报错退出；
-- 端口默认仅绑定宿主 `127.0.0.1`；如需局域网访问改为 `"8787:8787"`（token 仍是准入条件）；
+- 容器内以 `BIND_ALL=true` 监听 0.0.0.0，`AUTH_TOKEN` 强制校验（HTTP + WebSocket 握手）；compose 未设置 token 直接报错退出；
+- 端口默认仅绑定宿主 `127.0.0.1`；需局域网 / 公网访问改为 `"8787:8787"`（token 仍是准入条件，建议再叠一层反向代理或 WAF）；
 - `data/`（数据库 / 日志 / settings / worktree）与 `workspace/`（交付件）以卷持久化；
 - 真实仓库模式：挂载仓库目录并在 compose 中设置 `ALLOWED_ROOTS`（见 `docker-compose.yml` 注释），改动隔离在 `agent/<会话id>` 分支，合并需显式确认。
 
-## 目录结构
+### 境内网络与小内存机型
 
-```
-├── shared/          协议单一事实源（Session / ChatMessage / RunEvent / NotifyEvent / Artifact…）
-├── agents/          Agent 资产包（单目录自包含，40 场景 161 角色；每角色 = AGENT.md + 可选 souls/ 灵魂变体 + avatar.png）
-│   ├── README.md    新增角色操作手册（建目录 → 写 AGENT.md → 可选 souls/ 与 avatar.png → check:agents）
-│   ├── _protocol.md 全局协作协议（分层协议第一层，场景协议追加其后）
-│   ├── _presets.yaml 快速组队预设（跨场景编制模板；缺失时 UI 自动隐藏）
-│   ├── strategy/    商业战略（chief / strategist / pricing / insight + 场景协议）
-│   ├── development/ 研发团队（pm / architect / designer / frontend / backend / qa / devops 等 13 角色 + 场景协议）
-│   ├── research/    深度研究（lead / scout / analyst / verifier + 场景协议）
-│   ├── invest/      投资研究（invest-lead / analyst-fa / analyst-ta / analyst-news / quant + 场景协议）
-│   ├── …            其余 36 个场景（电商 / 自媒体 / 学术 / 谈判 / 模拟法庭 / 游戏 / 跑团 / 心理支持 / 玄学 / 生活 等）同构组织，完整名录见 http://localhost:5173/#/agents
-├── skills/          技能库 70 个（研发 / 设计 / 数据 / 研究 / 营销 / 客服 / 财务法务 / 投资研究 / 运营 / 战略 / 玄学 / 生活等分组；业务角色显式预载，生活场景角色按需加载，见 agents/README.md「技能库与预载」）
-├── design.md        架构设计总纲（ADR 全量索引见 docs/adr/README.md）
-├── docs/            api.md（接口表）· operations.md（运维与配置）· adr/（决策记录）
-├── server/          Express + ws
-│   └── src/
-│       ├── orchestration/  parser（@解析）→ scheduler（planWave 波次规划 / decideHandoff / mergeWaveSchedule / 循环检测）→ engine（波次循环 + tool loop + 审批挂起）
-│       ├── context/        tokenizer / 五层装配器 / 滚动摘要压缩器 / context 服务
-│       ├── llm/            provider（OpenAI 兼容）+ resilience（重试退避 / 超时分层 / 并发信号量）
-│       ├── tools/          registry（execWithAbort / 并行 / 幂等缓存）+ 56 工具 + MCP 适配层
-│       ├── routes/         agents / sessions（含成员动态增删与换灵魂） / runs / artifacts / context / settings / metrics / feedback / projects…
-│       ├── store/          SQLite（node:sqlite + 迁移器）：会话/消息/运行/任务/记忆/摘要/usage/FTS/工具指标
-│       └── ws.ts           NotifyHub（订阅 / 心跳 / 环形重放）+ AUTH_TOKEN 握手校验
-├── client/          React 18 + Vite + Tailwind（仅浅色主题 · 紧凑布局）
-│   └── src/
-│       ├── stores/         agent / session / run / task / ws / ui（byId+order，O(1) 订阅）
-│       └── components/     三栏布局、虚拟消息列表（并行协作组 / system 事件条）、审批卡、Diff 视图、上下文电池（Composer 底栏）、AgentPicker、协作图谱（懒加载）、名录页、Trace / 指标抽屉、⌘K
-├── evals/           评测任务（tasks/*.json）+ baseline.json + reports/
-├── e2e/             Playwright 主链路测试（mock 模式）
-├── data/            SQLite 库 / settings.json / logs / worktrees（运行时生成）
-└── workspace/       交付件根目录（按会话隔离，工具沙箱根）
+```bash
+docker build -t multi-agent:latest \
+  --build-arg NPM_REGISTRY=https://registry.npmmirror.com \
+  --build-arg APT_MIRROR=mirrors.aliyun.com .
 ```
 
-## 核心机制
+- 镜像已内置 `git`、`python3`、`uv/uvx`（Python 版 MCP 服务器运行时）与 `ca-certificates`；
+- `NODE_MAX_OLD_SPACE_SIZE`（默认 3072）控制构建期堆上限：宿主内存 < 2GB 时必须借 swap，且建议先停同机其他容器，否则 `vite build` 会 `heap out of memory`（退出码 134）；
+- 境内 Docker Hub / `deb.debian.org` / npm 官方源容易超时或被限速，用上面的 build-arg 走国内镜像可把构建从「不可用」降到数分钟；
+- 若宿主没有 compose 插件，等价启动（建议同时挂载 `agents/`，改角色资产免重建）：
 
-- **接力与编排**：`@某角色` 或 `handoff(target, reason, expected_output)` 工具转交（`target` 支持多目标 ≤4 = fan-out 并行意图）；同会话永远只有一个活跃 Run，运行中再发消息 = 插话（回合边界注入）；循环检测（波次签名序列 + 3-gram 内容级）自动收尾交还用户。
-- **场景与 Agent 包**：40 大场景（研发团队 / 站点可靠性 / 商业战略 / 深度研究 / 市场增长 / 销售客户 / 财务法务 / 运营行政 / 融资资本 / 商业智能 / 电商经营 / 自媒体工作室 / 头脑风暴 / 学术论文 / 谈判桌 / 模拟法庭 / 议题圆桌 / 游戏工坊 / 跑团工坊 / 投资研究 / 健康生活 / 心理支持 / 学习成长 / 出行旅行 / 财富管理 / 家庭生活 / 置业安家 / 家装设计工作室 / 家庭照护 / 职业发展 / 个人管理 / 情感关系 / 个人法务 / 传统数术 / 星象占星 / 塔罗研习 / 堪舆阳宅 / 哲学茶室 / 创作工作室 等）；`agents/<场景>/<角色>/` 单目录自包含（AGENT.md 人设 + 可选 souls/ 灵魂变体 + avatar.png 自动发现）；协议分层 = 全局协议 + 场景协议（追加语义）+ 人设 + 灵魂段；新增角色只需建目录并跑 `check:agents`，无需改代码。
-- **灵魂变体**：同一角色可挂多套人格与表达风格（如卢娜的「狂野 / 禅意 / 考据派」），创建会话时可选、运行中可一键切换（落 system 事件条）；无 souls/ 的角色行为与现状完全一致，职责、事实与协议优先级永远高于灵魂。
-- **同角多魂（分身同台）**：同一角色的不同人格可**同时以多个成员实例入编**（如 卢娜·狂野 + 卢娜·禅意 同台）——组队台按「参与性格」勾选入编（首人格走经典成员键、其余为分身键 `agentId~soulId`）；`@名字` 召集该角色全部在场实例、`@名字·灵魂名` 点名单个分身；多实例在场时发布/展示统一为 `名字·灵魂名`（单实例零变化）；分身可随时换装（键替换）或移除。
-- **动态成员**：运行中可邀请 / 移出成员；变更落 `role:'system'` 消息（渲染为成员事件条，不进 LLM 窗口）；加人从下一回合即时生效，当前发言 / 波内进行中的成员拒绝移出。
-- **并行波次**：回合循环升级为波次循环（串行 = 单波特例，默认行为不变）；显式触发（@ ≥2 人 / handoff 多目标 / 场景 `parallel: true`）；波内上下文隔离（统一基于波前历史）+ 波末 fan-in 收敛；`PARALLEL_MAX` 默认 3（=1 关闭），`maxTurnsPerRun` 语义 = 最大波数。
-- **协作图谱**：TeamPanel 第 7 视图（React Flow 懒加载独立 chunk，不占首屏）可视化接力关系与实时状态（发言中 / 排队 / 待你指示）；边由消息 `mentions` 纯前端推导，零后端改动；安静模式 / reduced-motion 降级。
-- **上下文工程**：L0 协议 / L1 记忆 / L1.5 语义召回 / L2 摘要 / L3 半静态（含运行时上下文）/ L4 最近回合 / L5 工具结果分层装配；**运行时上下文全角色注入**——当前日期 / 星期 / 时区 / 运行环境进 system L3 尾段 `<runtime_context>`（天级稳定护前缀缓存）、精确时刻随回合指令下发；超预算 × 0.7 触发按「回合组」压缩（结构化摘要 + 增量合并）；压缩事件进 Trace；`remember` 工具 + 记忆面板兜底关键约束。
-- **向量记忆（M25）**：四层关联（会话 / 角色 / 项目 / 全局）的语义记忆；sqlite-vec 双后端（纯 JS 余弦兜底）、嵌入凭据走连接中心 SecretVault（未配置即模块休眠）、混合评分召回注入 L1.5（300ms 超时静默降级）；Run 后可选沉淀候选记忆待审（默认关）。
-- **工具 Harness**：55 内置工具（21 常驻 + 34 延迟加载；文件读写 / glob / grep / apply_patch / web_search 联网检索（百度→Bing→搜狗→360 降级链）/ web_fetch / Git 六件套 / 待办 / 记忆 / Skill / 审批 / handoff）；只读并行 + 写类串行、60s 幂等缓存、超时与取消真中断（无遗留副作用）、敏感文件默认拒绝、`run_command` 白名单。
-- **安全与审批**：`APPROVAL_MODE=risky|all|off`，高风险工具（`git_commit` / `run_command` / 覆盖写 / 敏感文件）触发审批卡并挂起 Run，批准 / 拒绝 / 超时（默认 10 分钟）都会回灌模型；服务默认仅监听 `127.0.0.1`。
-- **持久化与恢复**：SQLite（WAL）+ 迁移器，消息 / 运行 / 任务 / 记忆 / 摘要 / usage / 交付件版本 / 工具指标全落库；崩溃重启后未完成 Run 标记 `interrupted`，支持「从断点继续」。
-- **可观测与评测**：`run_events` 全链路 Trace（回合耗时 / token / 工具 / 压缩 / 调度决策）、指标面板、FTS 全文检索、反馈闭环；`npm run eval` 用 mock 断言 + baseline 回归门禁保障 prompt 改动质量。
-- **异步与通知**：关闭页面后运行继续（`RUN_DETACH_ON_DISCONNECT`）；完成 / 出错 / 待审批通过 WebSocket 推送（重连补发 + 降级轮询）。
-- **金融投研（M34）**：三源混合行情网关（东财 / 腾讯 / 新浪直连 + baostock / akshare Python 桥 + 能力级降级链 + 反爬共享模块）；12 个 `fin_*` 工具全量延迟加载（`FINANCE_ENABLED` 默认关闭）；K 线 / 博弈入会话（kline / game 围栏块「送上画布」）与画布（博弈推演 / K 线行情节点，四模型推演直连 API 不耗 LLM，Agent 可经 canvas_write 直接落节点；主区「行情」Tab 已撤除，见 ADR 0098）；K 线快照 `charts/` 进交付件体系；invest 场景五角色协作链（投研快评 / 策略研究预设；多空对弈协议链路——逐轮立论 × 量化走子 × `::: verdict` 终局裁决卡）。
-- **调度平台化（M48）**：新建会话零选择直接开聊——**不再有调度官角色**（所有 agent 均为单一业务角色）；未 @ 消息与空编制开场由引擎的**平台路由步（PRS）**自动组队与派发（结构化决策「召集 + 派发」，非角色回合不产生消息 / 不占波次），@ 直达与显式 plan / review 语义零变化；成员增援自动化（handoff 未在场目标自动召集）；全程可审计（事件条 + 广播 + trace `routing:dispatched` 召集 / 派发 / 降级三形状）。
+```bash
+docker run -d --name multi-agent --restart unless-stopped \
+  -p 0.0.0.0:8787:8787 \
+  --env-file "$(pwd)/.env" -e BIND_ALL=true \
+  -v "$(pwd)/data:/app/data" \
+  -v "$(pwd)/workspace:/app/workspace" \
+  -v "$(pwd)/agents:/app/agents" \
+  multi-agent:latest
+```
 
-## 文档
+### MCP 服务器
 
-- [design.md](design.md)：架构设计总纲（含 ADR 索引与验收清单）
-- [docs/api.md](docs/api.md)：全部 HTTP / SSE / WS 接口表
-- [docs/operations.md](docs/operations.md)：部署形态、环境变量全表、备份与故障排查
-- [docs/adr/](docs/adr/)：116 条架构决策记录（至 ADR 0131 / M54；完整索引与状态汇总见目录 [README](docs/adr/README.md)）
+启动时按 `mcp.json`（或 UI 里新增的服务器）拉起 MCP，当前内置 9 个：`sequential-thinking` / `memory` / `time` / `weather` / `markitdown` / `deepwiki` / `context7` / `arxiv` / `yfinance`。
+
+- **子进程只继承 `PATH` / `HOME` 等安全变量**（`server/src/mcp/client.ts` 用 `getDefaultEnvironment()` 构造环境，防进程级密钥泄漏），所以 npm / PyPI 镜像源写在镜像的 `~/.npmrc` 与 `~/.config/uv/uv.toml`，而不是 `ENV`；
+- 构建期已将 uvx / npx 包预热到 `~/.cache/uv`、`~/.npm`，运行时首启直接命中缓存；漏预热会因 `MCP_CONNECT_TIMEOUT_MS`（默认 15s）超时而整批连接失败；
+- 低配机器（2 核 / 1.6G）上 9 个服务器并发起步，建议把 `MCP_CONNECT_TIMEOUT_MS` / `MCP_LIST_TIMEOUT_MS` 调到 `45000`；
+- `markitdown` 的音频 / 视频转文本需要容器内 `ffmpeg`（默认未装，文档转换不受影响）。
 
 ## 环境变量
 
-见 [docs/operations.md](docs/operations.md)（全表 + 说明）与 `.env.example`。常用项：`LLM_API_KEY`（必填）、`LLM_MODEL`、`CONTEXT_BUDGET_TOKENS`、`APPROVAL_MODE`、`BIND_ALL` + `AUTH_TOKEN`、`LLM_MOCK`。
+见 [docs/operations.md](docs/operations.md)（全表 + 说明）与 `.env.example`。常用项：`LLM_API_KEY`（必填）、`LLM_MODEL`、`CONTEXT_BUDGET_TOKENS`、`APPROVAL_MODE`、`BIND_ALL` + `AUTH_TOKEN`、`LLM_MOCK`；MCP 相关：`MCP_CONNECT_TIMEOUT_MS` / `MCP_LIST_TIMEOUT_MS`（默认 15000）、`MCP_MEMORY_PATH`、`MCP_ARXIV_STORAGE`。
 
 配置优先级：`data/settings.json`（UI 可改，无需重启）> 环境变量 > 内置默认值。
 
+## 文档
+
+- [docs/owli-team-intro.md](docs/owli-team-intro.md)：图文项目介绍（产品定位 / 核心特点 / 场景实录 / 演示视频）
+- [design.md](design.md)：架构设计总纲（4592 行，含 ADR 索引与验收清单）
+- [docs/api.md](docs/api.md)：全部 HTTP / SSE / WS 接口表
+- [docs/operations.md](docs/operations.md)：部署形态、环境变量全表、备份与故障排查
+- [docs/adr/](docs/adr/)：207 条架构决策记录（至 ADR 0222，索引见 [README](docs/adr/README.md)）
+
 ## 技术栈
 
-React 18 · TypeScript 5 · Vite · Tailwind · shadcn/ui（Radix）· lucide-react · zustand · react-markdown · shiki · @tanstack/react-virtual · Express · ws · zod · openai · js-tiktoken · pino · SQLite（node:sqlite + sqlite-vec）· vitest · Playwright
+React 18 · TypeScript 5 · Vite · Tailwind · shadcn/ui（Radix）· lucide-react · zustand · react-markdown · shiki · @tanstack/react-virtual · @xyflow/react · Express · ws · zod · openai · js-tiktoken · pino · SQLite（node:sqlite + sqlite-vec）· uv（MCP 运行时）· vitest · Playwright

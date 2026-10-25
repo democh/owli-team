@@ -55,7 +55,7 @@
 | GET | `/api/sessions` | 会话列表（含消息数 / 最后摘要） | `{ sessions: Session[] }` |
 | POST | `/api/sessions` | 新建会话（M46：`participantIds` 空数组 → 填充全局唯一调度官；资产缺失 `400`） | `201 { session }` |
 | GET | `/api/sessions/:id` | 会话详情（含全部消息与最近 Run 快照；`?limit=`/`?before=` 游标分页——最近 N 条 / 该 seq 之前的更早一页，limit ≤ 500，缺省全量） | `{ session, messages, latestRun, project, memberReads, hasMore?, totalCount?, memberStats? }` |
-| PATCH | `/api/sessions/:id` | 重命名 / 切换「规划先行」`planFirst`（M24）/ 「串行执行」`serial`（M46-2，缺省开启）/ **空间归属 `spaceId`**（P1；与改名同口径仅属主，校验存在性 + `notify:session-meta` 广播） | `{ session }` |
+| PATCH | `/api/sessions/:id` | 重命名 / 切换「规划先行」`planFirst`（M24）/ 「串行执行」`serial`（M46-2，缺省开启）/ 「接力控制」`relay`（M86：`auto` / `manual` / `null` 恢复推导）/ 「自动编排」`autonomy`（M88：`auto` / `always-plan` / `never-plan` / `null` 恢复 auto；兼容 `planFirst`）/ **空间归属 `spaceId`**（P1；与改名同口径仅属主，校验存在性 + `notify:session-meta` 广播） | `{ session }` |
 | DELETE | `/api/sessions/:id?deleteWorkspace=&keepWorktree=` | 删除会话；默认连工作区删除，worktree 会话默认丢弃（需保留传 `keepWorktree=true`） | `{ ok, deleteWorkspace, worktreeDiscarded }` |
 | POST | `/api/sessions/:id/resume` | 断点继续（以 `interrupted` 快照启动新 Run） | `201 { runId, queue, queued }` |
 | GET | `/api/sessions/:id/tasks` | 任务清单（`write_todos` 落库，跨 Run 继承） | `{ tasks: TaskItem[] }` |
@@ -95,6 +95,7 @@
 | 方法 | 路径 | 说明 | 关键返回 |
 | --- | --- | --- | --- |
 | POST | `/api/sessions/:id/messages` | **双形态**：启动新 Run 或插话（见下） | `201 { message, runId, queue }` 或 `201 { message, injected: true, position, runId }` |
+| POST | `/api/sessions/:id/dispatch` | **M86 手动派发下一棒**（body `{ agentId, note? }`；目标须在场，支持角色 id / 成员键；非 viewer）：活跃 Run → 插到队首（不打断当前发言人）；空闲 → 新起 Run（队列 = `[agentId]`，**跳过平台路由**）；落系统事件条并广播 `queue:updated` | `{ runId, queue, queued }` |
 | PATCH | `/api/sessions/:id/messages/:messageId` | 编辑用户消息内容（运行中 `400`） | `{ message }` |
 | DELETE | `/api/sessions/:id/messages/:messageId` | 删除用户消息（运行中 `400` ） | `{ ok }` |
 | PUT | `/api/sessions/:id/messages/:messageId/reactions` | **M80-B**：挂表情回应（`{ emoji }`；幂等 toggle；写级成员，viewer `403`；兼容模式拒绝；同消息同用户 ≤8 种，超限 `429`；`isEmojiLike` 校验） | `{ reactions }` |
@@ -108,6 +109,15 @@
 - 无活跃 Run → 启动新 Run：`{ "content": "帮我设计登录功能" }` → `201 { message, runId, queue }`，内容经 `GET /api/runs/:runId/stream` 消费；
 - 有活跃 Run → 插话：写入当前 Run 的待注入队列，在下一回合边界注入上下文，并 emit `user:message` 事件。
 - 消息级范式（M24）：body 可附 `{ "mode": "plan | execute | review" }`（Composer 三态 chip，仅对**下一条消息**生效、发送后自动复位；缺省沿用会话 `planFirst` 或 `execute`），随用户消息持久化并在 `turn:start` / `wave:start` 携带。
+- **接力控制（M86，ADR 0223）**：`Session.relay` 控制「agent 之间是否自动接棒」。缺省按会话形态推导 —— `direct` / `group` 与**单成员编制**为 `manual`，零编制（待组队）与多成员 team 为 `auto`；`PATCH { "relay": "auto" | "manual" | null }` 显式覆盖。`manual` 下 `handoff` 工具只登记「建议下一棒」（回执说明不自动接棒，落 `handoff:suggested` 审计），不自动召集、不入队，Run 收尾交还用户；接棒只经 `POST /sessions/:id/dispatch` 由用户发起。已批准计划的步骤派发不受影响。
+- **自动编排（M88，ADR 0226）**：未显式选择范式时，服务端按「意图判定」决定本回合是否先出计划 / 末段是否评审：
+  - 优先级：消息级 `mode`（用户显式）> 文本显式指令（「先出计划 / 直接做 / 评审一下」）> 会话 `autonomy`（`always-plan` / `never-plan`，兼容 `planFirst=true`）> 复杂度推断 > 默认 `execute`；
+  - 高风险动作（部署 / 正式发布 / 转账 / 签署…）**强制规划**（即使 `never-plan`）；置信度阈值按风险分档（low 0.75 / medium 0.55 / high 强制）；
+  - 无 @ 消息：判定并入 PRS 的 `intent` 块（不额外调用模型）；`@直达` 消息只走规则层；
+  - 可审计：用户消息返回 `mode` + `modeSource`（`user` / `rule` / `router` / `policy`）；SSE `run:start` 携带 `intent`，PRS 改判时补发 `intent:decided`；写扩散时发 `intent:suggest-plan`（仅建议）；
+  - **首波评审仅限纯验收**：`intent.reviewFirst=true`（无产出动作的「评审 / 验收一下」）才以 review 范式开首波；「整理方案并检查」先执行，交付后过评审门（`needsReview`）。
+  - 关闭开关：`PUT /api/settings { "autonomyEnabled": false }`（或 env `AUTONOMY_ENABLED=false`），关闭后回到旧语义（仅显式 mode / `planFirst`）。
+- **收口评审门（M88）**：`intent.needsReview=true` 且计划含 `acceptance / expectedOutput`、无显式 `review` 步骤时，计划完成后的作者收口波以评审范式发言（`submit_review`，target = `plan:<id>`）。
 
 **uploads 请求体**：`{ "name": "screenshot.png", "dataBase64": "..." }`；解码后 ≤ 8MB，超限 `413`；文件名做安全清洗后落盘，返回相对路径（可用于消息引用）。
 
@@ -147,11 +157,12 @@
 - **embedding 连接**：凭据经连接中心 kind=`embedding`（SecretVault 加密，`secretSet` 标记，明文永不回传）；未配置连接且 env 无 `EMBEDDING_*` 时整模块休眠（零网络零影响）；
 - **候选流（M25.4）**：`MEMORY_DIGEST_MODE=session|all` 时 Run 完成后异步沉淀候选（默认 `off` 零调用）；候选经审核转 `active` 后才参与召回，全流程记 `memory:digest` trace 与 usage（kind=`digest`）。
 
-## 6. 交付件（v1 / M6 / M8 / M24）
+## 6. 交付件（v1 / M6 / M8 / M24 / M87）
 
 | 方法 | 路径 | 说明 | 关键返回 |
 | --- | --- | --- | --- |
-| GET | `/api/sessions/:id/artifacts` | 交付件列表：sandbox 模式 = 深度遍历（mtime 降序）；repo/worktree 模式 = **git 变更集** | `{ artifacts, source: 'files' \| 'git' }` |
+| GET | `/api/sessions/:id/artifacts?limit=&offset=&paths=&refresh=` | 交付件列表（M87 索引读取，mtime 降序）：`paths` = 精确元数据（≤100，逗号分隔）；`refresh=1` 强制校准工作区；全量响应带 `ETag`（`If-None-Match` → `304`） | `{ artifacts, source: 'index' \| 'git', revision, total, hasMore }` |
+| GET | `/api/sessions/:id/artifacts/changes?since=` | 增量同步：`revision > since` 的 upserts + 删除墓碑（客户端事件合并后只拉一次） | `{ revision, upserts, deletes }` |
 | GET | `/api/sessions/:id/artifacts/content?path=&download=&raw=` | 内容：文本内联 JSON（≤ `ARTIFACT_MAX_BYTES`）；`raw=1` 文本原样直出（HTML / PDF 预览 iframe 走浏览器原生解析）；二进制 / 超限 `413` 引导下载；`download=1` 走文件流 | `{ path, kind, size, truncated, content }` |
 | GET | `/api/sessions/:id/artifacts/preview?path=` | M24：Office 轻量解析（docx → HTML / xlsx → 工作表 / pptx → 幻灯片大纲）；8MB 上限 `413`；不支持的格式 `415`；解析失败（损坏 / 加密） `422` | `ArtifactPreview`（按 kind 判别联合） |
 | GET | `/api/sessions/:id/artifacts/versions?path=` | 版本列表（新→旧，不带正文） | `{ versions: ArtifactVersionMeta[] }` |
@@ -202,6 +213,7 @@
 | GET | `/api/metrics/tools?sinceMs=` | 工具维度指标（次数 / 失败率 / 平均耗时） | `{ tools: [...] }` |
 | GET | `/api/metrics/summary?sinceMs=` | 总览指标（回合数 / token / 费用 / 压缩次数 / 平均回合耗时） | `{ summary, byKind, tools, feedback }` |
 | GET | `/api/metrics/scheduling?sinceMs=` | M61-D6 调度健康聚合（路由 / 降级 / 波次 / 并行 / 循环抑制 / 停滞抑制 / 写冲突 / 接单） | `{ scheduling: SchedulingStats }` |
+| GET | `/api/metrics/agents?sinceMs=` | **M89 角色级质量指标**（按 agent 聚合：回合 / token / 费用 / 工具失败 / 计划步骤完成与阻塞 / 评审未通过；按调用量倒序） | `{ agents: AgentMetric[] }` |
 | POST | `/api/feedback` | 消息反馈（👍/👎 + 原因） | `201 { item }` |
 | GET | `/api/feedback?messageId=` 或 `?sinceMs=` | 反馈查询 | `{ items }` |
 | GET | `/api/feedback/export?sinceMs=` | 导出为评测候选集 | `{ items, exportedAt }` |
@@ -524,7 +536,7 @@ Agent 侧对应四工具 `canvas_read` / `canvas_write` / `media_generate` / `me
 | GET | `/api/auth/status` | 启动路由决策（公开） | `{ needsSetup, authRequired, multiUser }` |
 | POST | `/api/auth/setup` | 首启创建首个管理员（仅无账号时可用；自动登录 + 回填存量归属） | `201 { user, mustChangePassword }` + `sid` cookie |
 | POST | `/api/auth/login` | 登录（IP 限流 + 账号失败锁定；统一失败文案） | `{ user, mustChangePassword }` + `sid` cookie；锁定 `429` |
-| POST | `/api/auth/logout` | 登出（撤销当前令牌，幂等） | `{ ok: true }`（清 cookie） |
+| POST | `/api/auth/logout` | 登出（撤销当前令牌，幂等；同时清 `sid` 与 legacy `auth_token` cookie） | `{ ok: true }`（清 cookie） |
 | GET | `/api/auth/me` | 当前用户（客户端权限显隐依据；单用户兼容模式返回合成管理员） | `{ user, isAdmin, needsSetup, authRequired, multiUser }` |
 | POST | `/api/auth/password` | 自助改密（校验原密码；吊销其它会话，当前会话保留） | `{ ok: true }` |
 | GET/PUT | `/api/auth/preferences` | 个人偏好（`user_prefs`；与系统级 settings.json 分离；`searchable` / `allowFriendRequests` / `showReadReceipts`（M80-C，默认开）等） | `{ preferences }` |
@@ -712,7 +724,7 @@ WS 新帧（`/ws`）：`notify:inbox` / `notify:read-state` / `notify:presence` 
 
 **M15–M18 语义速记**：
 
-- `handoff` 工具 `target` 接受 `string | string[]`（≤4；多目标 = fan-out 并行意图，`user` 仅允许单独使用；部分解析失败不拖累其他目标）；
+- `handoff` 工具 `target` 接受 `string | string[]`（≤4；多目标 = fan-out 并行意图，`user` 仅允许单独使用；部分解析失败不拖累其他目标）；M87 增 `artifacts[]`（交接包，≤8；缺省自动带出本轮产出）与 `notes`（交接口径 ≤300 字），路径经索引校验后注入接手方回合指令；
 - `turnIndex` 语义 = **波次号**：同波（并行）消息共享，前端按「同 runId + 同 turnIndex 连续 ≥2 条」推导并行协作组；波内成员互相不可见对方当前输出（统一基于波前历史）；
 - 波次合并后的队列复用 `queue:updated` 广播；`maxTurnsPerRun` 语义 = 最大波数（波内人数不额外占配额）；并行上限 `PARALLEL_MAX`（场景可在 `_group.yaml` 用 `parallelMax` 覆盖）。
 

@@ -13,7 +13,7 @@ agents/
 ├── _presets.yaml             # 快速组队预设（可选；跨场景编制模板，缺失时 UI 自动隐藏）
 └── <场景 id>/                # 一个目录 = 一个场景（group）
     ├── _group.yaml           # 场景元数据（必填）
-    ├── _protocol.md          # 场景协议（可选；本包 40 场景已全量具备，追加在全局协议之后）
+    ├── _protocol.md          # 场景协议（可选；本包 41 场景已全量具备，追加在全局协议之后）
     └── <agent id>/           # 一个目录 = 一个 Agent（id 跨场景全局唯一）
         ├── AGENT.md          # front-matter + 人设正文（必填）
         ├── souls/            # 灵魂变体（可选；不建目录 = 无灵魂，行为与经典模式一致）
@@ -69,7 +69,7 @@ temperature: 0.6              # 可选；设置面板「统一温度」开启时
 - 业务工具四件套（M21）：`calc`（金额 / 比例 / 利率，禁止心算）、`date_calc`（日期与排期，含工作日）、`csv_analyze`（表格汇总 / 筛选，禁止目测）、`template_fill`（合同 / 报价 / 邮件等模板批量渲染，写类走审批）；
 - 「何时必须用」由协议层约束（`_protocol.md <tool_policy>` 的业务纪律四条），工具授权只解决「能不能用」。
 - 外部 MCP（免 Key 批，`mcp.json` 文件权威）：九台服务器（sequential-thinking / memory / time / weather / markitdown / deepwiki / context7 / arxiv / yfinance）按场景最小授权授予对应角色（`mcp__<slug>__*` 通配，会话绑定后可见）；安装台账见 [design.md §109](../design.md)。
-- 协作基线（M29，v14 扩展至全部角色）：全部 164 业务角色白名单均含 `handoff`（结构化转交为第一通道，ADR 2；`reason` / `expected_output` 随交接注入接收方回合指令）；研发 7 角色均含 `remember`（关键口径固化，对齐协议 `<context_semantics>`）。空场景通用助手 `general` 除外：无 `handoff`，单助手纪律（M50）。
+- 协作基线（M29，v14 扩展至全部角色）：全部 163 业务角色白名单均含 `handoff`（结构化转交为第一通道，ADR 2；`reason` / `expected_output` 随交接注入接收方回合指令）；研发 7 角色均含 `remember`（关键口径固化，对齐协议 `<context_semantics>`）。空场景通用助手 `general` 除外：无 `handoff`，单助手纪律（M50）。
 - 调度（M48）：**不再有「调度官」角色**——未 @ 消息与空编制开场由引擎的**平台路由步（PRS）**自动组队与派发（见 [design.md §57](../design.md) / [ADR 0101](../docs/adr/0101-platform-routing-step.md)）；全部 agent 均为单一业务角色，不存在「平台机制角色」。
 
 ## 研发场景能力基线（M29）
@@ -94,7 +94,7 @@ temperature: 0.6              # 可选；设置面板「统一温度」开启时
 - 只引用本仓真实工具与 Markdown 容器（`::: kpi / timeline / mail / option / cols / details / process`、`chart` / `mermaid`）；角色缺该工具时以「如可用」降级并给替代路径；
 - 外部来源（Anthropic 官方 / 社区职能库 / Vercel 界面指南等）统一改写为「本仓工具可执行」的方法论，规范见 ADR 45；安装批新增 8 项外部来源（paper-search / avoid-ai-writing / superpowers / claude-code-owasp / naming / en-zh-translation-polish / claude-persona / Claude-Ally-Health），来源登记见 [design.md §109](../design.md)。
 
-70 技能按 17 组归类：研发工程（api-design / code-review / debugging / test-plan / webapp-testing / release-engineering / system-design / mcp-server-building / incident-response / test-driven-development / secure-coding）、产品与设计（prd-authoring / visual-design / design-system / interaction-motion / ui-review / frontend-design / react-performance / brand-system / game-design / interior-design / 3d-visualization）、数据与演示（nl2sql / data-visualization / spreadsheet-modeling / deck-authoring）、研究与验证（deep-research / source-verification / red-team / academic-writing / literature-search / user-persona）、风暴与元技能（brainstorm-facilitation / skill-authoring）、营销增长（content-marketing / seo-optimizer / sales-outreach / brand-naming）、客户服务（customer-success / support-desk）、财务法务（financial-modeling / contract-review / formal-document）、投资研究（technical-analysis / fundamental-analysis / investment-strategy / market-news-analysis / game-theory-trading）、运营人事（process-improvement / recruiting / procurement）、战略管理（business-review / strategic-planning）、写作沟通（comms-writing / doc-coauthoring / natural-writing / translation-quality / report-authoring）、谈判与辩论（negotiation / debate）、 命理占星（chinese-metaphysics / western-astrology / fengshui）、场景玩法（trpg-hosting / tarot-reading / philosophy-dialogue）、经营创作（ecommerce-operations / creator-economy）、生活沟通（relationship-communication / health-metrics）；academic-writing 并入「研究与验证」组。
+72 技能按 17 组归类：研发工程（api-design / code-review / debugging / test-plan / webapp-testing / release-engineering / system-design / mcp-server-building / incident-response / test-driven-development / secure-coding）、产品与设计（prd-authoring / visual-design / design-system / interaction-motion / ui-review / frontend-design / react-performance / brand-system / game-design / interior-design / 3d-visualization）、数据与演示（nl2sql / data-visualization / spreadsheet-modeling / deck-authoring）、研究与验证（deep-research / source-verification / red-team / academic-writing / literature-search / user-persona）、风暴与元技能（brainstorm-facilitation / skill-authoring）、营销增长（content-marketing / seo-optimizer / sales-outreach / brand-naming）、客户服务（customer-success / support-desk）、财务法务（financial-modeling / contract-review / formal-document）、投资研究（technical-analysis / fundamental-analysis / investment-strategy / market-news-analysis / game-theory-trading）、运营人事（process-improvement / recruiting / procurement）、战略管理（business-review / strategic-planning）、写作沟通（comms-writing / doc-coauthoring / natural-writing / translation-quality / report-authoring）、谈判与辩论（negotiation / debate）、 命理占星（chinese-metaphysics / western-astrology / fengshui）、场景玩法（trpg-hosting / tarot-reading / philosophy-dialogue）、经营创作（ecommerce-operations / creator-economy）、生活沟通（relationship-communication / health-metrics）；academic-writing 并入「研究与验证」组。
 
 各角色预载一览（业务角色显式配置；技能库均为工作向方法论，生活场景角色不硬配，按需 `load_skill`）：
 
@@ -110,7 +110,7 @@ temperature: 0.6              # 可选；设置面板「统一温度」开启时
 | sales | sales（sales-outreach / deck-authoring）· bd（sales-outreach / deck-authoring）· success（customer-success / spreadsheet-modeling）· support（support-desk / comms-writing） |
 | finance | finance（financial-modeling / spreadsheet-modeling）· tax（financial-modeling / spreadsheet-modeling）· legal（contract-review / formal-document）· compliance（formal-document / contract-review）· ip（formal-document / contract-review） |
 | invest | invest-lead（report-authoring）· analyst-fa（fundamental-analysis / report-authoring）· analyst-ta（technical-analysis / report-authoring）· analyst-news（market-news-analysis / report-authoring）· quant（investment-strategy / game-theory-trading / report-authoring） |
-| bi | bi（nl2sql / data-visualization / spreadsheet-modeling / report-authoring）· metric-governor（nl2sql / data-visualization / report-authoring）· viz-designer（data-visualization / design-system / report-authoring） |
+| bi | bi（nl2sql / data-visualization / spreadsheet-modeling / report-authoring）· metric-governor（nl2sql / data-visualization / report-authoring） |
 | ops | ops（formal-document / process-improvement）· hr（recruiting / formal-document）· recruiter（recruiting / comms-writing）· trainer（doc-coauthoring / process-improvement）· assistant（comms-writing / formal-document）· supply（procurement / spreadsheet-modeling） |
 | funding | fundraiser（deck-authoring / spreadsheet-modeling）· ir（deck-authoring / comms-writing） |
 | health | fitness · nutrition · wellness（按需 `load_skill`） |
@@ -218,6 +218,19 @@ presets:
 - 放在 `<agent 目录>/avatar.png`（纯白底 / 风格化 3D 卡通 v2 / 半身像，年龄·面孔等七维区分，风格与 design.md §19 一致）；
 - 存在即自动生效（`GET /api/agents/<id>/avatar`，ETag 缓存）；缺失 / 加载失败时前端回退 `avatar.gradient + avatar.icon`；
 - 想用自定义路径时可在 front-matter 写 `avatar.image`（此时自动发现被让位）。
+
+## 场景分层（选择建议）
+
+41 个场景按使用频次与语义分六层，建会话时优先从「核心工作」「生活与身心」两层选择；「专业支援」类场景用于专项任务：
+
+- **核心工作（16）**：development / sre / ops / strategy / finance / invest / bullbear / bi / marketing / sales / ecommerce / funding / legal-personal / moot-court / academic / research
+- **创作与表达（5）**：writing / creator / gamedesign / brainstorm / trpg
+- **生活与身心（12）**：home / housing / interior / care / health / wellness-mind / relationship / learning / career / personal / travel / wealth
+- **社会与思辨（3）**：society / philosophy / negotiation
+- **玄学参考（4）**：metaphysics / fengshui / astrology / tarot
+- **单助手（1）**：blank
+
+> 资产精简以数据为依据（ADR 0227）：不做机械合并（角色 id 被存量会话引用、chain 即建会话默认预选、场景承载专属 UI）。`check:agents` 的「资产一致性报告」列出隔离角色（不在 chain/preset/ritual/seats）；减员以 `GET /api/metrics/agents` 的实际负载与质量指标为准。
 
 ## 校验与运维
 

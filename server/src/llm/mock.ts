@@ -265,21 +265,9 @@ const SCRIPTS: Record<string, RoleScript> = {
     `${topicName(ctx)}三法估值都跑了：可比公司 / 可比交易 / DCF，投前投后口径分开标。`,
     `谈判区间、敏感性网格与稀释表（含 ESOP）在 \`${ctx.artifactPath}\`；终值占比已披露。`,
   ],
-  'datroom-keeper': (ctx) => [
-    `${topicName(ctx)}数据室清单建好了：材料状态、责任人、截止日三列齐；敏感信息按三档处理。`,
-    `问答追踪与一致性抽查记录在 \`${ctx.artifactPath}\`；三处数字先修后交，不带矛盾进尽调。`,
-  ],
   'metric-governor': (ctx) => [
     `${topicName(ctx)}指标条目写到公式级：名称、口径、分子分母、来源、责任人全齐。`,
     `血缘图、变更日志与一致性巡检记录在 \`${ctx.artifactPath}\`；黑盒指标标了禁用。`,
-  ],
-  'viz-designer': (ctx) => [
-    `${topicName(ctx)}图表选型逐张给了「一图一结论」，禁忌用法（饼图超 5 块 / 双轴）零碰。`,
-    `三层布局线框、色板样式与四件套注释在 \`${ctx.artifactPath}\`；三秒测试过了。`,
-  ],
-  'capacity-planner': (ctx) => [
-    `${topicName(ctx)}水位换算公式给了，缓冲系数 1.3–1.5 标注到位，单点组件逐个算过。`,
-    `三档外推、策略对照与容量预算（归一化）在 \`${ctx.artifactPath}\`；压测计划排在大促前两周。`,
   ],
   'chaos-officer': (ctx) => [
     `${topicName(ctx)}演练剧本六要素齐：注入点、方式、半径、时间窗、中止条件、观察清单。`,
@@ -2526,15 +2514,6 @@ export function artifactFor(
           ['稀释测算', ['融资额 × 估值组合的稀释表（含 ESOP）', 'DCF 终值占比披露']],
         ]),
       }
-    case 'datroom-keeper':
-      return {
-        path: `docs/数据室清单-${t}.md`,
-        content: doc(`${t}数据室清单`, [
-          ['材料清单', [`${t}尽调目录：状态 / 责任人 / 截止日三列`, '敏感信息三档处理（披露 / 打码 / 不披露）']],
-          ['问答追踪', ['DD Q&A 编号 / 状态 / 答复口径', '超 48 小时未答复升级提醒']],
-          ['一致性', ['数据室 / BP / 模型三处数字抽查记录', '差异先修后交，带矛盾不进尽调']],
-        ]),
-      }
     case 'metric-governor':
       return {
         path: `docs/指标字典-${t}.md`,
@@ -2542,24 +2521,6 @@ export function artifactFor(
           ['指标条目', [`${t}相关指标：定义 / 公式 / 来源 / 责任人 / 生效日`, '比率型含分子分母与过滤条件']],
           ['血缘与变更', ['指标 ← 字段 ← 表血缘图，黑盒标注禁用', '变更流程留痕（评审 / 公告 / 双轨 / 归档）']],
           ['巡检', ['抽检取数与字典一致性', '重复与歧义指标待治理清单']],
-        ]),
-      }
-    case 'viz-designer':
-      return {
-        path: `docs/看板设计-${t}.md`,
-        content: doc(`${t}看板设计`, [
-          ['选型与结构', [`${t}相关图表逐张选型 + 一图一结论`, '三层布局：结论层 / 趋势层 / 明细层']],
-          ['规范', ['色板（≤≤7 色）/ 字号 / 对比度检查', '复用组件优先于新设计']],
-          ['注释四件套', ['轴 / 单位 / 数据来源 / 口径注释', '交互说明（下钻与筛选）']],
-        ]),
-      }
-    case 'capacity-planner':
-      return {
-        path: `docs/容量规划-${t}.md`,
-        content: doc(`${t}容量规划`, [
-          ['水位与换算', [`${t}近 30 天峰值与换算公式（含来源）`, '缓冲系数 1.3–1.5 标注到位']],
-          ['外推与策略', ['三档增长外推（3–12 个月）', '扩缩容策略对照（响应 / 成本 / 复杂度）']],
-          ['预算与压测', ['成本归一化（单千次请求 / 单用户月）', '压测计划 + 单点风险清单']],
         ]),
       }
     case 'chaos-officer':
@@ -4236,10 +4197,7 @@ const DISPLAY_NAMES: Record<string, string> = {
   'insurance-planner': '保宁',
   'big-ticket-advisor': '慎衡',
   'valuation-modeler': '衡价',
-  'datroom-keeper': '理卷',
   'metric-governor': '正尺',
-  'viz-designer': '绘数',
-  'capacity-planner': '度峰',
   'chaos-officer': '试雷',
   'habit-coach': '立习',
   'license-keeper': '执证',
@@ -4888,10 +4846,7 @@ export class MockProvider implements LlmProvider {
       'insurance-planner': ['wealth', 'big-ticket-advisor'],
       'big-ticket-advisor': ['wealth', 'insurance-planner'],
       'valuation-modeler': ['fundraiser', 'ir'],
-      'datroom-keeper': ['fundraiser', 'ir'],
-      'metric-governor': ['bi', 'viz-designer'],
-      'viz-designer': ['bi', 'metric-governor'],
-      'capacity-planner': ['sre', 'devops'],
+      'metric-governor': ['bi'],
       'chaos-officer': ['sre', 'devops'],
       'habit-coach': ['coach', 'life-admin'],
       'license-keeper': ['ops', 'finance'],

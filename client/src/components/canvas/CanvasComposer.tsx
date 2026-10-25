@@ -29,7 +29,7 @@ const PREVIEW_LIMIT = 14
 
 /** M24：消息级范式选择（三态 chip，默认「执行」；与对话输入区同一语义） */
 const MODE_CHIPS: Array<{ mode: TurnMode; label: string; title: string }> = [
-  { mode: 'execute', label: '执行', title: '默认：不显式指定范式（尊重会话「规划先行」开关，否则正常执行）' },
+  { mode: 'execute', label: '自动', title: '自动编排：由意图判定决定（多环节 / 高风险 → 先出计划；验收类 → 评审）' },
   { mode: 'plan', label: '规划', title: '规划范式：首棒只读调研并提交计划，待你批准后执行（仅对下一条消息生效）' },
   { mode: 'review', label: '评审', title: '评审范式：成员输出结构化评审判定（仅对下一条消息生效）' },
 ]

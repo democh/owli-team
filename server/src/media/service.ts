@@ -14,7 +14,6 @@ import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 import type {
   CanvasImageData,
-  CanvasNode,
   CanvasNodeData,
   CanvasOp,
   CanvasVideoData,
@@ -48,6 +47,8 @@ const OUT_GAP = 24
 export interface MediaServiceOptions {
   connections: ConnectionStore
   artifacts: ArtifactStore
+  /** M87：交付件索引（媒体产物写时登记；缺省 = 等下一次校准） */
+  index?: import('../store/artifact-index.js').ArtifactIndex
   notify: NotifyHub
   /** 并发上限（测试可调） */
   concurrency?: number
@@ -406,6 +407,13 @@ export class MediaService {
         const rel = `canvas/media/${name}`
         fs.writeFileSync(path.join(dir, name), data)
         if (job.actor !== 'user') this.opts.artifacts.markAuthor(job.sessionId, rel, job.actor)
+        this.opts.index?.upsert(job.sessionId, [
+          {
+            path: rel,
+            origin: 'media',
+            ...(job.actor !== 'user' ? { authorAgentId: job.actor } : {}),
+          },
+        ])
         this.opts.notify.publish({
           type: 'notify:artifact-updated',
           sessionId: job.sessionId,

@@ -64,6 +64,7 @@ export type RightView =
   | 'relay'
   | 'graph'
   | 'stats'
+  | 'run'
   | 'tasks'
   | 'memory'
   | 'schedules'
@@ -76,6 +77,7 @@ export const RIGHT_VIEWS: RightView[] = [
   'relay',
   'graph',
   'stats',
+  'run',
   'tasks',
   'memory',
   'schedules',
@@ -91,7 +93,7 @@ export const GROUP_LABELS: Record<RightGroup, string> = { team: '团队', ops: '
 /** 分组归属单一事实来源（registry 的 GROUPS 由此派生，避免 components → stores 反向依赖） */
 export const RIGHT_GROUPS: Record<RightGroup, RightView[]> = {
   team: ['members', 'relay', 'graph', 'stats'],
-  ops: ['tasks', 'memory', 'schedules', 'metrics'],
+  ops: ['run', 'tasks', 'memory', 'schedules', 'metrics'],
   live: ['live'],
 }
 

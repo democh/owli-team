@@ -432,7 +432,7 @@ describe('M79-A：ws-store 接入', () => {
         payload: { messageId: 'm_d1', agentId: 'pm', memberKey: 'pm', delta: '你' },
       }),
     )
-    let m = useSessionStore.getState().byId.get('m_d1')
+    const m = useSessionStore.getState().byId.get('m_d1')
     expect(m?.status).toBe('streaming')
     expect(m?.role).toBe('agent')
     expect(m?.memberKey).toBe('pm')

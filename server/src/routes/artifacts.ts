@@ -1,6 +1,6 @@
 import fs from 'node:fs'
 import path from 'node:path'
-import { Router } from 'express'
+import { Router, type Request, type Response } from 'express'
 import { createTwoFilesPatch } from 'diff'
 import { classifyKind } from '../store/artifacts.js'
 import { PathEscapeError } from '../util/paths.js'
@@ -8,8 +8,9 @@ import { previewOfficeFile } from '../util/office-preview.js'
 import type { ApiDeps } from './index.js'
 
 /**
- * 交付件浏览（§22.3 / M6）：
- * - 列表：sandbox 模式深度遍历按 mtime 降序；repo / worktree 模式 = git 变更集（git status）；
+ * 交付件浏览（§22.3 / M6 / M87）：
+ * - 列表：读交付件索引（分页 / 精确路径 / 增量 / 摘要），ETag 支持 304 零重传；
+ *   repo / worktree 的索引由 git 变更集校准，不再每次请求起 git 子进程；
  * - 内容：文本内联 JSON（≤ ARTIFACT_MAX_BYTES）；二进制 / 超限 / download=1 走文件流；
  *   `raw=1` 文本原样直出（M24：HTML / PDF 预览 iframe 需要浏览器原生解析，而非 JSON 包裹）；
  * - 预览：M24 Office 轻量解析（docx → HTML / xlsx → 工作表二维数组 / pptx → 幻灯片大纲）。
@@ -17,19 +18,55 @@ import type { ApiDeps } from './index.js'
 export function createArtifactsRouter(deps: ApiDeps): Router {
   const router = Router()
 
-  router.get('/sessions/:id/artifacts', async (req, res) => {
+  const requireSession = (req: Request, res: Response) => {
     const session = deps.sessions.getSession(req.params.id)
-    if (!session) return res.status(404).json({ error: '会话不存在' })
-    // M6：repo / worktree 模式下交付件 = git 变更集（而非全量文件列表）
-    if (deps.workspace.isGitMode(session.id)) {
-      try {
-        const artifacts = await deps.workspace.changedArtifacts(session.id)
-        return res.json({ artifacts, source: 'git' })
-      } catch {
-        // git 失败时回退文件遍历（不阻断交付件面板）
-      }
+    if (!session) {
+      res.status(404).json({ error: '会话不存在' })
+      return undefined
     }
-    res.json({ artifacts: deps.artifacts.list(session.id), source: 'files' })
+    return session
+  }
+
+  router.get('/sessions/:id/artifacts', async (req, res) => {
+    const session = requireSession(req, res)
+    if (!session) return
+    const rawPaths = typeof req.query.paths === 'string' ? req.query.paths : ''
+    const paths = rawPaths
+      .split(',')
+      .map((p) => p.trim())
+      .filter(Boolean)
+      .slice(0, 100)
+    // 会话首次访问 / 面板显式刷新时校准（索引已新鲜则零 IO）
+    await deps.index.ensureReady(session.id, { force: req.query.refresh === '1' })
+    const limitRaw = Number(req.query.limit)
+    const offsetRaw = Number(req.query.offset)
+    const limit = Number.isInteger(limitRaw) && limitRaw > 0 ? Math.min(2_000, limitRaw) : 500
+    const offset = Number.isInteger(offsetRaw) && offsetRaw > 0 ? offsetRaw : 0
+    const page = deps.index.list(session.id, { limit, offset, ...(paths.length > 0 ? { paths } : {}) })
+    const source = deps.workspace.isGitMode(session.id) ? 'git' : 'index'
+    // 全量列表带 ETag：revision + 总数即可唯一标识一页（增量变更必然推进 revision）
+    if (paths.length === 0) {
+      const etag = `W/"${page.revision}-${page.total}-${offset}-${limit}"`
+      res.setHeader('ETag', etag)
+      res.setHeader('Cache-Control', 'no-cache')
+      if (req.header('if-none-match') === etag) return res.status(304).end()
+    }
+    res.json({
+      artifacts: page.entries,
+      source,
+      revision: page.revision,
+      total: page.total,
+      hasMore: offset + page.entries.length < page.total,
+    })
+  })
+
+  /** M87：增量同步（revision > since 的 upserts + deletes；客户端事件合并后只拉一次） */
+  router.get('/sessions/:id/artifacts/changes', (req, res) => {
+    const session = requireSession(req, res)
+    if (!session) return
+    const sinceRaw = Number(req.query.since)
+    const since = Number.isFinite(sinceRaw) && sinceRaw >= 0 ? sinceRaw : 0
+    res.json(deps.index.changes(session.id, since))
   })
 
   router.get('/sessions/:id/artifacts/content', (req, res) => {

@@ -22,12 +22,12 @@ import {
   Cable,
   CalendarClock,
   Database,
-  Frame,
-  Images,
+  // Frame, // 临时隐藏画布入口
+  // Images, // 临时隐藏素材库入口
   Keyboard,
   Layers,
   ListTodo,
-  Maximize2,
+  // Maximize2, // 临时隐藏画布入口
   MessageSquare,
   MonitorPlay,
   Moon,
@@ -39,13 +39,13 @@ import {
   Settings,
   Sparkles,
   Square,
-  StickyNote,
+  // StickyNote, // 临时隐藏画布入口
   Terminal,
   Trophy,
   UserCog,
   UserPlus,
   Users,
-  Waypoints,
+  // Waypoints, // 临时隐藏画布入口
   GitBranch,
 } from 'lucide-react'
 import type { AgentDefinition } from '@multi-agent/shared'
@@ -54,7 +54,7 @@ import { toast } from 'sonner'
 import { resolveIcon } from '../../lib/avatar-icons'
 import { attachActiveRunFor, useRunStore } from '../../stores/run-store'
 import { useAgentStore } from '../../stores/agent-store'
-import { useCanvasStore, type CanvasActionKind } from '../../stores/canvas-store'
+// import { useCanvasStore, type CanvasActionKind } from '../../stores/canvas-store' // 临时隐藏画布入口
 import { useSessionStore, useCurrentSession } from '../../stores/session-store'
 import { useSpaceStore } from '../../stores/space-store'
 import { useLiveDockStore } from '../../stores/live-dock-store'
@@ -78,7 +78,6 @@ export function CommandPalette(): React.JSX.Element {
   // M79-F：联系人 / 群聊命令仅多用户模式展示
   const multiUser = useAuthStore((s) => s.status.multiUser)
   const sessions = useSessionStore((s) => s.sessions)
-  const currentId = useSessionStore((s) => s.currentId)
   const active = useRunStore((s) => s.active)
   const runId = useRunStore((s) => s.runId)
   const agents = useAgentStore((s) => s.agents)
@@ -138,7 +137,8 @@ export function CommandPalette(): React.JSX.Element {
       fn()
     })
 
-  /** M31：画布动作（切到画布 Tab 后由 CanvasView 消费执行；无会话时引导） */
+  /** M31：画布动作（切到画布 Tab 后由 CanvasView 消费执行；无会话时引导）
+   *  临时隐藏画布：入口与动作一并注释
   const requestCanvasAction = (kind: CanvasActionKind): void => {
     if (!useSessionStore.getState().currentId) {
       toast.error('先选择一个会话再使用画布')
@@ -147,6 +147,7 @@ export function CommandPalette(): React.JSX.Element {
     useUiStore.getState().setMainTab('canvas')
     useCanvasStore.getState().requestAction(kind)
   }
+  */
 
   /** M16：一键邀请（未在场成员直达；toast 提示开麦方式） */
   const invite = async (a: AgentDefinition): Promise<void> => {
@@ -322,7 +323,8 @@ export function CommandPalette(): React.JSX.Element {
               </Command.Item>
             </>
           )}
-          {/* M68：素材库——全员可见的个人资源视图（非管理面） */}
+          {/* M68：素材库——全员可见的个人资源视图（非管理面）
+              临时隐藏素材库入口（恢复时取消本段注释）
           <Command.Item
             value="view materials 素材库 library 图片 视频 上传 个人资源"
             className={ITEM_CLS}
@@ -331,6 +333,7 @@ export function CommandPalette(): React.JSX.Element {
             <Images className="size-3.5 shrink-0 text-muted-foreground" />
             素材库
           </Command.Item>
+          */}
           <Command.Item
             value="view settings 设置 偏好 配置 runtime 模型 记忆 金融"
             className={ITEM_CLS}
@@ -453,6 +456,7 @@ export function CommandPalette(): React.JSX.Element {
           </Command.Item>
         </Command.Group>
 
+        {/* 临时隐藏「画布」命令组（恢复时取消本段注释）
         <Command.Group heading="画布" className={GROUP_CLS}>
           <Command.Item
             value="view canvas 画布 无限画布 媒体创作 workspace"
@@ -487,6 +491,7 @@ export function CommandPalette(): React.JSX.Element {
             画布 · 适应视野
           </Command.Item>
         </Command.Group>
+        */}
 
         <Command.Group heading="@ 召唤成员" className={GROUP_CLS}>
           {agents.map((a) => (

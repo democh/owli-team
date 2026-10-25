@@ -11,6 +11,7 @@ import type {
   RunEndReason,
   RunEvent,
   ToolCallRecord,
+  TurnIntent,
   TurnMode,
 } from '@multi-agent/shared'
 import { apiGet, apiPost } from '../lib/api'
@@ -59,6 +60,12 @@ interface RunState {
   compressionCount: number
   /** M24：mode = Composer 消息级范式（仅本条消息生效；缺省 = 未选择，尊重会话「规划先行」） */
   send: (content: string, mode?: TurnMode, attachments?: MessageAttachment[]) => Promise<void>
+  /** M88：本 Run 的编排判定（可解释；Run Board 展示） */
+  intent?: TurnIntent
+  /** M88：运行期纠偏建议（写扩散 → 建议改用规划；仅提示） */
+  planSuggestion?: { writes: number; agents: string[] }
+  /** M86：手动派发下一棒（manual 接力；活跃 Run 插队首 / 空闲起新 Run） */
+  dispatch: (agentId: string, note?: string) => Promise<void>
   attach: (runId: string, sessionId: string) => void
   stop: () => Promise<void>
   detach: () => void
@@ -174,7 +181,20 @@ export function handleRunEvent(event: RunEvent): void {
         queue: event.queue,
         currentWave: [],
         approvals: [],
+        // M88：编排判定随快照下发（重附着也能拿到）
+        intent: event.intent,
+        planSuggestion: undefined,
       })
+      break
+
+    // M88：PRS 合并后的改判（首波前；携带可解释理由）
+    case 'intent:decided':
+      useRunStore.setState({ intent: event.intent })
+      break
+
+    // M88：运行期纠偏建议（不强制改判，只在 Run Board 提示）
+    case 'intent:suggest-plan':
+      useRunStore.setState({ planSuggestion: { writes: event.writes, agents: event.agents } })
       break
 
     // M16：波次启动（串行波也发，members 长度 1）——指挥台/并行组以波为单位归约
@@ -339,6 +359,22 @@ export const useRunStore = create<RunState>((set, get) => ({
     }
     if (res.queued) toast.success('已排队：前一轮运行结束后自动开始')
     set({ queued: res.queued ?? false })
+    get().attach(res.runId, sessionId)
+  },
+
+  dispatch: async (agentId, note) => {
+    const sessionId = useSessionStore.getState().currentId
+    if (!sessionId) return
+    const res = await apiPost<{ runId: string; queue: string[]; queued: boolean }>(
+      `/api/sessions/${sessionId}/dispatch`,
+      { agentId, ...(note?.trim() ? { note: note.trim() } : {}) },
+    )
+    set({ queued: res.queued ?? false })
+    // 同一 Run：只同步队列（服务端已广播 queue:updated，此处乐观对齐）
+    if (get().runId === res.runId) {
+      set({ queue: res.queue })
+      return
+    }
     get().attach(res.runId, sessionId)
   },
 

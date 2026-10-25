@@ -30,12 +30,12 @@ import {
   XCircle,
   type LucideIcon,
 } from 'lucide-react'
-import { toast } from 'sonner'
+// import { toast } from 'sonner' // 临时隐藏「在画布查看」（仅该入口用到）
 import type { ToolCallRecord } from '@multi-agent/shared'
 import { cn } from '../../lib/utils'
-import { useCanvasStore } from '../../stores/canvas-store'
-import { useSessionStore } from '../../stores/session-store'
-import { useUiStore } from '../../stores/ui-store'
+// import { useCanvasStore } from '../../stores/canvas-store' // 临时隐藏「在画布查看」
+// import { useSessionStore } from '../../stores/session-store' // 临时隐藏「在画布查看」
+// import { useUiStore } from '../../stores/ui-store' // 临时隐藏「在画布查看」
 import { useSceneCtx } from '../scene/context'
 import { DbPipelineCard } from './DbPipelineCard'
 import { SshEvidenceCard } from './SshEvidenceCard'
@@ -63,8 +63,10 @@ const TOOL_META: Record<string, { label: string; icon: LucideIcon }> = {
   media_video: { label: '生成视频', icon: Clapperboard },
 }
 
-/** 可跳画布查看的工具（写入类；完成态时卡片行尾给「在画布查看」） */
+/** 可跳画布查看的工具（写入类；完成态时卡片行尾给「在画布查看」）
+ *  临时隐藏画布：跳转入口已注释，集合与解析函数一并保留为注释
 const CANVAS_TOOLS = new Set(['canvas_write', 'media_generate', 'media_video'])
+*/
 
 function argsPreview(args: Record<string, unknown>): string {
   const key = ['path', 'file_path', 'pattern', 'query', 'command', 'name', 'todos'].find((k) => k in args)
@@ -73,15 +75,18 @@ function argsPreview(args: Record<string, unknown>): string {
   return `${key}: ${typeof v === 'string' ? v : JSON.stringify(v)}`.slice(0, 96)
 }
 
-/** M31 修订：从工具记录元信息解析画布节点 id（canvas_write / media_* 的 meta.canvasNodes） */
+/** M31 修订：从工具记录元信息解析画布节点 id（canvas_write / media_* 的 meta.canvasNodes）
+ *  临时隐藏画布：与「在画布查看」同步注释
 function canvasNodeIdsOf(call: ToolCallRecord): string[] | undefined {
   const raw = call.meta?.canvasNodes
   if (!Array.isArray(raw)) return undefined
   const ids = raw.filter((x): x is string => typeof x === 'string')
   return ids.length > 0 ? ids : undefined
 }
+*/
 
-/** 「在画布查看」（M31 修订）：完成态的写入类工具行尾入口（切主区画布 Tab + 精确定位；无会话时引导） */
+/** 「在画布查看」（M31 修订）：完成态的写入类工具行尾入口（切主区画布 Tab + 精确定位；无会话时引导）
+ *  临时隐藏画布：入口整体注释
 function CanvasJumpButton({ nodeIds }: { nodeIds?: string[] }): React.JSX.Element {
   return (
     <button
@@ -104,6 +109,7 @@ function CanvasJumpButton({ nodeIds }: { nodeIds?: string[] }): React.JSX.Elemen
     </button>
   )
 }
+*/
 
 export function ToolCard({ call }: { call: ToolCallRecord }): React.JSX.Element {
   const ctx = useSceneCtx()
@@ -148,7 +154,9 @@ function GenericToolCard({ call }: { call: ToolCallRecord }): React.JSX.Element 
             <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" />
           )}
         </button>
+        {/* 临时隐藏「在画布查看」（恢复时取消本段注释）
         {CANVAS_TOOLS.has(call.name) && call.status === 'ok' && <CanvasJumpButton nodeIds={canvasNodeIdsOf(call)} />}
+        */}
       </div>
       {open && (
         <div className="border-t px-2 py-1.5">

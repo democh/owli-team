@@ -26,7 +26,7 @@ import {
   signoffDraft,
 } from '../src/lib/focus-artifact'
 import { useArtifactVersionsStore } from '../src/lib/artifact-versions'
-import { useArtifactMetaStore } from '../src/lib/use-artifact-meta'
+import { useArtifactStore } from '../src/stores/artifact-store'
 import { useAgentStore } from '../src/stores/agent-store'
 import { useLivePanelStore } from '../src/stores/live-panel-store'
 import { useRunStore } from '../src/stores/run-store'
@@ -158,7 +158,7 @@ beforeEach(() => {
   useSessionStore.setState({ currentId: 'sa', byId: new Map(), order: [], artifactVersion: 0 })
   useRunStore.setState({ active: false, queue: [] })
   useSceneStore.setState({ listMode: false })
-  useArtifactMetaStore.setState({ sessionId: undefined, version: -1, byPath: new Map() })
+  useArtifactStore.setState({ sessionId: undefined, revision: 0, artifacts: [], byPath: new Map(), loaded: false, loading: false })
   useArtifactVersionsStore.setState({ sessionId: undefined, version: -1, byPath: new Map() })
   useUiStore.setState({ composerInsert: undefined, quietMode: true, mainTab: 'chat' })
   useLivePanelStore.setState({

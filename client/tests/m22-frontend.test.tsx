@@ -136,7 +136,7 @@ afterEach(() => {
 describe('M22：右栏面板注册表', () => {
   it('面板清单与 ui-store 的 RightView 一一对应且标签齐备', () => {
     // 变更 RightView 而忘记登记面板（或反之）会在此处失败
-    const expected = ['members', 'relay', 'graph', 'stats', 'tasks', 'memory', 'schedules', 'metrics', 'live']
+    const expected = ['members', 'relay', 'graph', 'stats', 'run', 'tasks', 'memory', 'schedules', 'metrics', 'live']
     const ids = PANEL_DEFS.map((p) => p.id)
     expect(ids).toEqual(expected)
     // M26：右栏白名单与面板清单等价（连接管理已迁 rail 控制台，不再是右栏视图）
@@ -155,7 +155,7 @@ describe('M22：右栏面板注册表', () => {
 
   it('M49：面板分组派生（团队 / 运行 / 实况）与 ui-store 分组同源', () => {
     expect(GROUPS.team.map((p) => p.id)).toEqual(['members', 'relay', 'graph', 'stats'])
-    expect(GROUPS.ops.map((p) => p.id)).toEqual(['tasks', 'memory', 'schedules', 'metrics'])
+    expect(GROUPS.ops.map((p) => p.id)).toEqual(['run', 'tasks', 'memory', 'schedules', 'metrics'])
     expect(GROUPS.live.map((p) => p.id)).toEqual(['live'])
     // 分组覆盖全部面板且不重不漏（single source：ui-store.RIGHT_GROUPS）
     for (const p of PANEL_DEFS) {

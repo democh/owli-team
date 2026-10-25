@@ -109,24 +109,6 @@ export interface SystemPromptOutput {
   layers: SystemLayerTokens
 }
 
-/** 工作区清单折叠：超过 maxLines 行时按目录聚合（L3 裁剪策略） */
-export function foldWorkspaceListing(listing: string, maxLines = 20): string {
-  const lines = listing.split('\n').filter((l) => l.trim() !== '')
-  if (lines.length <= maxLines) return listing
-  const byDir = new Map<string, number>()
-  for (const line of lines) {
-    const filePath = line.replace(/^-\s*/, '').replace(/（.*$/, '')
-    const idx = filePath.lastIndexOf('/')
-    const dir = idx > 0 ? filePath.slice(0, idx) : '（根目录）'
-    byDir.set(dir, (byDir.get(dir) ?? 0) + 1)
-  }
-  const summary = [...byDir.entries()]
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 12)
-    .map(([dir, n]) => `- ${dir}/：${n} 个文件`)
-  return `${summary.join('\n')}\n（文件较多已折叠为目录统计；用 list_dir 查看明细）`
-}
-
 // ---------- 运行时上下文（时间 / 系统） ----------
 
 const WEEKDAYS = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'] as const
@@ -261,7 +243,7 @@ export function buildSystemPrompt(input: SystemPromptInput): SystemPromptOutput 
   if (skillsIndex) l3Sections.push(`# 可加载的技能（需要时用 load_skill 工具加载正文）\n\n${skillsIndex}`)
   if (workspaceListing) {
     l3Sections.push(
-      `# 当前工作区文件\n\n${workspaceListing}\n\n用 read_file 可查看内容；产出交付件请用 write_file 写入本工作区。`,
+      `# 当前工作区（索引摘要）\n\n${workspaceListing}\n\n产出交付件请用 write_file 写入本工作区。`,
     )
   }
   // M24：执行中计划（L3 半静态；全员可见，任务面板与提示词同源）
@@ -595,8 +577,13 @@ export interface TurnInstructionExtra {
   }>
   /** 评审目标（review 模板注入；target 如 step:s1 / plan:pl_x） */
   reviewTargets?: Array<{ target: string; content?: string }>
-  /** 收到的交接期望（仅有 expectedOutput 时渲染「上一棒期望」行，保证旧文本不变） */
-  handoffs?: Array<{ from: string; expectedOutput?: string }>
+  /** 收到的交接（期望产出 / 交接包 / 交接口径；旧服务端仅带 expectedOutput → 文本零差异） */
+  handoffs?: Array<{
+    from: string
+    expectedOutput?: string
+    artifacts?: Array<{ path: string; version?: number; size?: number }>
+    notes?: string
+  }>
   /** M77：本回合说话成员键（分身实例；缺省 = 经典实例 agent.id） */
   selfKey?: string
   /** M79-J（§8.8）：在场人类（收尾段「行首 @显示名 交还」指令；无人类 = 不注入） */
@@ -605,6 +592,8 @@ export interface TurnInstructionExtra {
   deliverableSpec?: DeliverableTier
   /** P1：声纹示例（execute 波注入 1 条轮换的语气参考；无声纹示例 = 不注入） */
   voiceExample?: string
+  /** M86：本会话接力控制（manual = handoff 只记录建议，不自动接棒 / 不自动召集） */
+  relayMode?: 'auto' | 'manual'
   /** 运行时时刻（HH:mm 行）；缺省取当前时刻 */
   now?: Date
 }
@@ -645,11 +634,22 @@ export function buildTurnInstruction(
       `- 已排队的后续发言：${queueLine}。`,
     )
   } else {
+    // M86：手动接力下不能再说「平台会自动召集后接手」——否则模型会以为交接已完成、不收尾也不交还
+    const manualRelay = extra.relayMode === 'manual'
+    const relayLines = manualRelay
+      ? [
+          `- 若需要队友接手，调用 handoff 记录建议（手动接力：不自动接棒，需用户派发；本轮做完请交还用户）；`,
+          `- 若需要用户拍板或补充信息，请 handoff 到 user，或另起一行以 @用户 开头；`,
+          `- 需要暂时不在场的角色协作时，在正文说明人选即可（不自动召集）；`,
+        ]
+      : [
+          `- 若需要队友继续推进，请调用 handoff 工具转交（权威通道；正文可另行 @ 标注给观众看）；`,
+          `- 若需要用户拍板或补充信息，请 handoff 到 user，或另起一行以 @用户 开头；`,
+          `- 需要暂时不在场的角色协作时，直接 handoff 该角色（平台会自动召集后接手）；`,
+        ]
     lines.push(
       `现在轮到你（${agent.name}）发言。`,
-      `- 若需要队友继续推进，请调用 handoff 工具转交（权威通道；正文可另行 @ 标注给观众看）；`,
-      `- 若需要用户拍板或补充信息，请 handoff 到 user，或另起一行以 @用户 开头；`,
-      `- 需要暂时不在场的角色协作时，直接 handoff 该角色（平台会自动召集后接手）；`,
+      ...relayLines,
       `- 可交接成员：${others.join('、')}；`,
       `- 已排队的后续发言：${queueLine}。`,
     )
@@ -678,8 +678,21 @@ export function buildTurnInstruction(
   }
   // M24：上一棒交接期望（仅带期望产出时渲染，保持既有指令文本零差异）
   for (const handoff of extra.handoffs ?? []) {
-    if (!handoff.expectedOutput) continue
-    lines.push(`- 上一棒期望（来自 ${handoff.from}）：${handoff.expectedOutput}`)
+    if (handoff.expectedOutput) lines.push(`- 上一棒期望（来自 ${handoff.from}）：${handoff.expectedOutput}`)
+    // M87：交接包 —— 明确列出交付物路径，接手方直接 read_file，不再全量 list_dir
+    if (handoff.artifacts?.length) {
+      const items = handoff.artifacts.slice(0, 8).map((artifact) => {
+        const meta = [
+          typeof artifact.version === 'number' && artifact.version > 1 ? `v${artifact.version}` : '',
+          typeof artifact.size === 'number' ? `${Math.max(1, Math.round(artifact.size / 1024))}KB` : '',
+        ].filter(Boolean)
+        return meta.length > 0 ? `${artifact.path}（${meta.join(' · ')}）` : artifact.path
+      })
+      lines.push(
+        `- 上一棒交付物（来自 ${handoff.from}）：${items.join('、')}——直接 read_file 查看，无需 list_dir 全盘盘点。`,
+      )
+    }
+    if (handoff.notes) lines.push(`- 交接口径（来自 ${handoff.from}）：${handoff.notes}`)
   }
   // M79-J（§8.8）：人类交还指令（仅在场人类非空；行首 @显示名 = 指定交还）
   if ((extra.humans?.length ?? 0) > 0) {

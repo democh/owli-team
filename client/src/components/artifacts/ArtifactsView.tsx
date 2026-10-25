@@ -15,7 +15,7 @@ import {
   FileText,
   FileType2,
   FolderOpen,
-  Frame,
+  // Frame, // 临时隐藏「送上画布」（恢复时取消注释）
   Globe,
   Image as ImageIcon,
   Loader2,
@@ -33,7 +33,8 @@ import { highlightCode } from '../../lib/shiki'
 import { humanSize, timeAgo } from '../../lib/time'
 import { cn } from '../../lib/utils'
 import { useAgentStore } from '../../stores/agent-store'
-import { useCanvasStore } from '../../stores/canvas-store'
+import { useArtifactStore } from '../../stores/artifact-store'
+// import { useCanvasStore } from '../../stores/canvas-store' // 临时隐藏「送上画布」
 import { useSessionStore } from '../../stores/session-store'
 import { useUiStore } from '../../stores/ui-store'
 import { Button } from '../ui/button'
@@ -129,8 +130,10 @@ export function ArtifactsView(): React.JSX.Element {
   const lastPath = useUiStore((s) => s.lastArtifactPath)
   const agents = useAgentStore((s) => s.agents)
 
-  const [list, setList] = React.useState<Artifact[]>([])
-  const [listLoading, setListLoading] = React.useState(false)
+  // M87：列表来自交付件单一数据源（面板 / 实况面 / 消息元数据共享，不再各自拉全量）
+  const list = useArtifactStore((s) => s.artifacts)
+  const listLoading = useArtifactStore((s) => s.loading)
+  const ensureArtifacts = useArtifactStore((s) => s.ensure)
   const [selected, setSelected] = React.useState<string>()
   const [preview, setPreview] = React.useState<ContentResponse | null>(null)
   const [previewLoading, setPreviewLoading] = React.useState(false)
@@ -138,26 +141,14 @@ export function ArtifactsView(): React.JSX.Element {
   const [html, setHtml] = React.useState<string>('')
   const [mode, setMode] = React.useState<'preview' | 'source' | 'diff'>('preview')
 
-  // 列表加载
+  // 列表加载（store 负责事件合并与增量；这里只在会话切换 / 打开面板时确保就绪）
   React.useEffect(() => {
     if (!currentId) {
-      setList([])
       setSelected(undefined)
       return
     }
-    let alive = true
-    setListLoading(true)
-    void apiGet<{ artifacts: Artifact[] }>(`/api/sessions/${currentId}/artifacts`)
-      .then((res) => {
-        if (!alive) return
-        setList(res.artifacts)
-      })
-      .catch((err) => toast.error((err as Error).message))
-      .finally(() => alive && setListLoading(false))
-    return () => {
-      alive = false
-    }
-  }, [currentId, artifactVersion])
+    void ensureArtifacts(currentId)
+  }, [currentId, artifactVersion, ensureArtifacts])
 
   // chip 跳转
   React.useEffect(() => {
@@ -257,7 +248,8 @@ export function ArtifactsView(): React.JSX.Element {
     }
   }
 
-  /** M31：送上画布并切换（图片 / 视频落为素材节点，其余为交付件引用节点） */
+  /** M31：送上画布并切换（图片 / 视频落为素材节点，其余为交付件引用节点）
+   *  临时隐藏画布：入口与动作一并注释
   const openInCanvas = async (): Promise<void> => {
     if (!artifact) return
     const id = await useCanvasStore.getState().sendArtifact(artifact.path)
@@ -265,6 +257,7 @@ export function ArtifactsView(): React.JSX.Element {
     useUiStore.getState().setMainTab('canvas')
     toast.success('已在画布打开')
   }
+  */
 
   if (!currentId) {
     return <div className="flex h-full items-center justify-center text-[13px] text-muted-foreground">先选择一个会话</div>
@@ -281,8 +274,10 @@ export function ArtifactsView(): React.JSX.Element {
           <Button
             variant="ghost"
             size="icon-sm"
-            title="刷新"
-            onClick={() => useSessionStore.getState().bumpArtifacts()}
+            title="刷新（强制校准工作区索引）"
+            onClick={() => {
+              if (currentId) void ensureArtifacts(currentId, { force: true })
+            }}
           >
             <RefreshCw className="size-3.5" />
           </Button>
@@ -375,6 +370,7 @@ export function ArtifactsView(): React.JSX.Element {
                   <Quote className="size-3" />
                   引用
                 </Button>
+                {/* 临时隐藏「画布」按钮（恢复时取消本段注释）
                 <Button
                   variant="outline"
                   size="xs"
@@ -384,6 +380,7 @@ export function ArtifactsView(): React.JSX.Element {
                   <Frame className="size-3" />
                   画布
                 </Button>
+                */}
                 <Button
                   variant="outline"
                   size="xs"

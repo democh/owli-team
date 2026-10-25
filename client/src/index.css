@@ -14094,6 +14094,8 @@ a.md-source-title:hover {
     0 1px 2px hsl(var(--foreground) / 0.05),
     0 6px 18px -6px hsl(var(--foreground) / 0.18);
   font-size: 12.5px;
+  /* 给右上角关闭钮留位 */
+  padding-right: 38px;
 }
 [data-sonner-toast].ma-toast:hover {
   box-shadow:
@@ -14177,8 +14179,12 @@ a.md-source-title:hover {
   color: hsl(var(--muted-foreground));
   margin-top: 2px;
 }
-/* 关闭 / 操作按钮 */
+/* 关闭 / 操作按钮（sonner 默认在卡片外，会被 overflow:hidden 裁掉，这里收回到卡内右上角） */
 [data-sonner-toast].ma-toast .ma-toast-close {
+  left: auto;
+  right: 6px;
+  top: 6px;
+  transform: none;
   border-radius: 6px;
   border: 1px solid hsl(var(--border) / 0.9);
   background: hsl(var(--card));

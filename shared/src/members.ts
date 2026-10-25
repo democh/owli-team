@@ -35,3 +35,22 @@ export function memberKeyOf(agentId: string, soulId?: string | undefined): strin
 export function memberLabel(agentName: string, soulName?: string | undefined): string {
   return soulName ? `${agentName}${MEMBER_LABEL_SEP}${soulName}` : agentName
 }
+
+/**
+ * 接力控制的生效值（M86）：显式设置优先，否则按会话形态推导。
+ *
+ * 推导口径（默认最小自动化）：
+ * - direct / group（人与人的对话）→ manual：没有 agent 编制可接棒，也避免误触召集；
+ * - 单成员编制（单助手对话）→ manual：对话不把别的 agent 拉进来，需要时由用户派发；
+ * - 零编制（待平台组队）与多成员 team → auto：保留「成员自行接力 / 召集」这一核心协作能力
+ *   （零编制若判 manual，PRS 召集出的人也无法接力，会让开场即死）。
+ */
+export function resolveRelayMode(input: {
+  relay?: 'auto' | 'manual'
+  kind?: 'team' | 'direct' | 'group'
+  participantIds: readonly string[]
+}): 'auto' | 'manual' {
+  if (input.relay) return input.relay
+  if (input.kind === 'direct' || input.kind === 'group') return 'manual'
+  return input.participantIds.length === 1 ? 'manual' : 'auto'
+}

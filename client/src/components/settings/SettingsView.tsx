@@ -60,6 +60,8 @@ interface SettingsForm {
   toolDetailKeep: number
   toolTimeoutMs: number
   handoffMode: 'auto' | 'tool' | 'text'
+  /** M88：自动编排（意图判定）总开关；关闭 = 仅显式 mode / 规划先行生效 */
+  autonomyEnabled: boolean
   approvalMode: 'off' | 'risky' | 'all'
   approvalTimeoutMs: number
   allowRunCommand: boolean
@@ -100,6 +102,7 @@ const FALLBACK: SettingsForm = {
   toolDetailKeep: 4,
   toolTimeoutMs: 120_000,
   handoffMode: 'auto',
+  autonomyEnabled: true,
   approvalMode: 'risky',
   approvalTimeoutMs: 60_000,
   allowRunCommand: true,
@@ -755,6 +758,19 @@ export function SettingsView(): React.JSX.Element {
                     <option value="auto">auto（工具优先 + 文本回退）</option>
                     <option value="tool">tool（仅 handoff 工具）</option>
                     <option value="text">text（仅文本 @）</option>
+                  </select>
+                </Field>
+                <Field
+                  label="自动编排"
+                  hint="开启：按需求判定是否先出计划（多环节 / 高风险 → 规划；验收类 → 评审）；关闭：仅显式选择 / 规划先行生效"
+                >
+                  <select
+                    value={String(form.autonomyEnabled)}
+                    className={selectCls}
+                    onChange={(e) => set('autonomyEnabled', e.target.value === 'true')}
+                  >
+                    <option value="true">开启（推荐）</option>
+                    <option value="false">关闭（仅显式）</option>
                   </select>
                 </Field>
                 <Field label="降级轮询间隔（ms）" hint="WS 断线时的通知轮询间隔，由 /api/health 下发">

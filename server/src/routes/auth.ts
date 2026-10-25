@@ -16,7 +16,7 @@ import type { AppConfig } from '../config.js'
 import type { AuthService } from '../auth/service.js'
 import type { UserStore } from '../store/users.js'
 import { toUserInfo } from '../store/users.js'
-import { SESSION_COOKIE } from '../middleware.js'
+import { AUTH_COOKIE, SESSION_COOKIE } from '../middleware.js'
 import { firstIssue } from './schemas.js'
 
 const setupSchema = z.object({
@@ -84,6 +84,17 @@ function setSessionCookie(cfg: AppConfig, res: Response, rawToken: string): void
 
 function clearSessionCookie(cfg: AppConfig, res: Response): void {
   const parts = [`${SESSION_COOKIE}=`, 'Path=/', 'HttpOnly', 'SameSite=Lax', 'Max-Age=0']
+  if (cfg.authCookieSecure) parts.push('Secure')
+  res.append('Set-Cookie', parts.join('; '))
+}
+
+/**
+ * legacy 授权 cookie 清除（AUTH_TOKEN 通道）。
+ * 登出必须一并清除：否则 `/api/auth/me` 仍会经该 cookie 解析为最早创建的管理员，
+ * 客户端 reload 后直接回到应用内，表现为「退出登录无效」。
+ */
+function clearLegacyCookie(cfg: AppConfig, res: Response): void {
+  const parts = [`${AUTH_COOKIE}=`, 'Path=/', 'HttpOnly', 'SameSite=Lax', 'Max-Age=0']
   if (cfg.authCookieSecure) parts.push('Secure')
   res.append('Set-Cookie', parts.join('; '))
 }
@@ -158,10 +169,11 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
     res.json({ user: result.user, mustChangePassword: result.mustChangePassword })
   }))
 
-  /** 登出：撤销当前会话令牌并清 cookie（幂等） */
+  /** 登出：撤销当前会话令牌并清 cookie（sid + legacy auth_token；幂等） */
   router.post('/auth/logout', (req, res) => {
     auth.logout(currentSessionToken(req))
     clearSessionCookie(cfg, res)
+    clearLegacyCookie(cfg, res)
     res.json({ ok: true })
   })
 
