@@ -83,6 +83,11 @@ export type AuditAction =
   | 'auth.llm-credential-clear'
   // M82：运行期设置变更（管理侧；仅记字段清单，不落值）
   | 'settings.update'
+  // M90：消息生命周期（撤回 / 仅自己删除）
+  | 'message.recall'
+  | 'message.hide-self'
+  // M90：群主转让
+  | 'session.owner-transfer'
 
 export interface AuditInput {
   /** 'user' | agentId */

@@ -23,3 +23,19 @@ stage:
     right: [bear-lead, bear-quant]
     center: [judge]
   parts: [round-track, scoreboard, cross-fire, claim-tree, verdicts]
+category: investment
+catalog:
+  keywords:
+    - 多空对决场
+    - 标准对决
+    - 相对强弱对决
+    - 单轮快辩
+  inputs:
+    - 标的与周期
+    - 双方论点与证据
+    - 对决轮数
+  outputs:
+    - 多空证据对照
+    - 质证记录
+    - 裁决书
+  boundary: 多空对抗推演独立于常规投研；不预测点位、不构成投资建议。

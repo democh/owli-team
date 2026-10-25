@@ -9,11 +9,66 @@
 import { randomUUID } from 'node:crypto'
 import type { ChatMessage, MessageAttachment, MessageStatus, Session, SessionAccessRole, SessionSummary, ToolCallRecord } from '@multi-agent/shared'
 import { getLogger } from '../logger.js'
+import { HttpError } from '../util/http-error.js'
 import type { AppDb } from './db.js'
 
 export interface StoredSession {
   session: Session
   messages: ChatMessage[]
+}
+
+/** IM：搜索命中（含定位所需的 seq / 时间 / 作者投影）。 */
+export interface MessageSearchHit {
+  sessionId: string
+  messageId: string
+  content: string
+  seq: number
+  createdAt: string
+  role: ChatMessage['role']
+  agentId?: string
+  memberKey?: string
+  userId?: string
+}
+
+/** IM：搜索筛选（发送者 / 时间范围 / 是否带附件）。 */
+export interface MessageSearchFilters {
+  /** 仅该用户发送（人类消息 userId） */
+  userId?: string
+  /** createdAt >= from（ISO） */
+  from?: string
+  /** createdAt <= to（ISO） */
+  to?: string
+  hasAttachment?: boolean
+}
+
+interface SearchRow {
+  session_id: string
+  message_id: string
+  content: string
+  seq: number
+  created_at: string
+  role: string
+  agent_id: string | null
+  member_key: string | null
+  user_id: string | null
+}
+
+/** 并发提交同一标识时抛出；调用方应回查接收凭据返回原消息。 */
+export class DuplicateSubmissionError extends Error {
+  constructor() {
+    super('相同提交标识已存在')
+  }
+}
+
+/** 引用快照的投影态：原消息不在本次会话集合内 → 标记已删除。 */
+function annotateReplies(messages: ChatMessage[]): void {
+  const byId = new Map(messages.map((m) => [m.id, m]))
+  for (const message of messages) {
+    if (!message.replyTo) continue
+    const target = byId.get(message.replyTo.messageId)
+    if (!target) message.replyTo = { ...message.replyTo, deleted: true, recalled: false }
+    else if (target.recalledAt) message.replyTo = { ...message.replyTo, deleted: false, recalled: true }
+  }
 }
 
 export function newId(prefix: string): string {
@@ -61,6 +116,7 @@ interface SessionRow {
 
 interface MessageRow {
   id: string
+  client_message_id?: string | null
   session_id: string
   run_id: string | null
   turn_index: number
@@ -87,6 +143,12 @@ interface MessageRow {
   user_id?: string | null
   /** M79-E：人类定向（userIds JSON；NULL = 无） */
   human_mentions?: string | null
+  /** IM：引用回复快照（JSON；NULL = 无） */
+  reply_to?: string | null
+  /** IM：编辑 / 撤回时间（NULL = 未发生） */
+  edited_at?: string | null
+  recalled_at?: string | null
+  recalled_by?: string | null
   created_at: string
 }
 
@@ -101,6 +163,8 @@ interface SummaryRow {
   /** M57 P3：最后一条人类消息的作者（列表预览署名；历史 / 兼容模式为 NULL） */
   last_user_id: string | null
   last_user_name: string | null
+  /** IM：最后一条是否已撤回（列表预览用） */
+  last_recalled_at?: string | null
 }
 
 /** 列表查询行（list / listForUser 共用；access_role 仅 listForUser 携带） */
@@ -163,6 +227,7 @@ function rowToMessage(row: MessageRow): ChatMessage {
   return {
     id: row.id,
     sessionId: row.session_id,
+    clientMessageId: row.client_message_id ?? undefined,
     runId: row.run_id ?? undefined,
     turnIndex: row.turn_index,
     seq: row.seq,
@@ -178,6 +243,10 @@ function rowToMessage(row: MessageRow): ChatMessage {
     mode: (row.mode as ChatMessage['mode']) ?? undefined,
     modeSource: (row.mode_source as ChatMessage['modeSource']) ?? undefined,
     attachments: parseJson<MessageAttachment[] | undefined>(row.attachments, undefined),
+    replyTo: parseJson<ChatMessage['replyTo']>(row.reply_to ?? null, undefined),
+    editedAt: row.edited_at ?? undefined,
+    recalledAt: row.recalled_at ?? undefined,
+    recalledBy: row.recalled_by ?? undefined,
     scheduleId: row.schedule_id ?? undefined,
     userId: row.user_id ?? undefined,
     ...(() => {
@@ -213,6 +282,7 @@ export class SessionStore {
     const messages = this.db
       .all<MessageRow>('SELECT * FROM messages WHERE session_id = ? ORDER BY seq ASC', id)
       .map(rowToMessage)
+    annotateReplies(messages)
     const entry: Entry = {
       session: rowToSession(row),
       messages,
@@ -265,17 +335,22 @@ export class SessionStore {
               COALESCE(agg.message_count, 0) AS message_count,
               lm.role AS last_role, lm.agent_id AS last_agent_id, lm.member_key AS last_member_key,
               lm.content AS last_content, lm.created_at AS last_created_at,
-              lm.user_id AS last_user_id,
+              lm.user_id AS last_user_id, lm.recalled_at AS last_recalled_at,
               (SELECT u.display_name FROM users u WHERE u.id = lm.user_id) AS last_user_name
        FROM sessions s
        LEFT JOIN session_members m ON m.session_id = s.id AND m.user_id = ?
        LEFT JOIN (
-         SELECT session_id, COUNT(*) AS message_count, MAX(seq) AS last_seq
-         FROM messages GROUP BY session_id
+         SELECT m.session_id, COUNT(*) AS message_count, MAX(m.seq) AS last_seq
+         FROM messages m
+         WHERE NOT EXISTS (
+           SELECT 1 FROM message_hides h WHERE h.message_id = m.id AND h.user_id = ?
+         )
+         GROUP BY m.session_id
        ) agg ON agg.session_id = s.id
        LEFT JOIN messages lm ON lm.session_id = s.id AND lm.seq = agg.last_seq
        WHERE s.deleted_at IS NULL AND (s.owner_id = ? OR m.user_id IS NOT NULL)
        ORDER BY s.updated_at DESC`,
+      userId,
       userId,
       userId,
       userId,
@@ -307,7 +382,7 @@ export class SessionStore {
             agentId: row.last_agent_id ?? undefined,
             // M77：说话成员键（分身实例署名；存量行为 NULL → 前端按角色名回退）
             ...(row.last_member_key ? { memberKey: row.last_member_key } : {}),
-            content: (row.last_content ?? '').slice(0, 80),
+            content: row.last_recalled_at ? '消息已撤回' : (row.last_content ?? '').slice(0, 80),
             createdAt: row.last_created_at ?? '',
             // M57 P2/P3：人类消息作者（共享会话列表预览署名；兼容模式缺省）
             ...(row.last_user_id ? { userId: row.last_user_id, userName: row.last_user_name ?? undefined } : {}),
@@ -318,7 +393,9 @@ export class SessionStore {
 
   get(id: string): StoredSession | undefined {
     const entry = this.entry(id)
-    return entry ? { session: entry.session, messages: entry.messages } : undefined
+    if (!entry) return undefined
+    annotateReplies(entry.messages)
+    return { session: entry.session, messages: entry.messages }
   }
 
   getSession(id: string): Session | undefined {
@@ -332,6 +409,61 @@ export class SessionStore {
 
   messageById(sessionId: string, messageId: string): ChatMessage | undefined {
     return this.entry(sessionId)?.messages.find((m) => m.id === messageId)
+  }
+
+  /**
+   * IM：群主转让（新群主必须是共享成员；旧群主降为 editor 保留访问）。
+   * 事务内同步 sessions.owner_id 与 session_members，避免出现「无主」或双属主窗口。
+   */
+  transferOwner(sessionId: string, newOwnerId: string, byUserId?: string): Session | undefined {
+    const entry = this.entry(sessionId)
+    if (!entry) return undefined
+    const oldOwnerId = entry.session.ownerId
+    if (!oldOwnerId || oldOwnerId === newOwnerId) return entry.session
+    const now = nowIso()
+    this.db.tx(() => {
+      this.db.run('UPDATE sessions SET owner_id = ?, updated_at = ? WHERE id = ?', newOwnerId, now, sessionId)
+      // 旧群主保留可协作席位（editor）
+      this.db.run(
+        `INSERT INTO session_members (session_id, user_id, role, invited_by, created_at, updated_at)
+         VALUES (?, ?, 'editor', ?, ?, ?)
+         ON CONFLICT(session_id, user_id) DO UPDATE SET role = 'editor', updated_at = excluded.updated_at`,
+        sessionId,
+        oldOwnerId,
+        byUserId ?? newOwnerId,
+        now,
+        now,
+      )
+      // 新群主从共享成员表移除（owner 由 sessions.owner_id 承载）
+      this.db.run('DELETE FROM session_members WHERE session_id = ? AND user_id = ?', sessionId, newOwnerId)
+    })
+    entry.session.ownerId = newOwnerId
+    entry.session.updatedAt = now
+    entry.metaDirty = true
+    this.scheduleSave(sessionId)
+    return entry.session
+  }
+
+  /** IM：撤回（正文 / 附件清空，保留占位行）；返回更新后的消息 */
+  recallMessage(sessionId: string, messageId: string, byUserId: string): ChatMessage | undefined {
+    const message = this.messageById(sessionId, messageId)
+    if (!message) return undefined
+    this.patchMessage(sessionId, messageId, {
+      content: '',
+      attachments: undefined,
+      mentions: [],
+      humanMentions: undefined,
+      reasoning: undefined,
+      toolCalls: undefined,
+      recalledAt: nowIso(),
+      recalledBy: byUserId,
+    })
+    // 引用快照投影态：立即标为已撤回（不落库）
+    const entry = this.entry(sessionId)
+    for (const m of entry?.messages ?? []) {
+      if (m.replyTo?.messageId === messageId) m.replyTo = { ...m.replyTo, recalled: true, deleted: false }
+    }
+    return this.messageById(sessionId, messageId)
   }
 
   countMessages(id: string): number {
@@ -578,8 +710,32 @@ export class SessionStore {
     return result.changes > 0
   }
 
+  /** 幂等提交查询：权限由路由先校验，接收凭据不随单条消息删除。 */
+  messageSubmission(sessionId: string, userId: string, clientId: string, requestHash: string):
+    { message: ChatMessage; result: Record<string, unknown> | null } | undefined {
+    const row = this.db.get<{ message_id: string; request_hash: string; result: string | null }>(
+      'SELECT message_id, request_hash, result FROM message_submissions WHERE session_id = ? AND user_id = ? AND client_message_id = ?',
+      sessionId, userId, clientId,
+    )
+    if (!row) return undefined
+    if (row.request_hash !== requestHash) throw new HttpError(409, '相同提交标识不能用于不同消息')
+    const message = this.messageById(sessionId, row.message_id)
+    if (!message) throw new HttpError(410, '该消息已接收后被删除，不能重复发送')
+    return { message, result: parseJson<Record<string, unknown> | null>(row.result, null) }
+  }
+
+  completeSubmission(message: ChatMessage, result: Record<string, unknown>): void {
+    this.saveNow(message.sessionId)
+    if (!message.clientMessageId) return
+    this.db.run(
+      'UPDATE message_submissions SET result = ? WHERE session_id = ? AND user_id = ? AND client_message_id = ?',
+      JSON.stringify(result), message.sessionId, message.userId ?? '', message.clientMessageId,
+    )
+  }
+
   appendMessage(
     partial: Omit<ChatMessage, 'id' | 'createdAt'> & Partial<Pick<ChatMessage, 'id' | 'createdAt'>>,
+    requestHash?: string,
   ): ChatMessage {
     const entry = this.entry(partial.sessionId)
     if (!entry) throw new Error('会话不存在')
@@ -591,6 +747,25 @@ export class SessionStore {
       turnIndex: partial.turnIndex ?? (partial.role === 'user' || partial.role === 'system' ? -1 : 0),
       createdAt: partial.createdAt ?? nowIso(),
     }
+    // 主表、持久序号与接收凭据一次提交；失败时不污染内存缓存。
+    this.db.tx(() => {
+      const counter = this.db.get<{ message_seq: number }>(
+        'UPDATE sessions SET message_seq = MAX(message_seq, COALESCE((SELECT MAX(seq) FROM messages WHERE session_id = ?), 0)) + 1 WHERE id = ? RETURNING message_seq',
+        partial.sessionId, partial.sessionId,
+      )
+      if (!counter) throw new Error('会话不存在')
+      message.seq = counter.message_seq
+      this.insertMessage(message)
+      if (message.clientMessageId && requestHash) {
+        // 多进程共享库时另一实例可能已抢占：IGNORE + 显式抛错让路由回查原消息。
+        const claimed = this.db.run(
+          'INSERT OR IGNORE INTO message_submissions (session_id, user_id, client_message_id, request_hash, message_id) VALUES (?, ?, ?, ?, ?)',
+          message.sessionId, message.userId ?? '', message.clientMessageId, requestHash, message.id,
+        )
+        if (claimed.changes === 0) throw new DuplicateSubmissionError()
+      }
+      this.indexFts(message)
+    })
     entry.seq = message.seq!
     entry.messages.push(message)
     entry.session.updatedAt = nowIso()
@@ -602,8 +777,7 @@ export class SessionStore {
       entry.session.title = `${label.slice(0, 20)}${label.length > 20 ? '…' : ''}`
       entry.metaDirty = true
     }
-    this.insertMessage(message)
-    this.indexFts(message)
+    entry.metaDirty = true
     this.scheduleSave(partial.sessionId)
     return message
   }
@@ -632,6 +806,10 @@ export class SessionStore {
     const idx = entry.messages.findIndex((m) => m.id === messageId)
     if (idx === -1) return false
     entry.messages.splice(idx, 1)
+    // 引用快照不移除：把指向它的引用标为已删除（投影态，不落库）。
+    for (const m of entry.messages) {
+      if (m.replyTo?.messageId === messageId) m.replyTo = { ...m.replyTo, deleted: true }
+    }
     entry.dirty.delete(messageId)
     this.db.run('DELETE FROM messages WHERE id = ?', messageId)
     try {
@@ -748,15 +926,16 @@ export class SessionStore {
 
   private insertMessage(message: ChatMessage): void {
     this.db.run(
-      `INSERT INTO messages (id, session_id, run_id, turn_index, seq, role, agent_id, member_key, user_id, content, mentions, human_mentions, status, artifacts, tool_calls, reasoning, mode, mode_source, attachments, schedule_id, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO messages (id, session_id, run_id, turn_index, seq, role, agent_id, member_key, user_id, content, mentions, human_mentions, status, artifacts, tool_calls, reasoning, mode, mode_source, attachments, schedule_id, created_at, client_message_id, reply_to, edited_at, recalled_at, recalled_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET
          turn_index = excluded.turn_index,
          content = excluded.content, mentions = excluded.mentions, human_mentions = excluded.human_mentions,
          status = excluded.status,
          artifacts = excluded.artifacts, tool_calls = excluded.tool_calls, reasoning = excluded.reasoning, mode = excluded.mode,
          mode_source = excluded.mode_source,
-         attachments = excluded.attachments, schedule_id = excluded.schedule_id, user_id = excluded.user_id`,
+         attachments = excluded.attachments, schedule_id = excluded.schedule_id, user_id = excluded.user_id,
+         edited_at = excluded.edited_at, recalled_at = excluded.recalled_at, recalled_by = excluded.recalled_by`,
       message.id,
       message.sessionId,
       message.runId ?? null,
@@ -778,6 +957,11 @@ export class SessionStore {
       message.attachments && message.attachments.length > 0 ? JSON.stringify(message.attachments) : null,
       message.scheduleId ?? null,
       message.createdAt,
+      message.clientMessageId ?? null,
+      message.replyTo ? JSON.stringify(message.replyTo) : null,
+      message.editedAt ?? null,
+      message.recalledAt ?? null,
+      message.recalledBy ?? null,
     )
   }
 
@@ -799,44 +983,84 @@ export class SessionStore {
   /**
    * 跨会话全文检索（M9；trigram FTS + LIKE 回退）。
    * - M57：ownerId 必传——用户 id = 仅检索本人会话；null = 全量（单用户兼容）。
+   * - IM：排除本人「仅自己删除」与已撤回消息（搜索不得越过个人视图 / 撤回）；
+   * - 返回 seq / 时间 / 作者，供客户端直接定位历史上下文（不再逐页回翻）；
    * - trigram 分词器需 ≥3 字符：短词（如两字中文词）走 LIKE 子串匹配；
    * - FTS5 缺失（旧构建）或语法异常 → LIKE 回退，检索永不报错。
    */
-  search(query: string, limit = 50, ownerId: string | null = null): Array<{ sessionId: string; messageId: string; content: string }> {
+  search(
+    query: string,
+    limit = 50,
+    ownerId: string | null = null,
+    filters: MessageSearchFilters = {},
+  ): MessageSearchHit[] {
     const q = query.trim()
     if (!q) return []
     // M57 P2：access 口径 = 自己 + 共享给我（ownerId 语义升级为“当前用户”；null = 不过滤）
     const ownerClause =
       ownerId === null
         ? ''
-        : `AND session_id IN (
+        : `AND m.session_id IN (
              SELECT s.id FROM sessions s
-             LEFT JOIN session_members m ON m.session_id = s.id AND m.user_id = ?
-             WHERE s.owner_id = ? OR m.user_id IS NOT NULL
+             LEFT JOIN session_members sm ON sm.session_id = s.id AND sm.user_id = ?
+             WHERE s.owner_id = ? OR sm.user_id IS NOT NULL
            )`
-    const ownerParams = ownerId === null ? [] : [ownerId, ownerId]
-    const likeRows = (): Array<{ sessionId: string; messageId: string; content: string }> =>
+    // IM：撤回对所有人不可检索；自删只影响本人视图
+    const clauses = [
+      'AND m.recalled_at IS NULL',
+      ...(ownerId === null
+        ? []
+        : ['AND NOT EXISTS (SELECT 1 FROM message_hides h WHERE h.message_id = m.id AND h.user_id = ?)']),
+      ...(filters.userId ? ['AND m.user_id = ?'] : []),
+      ...(filters.from ? ['AND m.created_at >= ?'] : []),
+      ...(filters.to ? ['AND m.created_at <= ?'] : []),
+      ...(filters.hasAttachment ? ['AND m.attachments IS NOT NULL'] : []),
+    ]
+    const filterClause = clauses.join('\n           ')
+    const filterParams = [
+      ...(ownerId === null ? [] : [ownerId, ownerId, ownerId]),
+      ...(filters.userId ? [filters.userId] : []),
+      ...(filters.from ? [filters.from] : []),
+      ...(filters.to ? [filters.to] : []),
+    ]
+    const toHit = (r: SearchRow): MessageSearchHit => ({
+      sessionId: r.session_id,
+      messageId: r.message_id,
+      content: r.content,
+      seq: Number(r.seq),
+      createdAt: r.created_at,
+      role: r.role as ChatMessage['role'],
+      ...(r.agent_id ? { agentId: r.agent_id } : {}),
+      ...(r.member_key ? { memberKey: r.member_key } : {}),
+      ...(r.user_id ? { userId: r.user_id } : {}),
+    })
+    const likeRows = (): MessageSearchHit[] =>
       this.db
-        .all<{ session_id: string; message_id: string; content: string }>(
-          `SELECT session_id, id AS message_id, content FROM messages
-           WHERE content LIKE ? ${ownerClause} ORDER BY created_at DESC LIMIT ?`,
+        .all<SearchRow>(
+          `SELECT m.session_id, m.id AS message_id, m.content, m.seq, m.created_at, m.role, m.agent_id, m.member_key, m.user_id
+           FROM messages m
+           WHERE m.content LIKE ? ${ownerClause} ${filterClause}
+           ORDER BY m.created_at DESC LIMIT ?`,
           `%${q}%`,
-          ...ownerParams,
+          ...filterParams,
           limit,
         )
-        .map((r) => ({ sessionId: r.session_id, messageId: r.message_id, content: r.content }))
+        .map(toHit)
     if ([...q].length < 3) return likeRows()
     try {
       const phrase = `"${q.replace(/"/g, '""')}"`
       return this.db
-        .all<{ session_id: string; message_id: string; content: string }>(
-          `SELECT session_id, message_id, content FROM messages_fts
-           WHERE messages_fts MATCH ? ${ownerClause} ORDER BY rank LIMIT ?`,
+        .all<SearchRow>(
+          `SELECT m.session_id, m.id AS message_id, m.content, m.seq, m.created_at, m.role, m.agent_id, m.member_key, m.user_id
+           FROM messages_fts
+           JOIN messages m ON m.id = messages_fts.message_id
+           WHERE messages_fts MATCH ? ${ownerClause} ${filterClause}
+           ORDER BY rank LIMIT ?`,
           phrase,
-          ...ownerParams,
+          ...filterParams,
           limit,
         )
-        .map((r) => ({ sessionId: r.session_id, messageId: r.message_id, content: r.content }))
+        .map(toHit)
     } catch {
       return likeRows()
     }

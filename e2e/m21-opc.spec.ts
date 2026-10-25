@@ -20,11 +20,11 @@ test('M21 · 周经营例会：preset 建会 → 草稿预填 → 并行汇报 �
   await page.getByRole('button', { name: '发送' }).click()
 
   const log = page.locator('[role="log"]')
-  // 首波：@ 多人 → 财务 / 增长 / 销售并行汇报（并行协作组）
+  // 首波：@ 多人 → 财务 / 增长 / 经营分析并行汇报（并行协作组）
   await expect(log.getByText('并行协作')).toBeVisible()
   await expect(log.getByText('财务口径先对齐')).toBeVisible()
   await expect(log.getByText('增长方案先给北极星与护栏')).toBeVisible()
-  await expect(log.getByText('销售这边本周主攻')).toBeVisible()
+  await expect(log.getByText('口径先对齐再分析')).toBeVisible()
 
   // finance 剧本：KPI 卡（毛利率 / 盈亏平衡点）
   const kpi = page.locator('.md-kpi').first()
@@ -46,7 +46,7 @@ test('M21 · 周经营例会：preset 建会 → 草稿预填 → 并行汇报 �
     'docs/经营简报-增长.md',
     'docs/财务测算-增长.md',
     'docs/增长方案-增长.md',
-    'docs/销售话术-增长.md',
+    'docs/经营分析-增长.md',
   ]) {
     await expect(page.locator(`button[title="${path}"]`)).toBeVisible()
   }

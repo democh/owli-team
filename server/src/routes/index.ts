@@ -220,6 +220,10 @@ export interface ApiDeps {
   reactions?: import('../store/reactions.js').ReactionStore
   /** 空间存储（Space；缺省 = /spaces 路由不挂载、会话空间字段仅透传 default，测试零影响） */
   spaces?: SpaceStore
+  /** IM：会话个人偏好（置顶 / 免打扰；缺省 = 列表不投影、PATCH 返回 503） */
+  sessionPrefs?: import('../store/session-prefs.js').SessionPrefsStore
+  /** IM：仅自己删除（个人视图隐藏；缺省 = 会话详情不过滤、scope=self 返回 503） */
+  messageHides?: import('../store/message-hides.js').MessageHideStore
 }
 
 export function createApiRouter(deps: ApiDeps): Router {
@@ -358,6 +362,9 @@ export function createApiRouter(deps: ApiDeps): Router {
             sessionId,
             payload: { sessionId, userId, lastReadSeq },
           }),
+        sessionPrefs: deps.sessionPrefs,
+        publishPrefs: (userId, sessionId, prefs) =>
+          deps.notify.publishToUser(userId, 'notify:session-prefs', { sessionId, prefs }),
       }),
     )
   }

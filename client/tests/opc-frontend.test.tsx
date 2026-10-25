@@ -150,9 +150,11 @@ describe('SessionList 快速组队（M21）', () => {
     render(<SessionList onSelect={onSelect} />)
 
     await user.click(screen.getByTitle('新建会话'))
-    // 组队台：快速组队 + 按场景组队两个分组共存；预设行可点
-    expect(screen.getByText('快速组队')).toBeInTheDocument()
+    // 组队台：场景 / 任务预设两个页签共存（不再把预设与场景混在一条长列表里）
     expect(screen.getByText('按场景组队')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '组队来源：周经营例会' })).toBeNull()
+    await user.click(screen.getByRole('button', { name: '任务预设' }))
+    expect(screen.getByText('快速组队')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '组队来源：周经营例会' })).toBeInTheDocument()
     expect(screen.getByText('3 人')).toBeInTheDocument()
 
@@ -162,9 +164,9 @@ describe('SessionList 快速组队（M21）', () => {
     expect(screen.getByText('已选 3 位')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /柏川/ })).toHaveAttribute('aria-pressed', 'true')
     expect(screen.getByRole('button', { name: /周正/ })).toHaveAttribute('aria-pressed', 'true')
-    // 开场指令可折叠预览（details 折叠时内容仍在 DOM）
-    expect(screen.getByText('开场指令将预填为草稿（点击预览）')).toBeInTheDocument()
-    expect(screen.getByText(WEEKLY_REVIEW.prompt)).toBeInTheDocument()
+    // 开场草稿可直接编辑（预设 prompt 预填，不自动发送）
+    expect(screen.getByLabelText('创建开场草稿')).toHaveValue(WEEKLY_REVIEW.prompt)
+    expect(screen.getByText('开场草稿（不自动发送）')).toBeInTheDocument()
 
     // 创建：POST 携带预选编制；草稿键写入（与 Composer.draftKey 一致）
     await user.click(screen.getByRole('button', { name: /创建并进入/ }))
@@ -191,10 +193,10 @@ describe('SessionList 快速组队（M21）', () => {
     expect(screen.getByText('目标：验证经营假设并输出战略路径')).toBeInTheDocument()
     expect(screen.getByText('∥ 并行协作 · 1 位推荐')).toBeInTheDocument()
 
-    // 选场景 → 预选 chain；无 preset 来源时不显示草稿预览
+    // 选场景 → 预选 chain；无 preset 来源时草稿为空
     await user.click(screen.getByRole('button', { name: '组队来源：商业战略' }))
     expect(screen.getByText('已选 1 位')).toBeInTheDocument()
-    expect(screen.queryByText('开场指令将预填为草稿（点击预览）')).toBeNull()
+    expect(screen.getByLabelText('创建开场草稿')).toHaveValue('')
   })
 
   it('无预设数据时快速组队区块隐藏（资产缺失自动降级）', async () => {
@@ -240,6 +242,8 @@ describe('pendingCreate 通道（M21）', () => {
     await waitFor(() => {
       expect(screen.getByText('已选 0 位')).toBeInTheDocument()
     })
+    // 无效 id 回退到场景页（不留在空白的预设列表）
+    expect(screen.getByRole('button', { name: '场景' })).toHaveAttribute('aria-pressed', 'true')
     expect(screen.getByText('按场景组队')).toBeInTheDocument()
     expect(useUiStore.getState().pendingCreate).toBeUndefined()
   })

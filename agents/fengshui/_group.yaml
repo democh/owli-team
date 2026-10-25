@@ -21,3 +21,20 @@ agenda:
 stage:
   layout: dock
   panel: chartboard
+category: culture
+catalog:
+  keywords:
+    - 堪舆阳宅
+    - 户型图点评
+    - 罗盘定向排盘
+    - 流年飞星参考
+    - 入宅前格局复核
+  inputs:
+    - 户型图与尺寸
+    - 坐向与地点
+    - 研习问题
+  outputs:
+    - 户型解析
+    - 堪舆文化解读
+    - 空间复核清单
+  boundary: 仅供传统文化参考；结构安全、拆改和施工预算需现场专业确认。

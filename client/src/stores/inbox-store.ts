@@ -31,6 +31,8 @@ interface InboxState {
 /** 视图缓存上限（防长会话内存膨胀；更早的条目按需重新从服务端拉取） */
 const MAX_ITEMS = 200
 let syncing = false
+let syncAgain = false
+let generation = 0
 
 export const useInboxStore = create<InboxState>((set, get) => ({
   items: [],
@@ -39,31 +41,39 @@ export const useInboxStore = create<InboxState>((set, get) => ({
   loading: false,
 
   sync: async () => {
-    if (syncing) return
+    if (syncing) { syncAgain = true; return }
     syncing = true
+    const token = generation
     set({ loading: get().items.length === 0 })
     try {
-      const since = get().cursor
-      const res = await apiGet<{ items: InboxItem[]; cursor: number; unreadCount: number }>(
-        `/api/inbox?since=${since}&limit=200`,
-      )
-      set((state) => {
-        const seen = new Set(state.items.map((i) => i.id))
-        const merged = [...state.items]
-        for (const item of res.items) if (!seen.has(item.id)) merged.push(item)
-        merged.sort((a, b) => a.seq - b.seq)
-        return {
-          items: merged.slice(-MAX_ITEMS),
-          cursor: Math.max(state.cursor, res.cursor),
-          unreadCount: res.unreadCount,
-          loading: false,
-          error: undefined,
-        }
-      })
+      let more = false
+      do {
+        syncAgain = false
+        const since = get().cursor
+        const res = await apiGet<{ items: InboxItem[]; cursor: number; nextCursor?: number; hasMore?: boolean; unreadCount: number }>(
+          `/api/inbox?since=${since}&limit=200`,
+        )
+        if (token !== generation) return
+        // 兼容旧服务端也只推进至真正收到的条目，不能采用全局最大游标。
+        const received = res.items.reduce((max, item) => Math.max(max, item.seq), since)
+        const next = Math.max(since, Math.min(res.nextCursor ?? received, received))
+        more = (res.hasMore ?? res.items.length === 200) && next > since
+        set((state) => {
+          const merged = new Map(state.items.map((i) => [i.id, i]))
+          for (const item of res.items) merged.set(item.id, item)
+          return {
+            items: [...merged.values()].sort((a, b) => a.seq - b.seq).slice(-MAX_ITEMS),
+            cursor: Math.max(state.cursor, next),
+            unreadCount: res.unreadCount,
+            loading: false,
+            error: undefined,
+          }
+        })
+      } while (more || syncAgain)
     } catch (err) {
-      set({ loading: false, error: (err as Error).message })
+      if (token === generation) set({ loading: false, error: (err as Error).message })
     } finally {
-      syncing = false
+      if (token === generation) syncing = false
     }
   },
 
@@ -71,7 +81,7 @@ export const useInboxStore = create<InboxState>((set, get) => ({
     const state = get()
     if (state.items.some((i) => i.id === item.id)) return // 幂等（WS 补发 / 轮询交叉）
     // 缺口检测：seq 跳跃（含首帧 cursor=0 且 seq>1）→ REST 补齐（不吞事件）
-    if (state.cursor === 0 ? item.seq > 1 : item.seq > state.cursor + 1) {
+    if (syncing || (state.cursor === 0 ? item.seq > 1 : item.seq > state.cursor + 1)) {
       void get().sync()
       return
     }
@@ -109,5 +119,10 @@ export const useInboxStore = create<InboxState>((set, get) => ({
     await apiPost('/api/inbox/read', { ids }).catch(() => undefined)
   },
 
-  reset: () => set({ items: [], cursor: 0, unreadCount: 0, loading: false, error: undefined }),
+  reset: () => {
+    generation++
+    syncing = false
+    syncAgain = false
+    set({ items: [], cursor: 0, unreadCount: 0, loading: false, error: undefined })
+  },
 }))

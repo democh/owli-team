@@ -146,9 +146,19 @@ export class PlanStore {
     return rows.length > 0 ? rowToPlan(rows[0]) : undefined
   }
 
-  /** 按步骤 id 反查所属计划与步骤（submit_review 的 step:<id> 目标解析） */
-  findByStepId(sessionId: string, stepId: string): { plan: Plan; step: PlanStep } | undefined {
-    for (const plan of this.list(sessionId)) {
+  /** 按复合键反查步骤；旧调用缺省 planId 时优先当前执行计划，避免命中同名历史步骤。 */
+  findByStepId(sessionId: string, stepId: string, planId?: string): { plan: Plan; step: PlanStep } | undefined {
+    if (planId) {
+      const plan = this.get(planId)
+      const step = plan?.sessionId === sessionId ? plan.steps.find((s) => s.id === stepId) : undefined
+      return plan && step ? { plan, step } : undefined
+    }
+    const candidates = this.list(sessionId)
+    const ordered = [
+      ...candidates.filter((plan) => plan.status === 'executing' || plan.status === 'approved').reverse(),
+      ...candidates.filter((plan) => plan.status !== 'executing' && plan.status !== 'approved').reverse(),
+    ]
+    for (const plan of ordered) {
       const step = plan.steps.find((s) => s.id === stepId)
       if (step) return { plan, step }
     }

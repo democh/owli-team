@@ -3,13 +3,16 @@
  * + ADR 0135 成员条统一常驻（全场景一致展示，M52-G 席位让位判定已撤销）。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { render, screen, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { AgentDefinition, AgentGroup } from '@multi-agent/shared'
 import { Composer } from '../src/components/chat/Composer'
 import { useAgentStore } from '../src/stores/agent-store'
 import { useSceneStore } from '../src/stores/scene-store'
 import { useSessionStore } from '../src/stores/session-store'
+import { useRunStore } from '../src/stores/run-store'
+
+const originalSend = useRunStore.getState().send
 
 function makeAgent(id: string, name: string, role: string, group = 'development'): AgentDefinition {
   return {
@@ -63,9 +66,13 @@ function setSession(participantIds: string[], kind?: 'team' | 'direct' | 'group'
 
 beforeEach(() => {
   // 底栏上下文电池（ContextBar）挂载即拉取快照：stub 网络为常挂起，避免真实请求与 act 警告
-  vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>(() => {})))
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(() => new Promise<Response>(() => {})),
+  )
   // 草稿持久化（M8）会写 localStorage：清空避免用例间串扰
   localStorage.clear()
+  useRunStore.setState({ send: originalSend, active: false, queued: false, queue: [] })
   useAgentStore.setState({
     agents: [makeAgent('architect', '艾达', '架构师'), makeAgent('pm', '费利', '产品经理')],
     groups: [],
@@ -96,7 +103,103 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  cleanup()
+  vi.useRealTimers()
+  vi.restoreAllMocks()
   vi.unstubAllGlobals()
+  // 卸载时的草稿补写会晚于用例内清理，统一在钩子末尾移除，避免串到下一个用例。
+  localStorage.clear()
+})
+
+describe('Composer 异步发送与草稿保护', () => {
+  function pendingSend(): {
+    resolve: () => void
+    reject: (error: Error) => void
+    send: ReturnType<typeof vi.fn>
+  } {
+    let resolve!: () => void
+    let reject!: (error: Error) => void
+    const promise = new Promise<void>((yes, no) => {
+      resolve = yes
+      reject = no
+    })
+    const send = vi.fn(() => promise)
+    useRunStore.setState({ send })
+    return { resolve, reject, send }
+  }
+
+  it('发送期间继续编辑，旧响应不清空新内容', async () => {
+    const pending = pendingSend()
+    render(<Composer />)
+    const box = screen.getByRole('textbox')
+    fireEvent.change(box, { target: { value: '第一条' } })
+    fireEvent.keyDown(box, { key: 'Enter' })
+    fireEvent.change(box, { target: { value: '下一条草稿' } })
+    await act(async () => {
+      pending.resolve()
+    })
+    expect(box).toHaveValue('下一条草稿')
+    expect(pending.send).toHaveBeenCalledTimes(1)
+  })
+
+  it('成功后只清空未再编辑的已提交草稿', async () => {
+    const pending = pendingSend()
+    render(<Composer />)
+    const box = screen.getByRole('textbox')
+    fireEvent.change(box, { target: { value: '第一条' } })
+    fireEvent.keyDown(box, { key: 'Enter' })
+    fireEvent.keyDown(box, { key: 'Enter' })
+    await act(async () => {
+      pending.resolve()
+    })
+    expect(box).toHaveValue('')
+    expect(pending.send).toHaveBeenCalledTimes(1)
+  })
+
+  it('切会话后旧请求完成，不清空新会话草稿或锁住发送', async () => {
+    const pending = pendingSend()
+    localStorage.setItem('ma:draft:s2', '第二会话草稿')
+    render(<Composer />)
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: '第一会话内容' } })
+    fireEvent.keyDown(screen.getByRole('textbox'), { key: 'Enter' })
+    act(() => useSessionStore.setState({ currentId: 's2' }))
+    expect(screen.getByRole('textbox')).toHaveValue('第二会话草稿')
+    await act(async () => {
+      pending.resolve()
+    })
+    expect(screen.getByRole('textbox')).toHaveValue('第二会话草稿')
+    expect(localStorage.getItem('ma:draft:s1')).toBe('第一会话内容')
+  })
+
+  it('发送失败保留草稿', async () => {
+    const pending = pendingSend()
+    render(<Composer />)
+    const box = screen.getByRole('textbox')
+    fireEvent.change(box, { target: { value: '不能丢的内容' } })
+    fireEvent.keyDown(box, { key: 'Enter' })
+    await act(async () => {
+      pending.reject(new Error('网络失败'))
+    })
+    expect(box).toHaveValue('不能丢的内容')
+  })
+
+  it('连续输入只在防抖结束落盘，卸载时补写最新值', () => {
+    vi.useFakeTimers()
+    const save = vi.spyOn(Storage.prototype, 'setItem')
+    const view = render(<Composer />)
+    save.mockClear()
+    const box = screen.getByRole('textbox')
+    fireEvent.change(box, { target: { value: '一' } })
+    fireEvent.change(box, { target: { value: '一二' } })
+    fireEvent.change(box, { target: { value: '一二三' } })
+    expect(save).not.toHaveBeenCalled()
+    act(() => vi.advanceTimersByTime(400))
+    expect(save).toHaveBeenCalledTimes(1)
+    expect(save).toHaveBeenCalledWith('ma:draft:s1', '一二三')
+    fireEvent.change(box, { target: { value: '最新草稿' } })
+    view.unmount()
+    expect(localStorage.getItem('ma:draft:s1')).toBe('最新草稿')
+  })
 })
 
 describe('Composer @ 自动补全', () => {
@@ -197,7 +300,10 @@ describe('ADR 0135 成员条统一常驻（全场景一致展示）', () => {
         makeAgent('coach', '苏纵', '谈判教练', 'negotiation'),
       ],
       groups: [
-        makeGroup('negotiation', { layout: 'arena', seats: { left: ['negotiator'], right: ['counterpart'] } }),
+        makeGroup('negotiation', {
+          layout: 'arena',
+          seats: { left: ['negotiator'], right: ['counterpart'] },
+        }),
       ],
     })
     setSession(participantIds)

@@ -6,11 +6,30 @@
  */
 import * as React from 'react'
 import { toast } from 'sonner'
-import { EyeOff, Loader2, MessageCircle, MessageSquarePlus, Pencil, Plus, Search, Trash2, Users, X } from 'lucide-react'
+import {
+  Archive,
+  ArchiveRestore,
+  Bell,
+  BellOff,
+  EyeOff,
+  Loader2,
+  Mail,
+  MailOpen,
+  MessageCircle,
+  MessageSquarePlus,
+  Pencil,
+  Pin,
+  PinOff,
+  Plus,
+  Search,
+  Trash2,
+  Users,
+  X,
+} from 'lucide-react'
 import { apiGet } from '../../lib/api'
 import { labelOfMemberKey } from '../../lib/members'
 import { useAgentStore } from '../../stores/agent-store'
-import { useSessionStore } from '../../stores/session-store'
+import { useSessionStore, filterSessions } from '../../stores/session-store'
 import { useUiStore } from '../../stores/ui-store'
 import { useWsStore } from '../../stores/ws-store'
 import { timeAgo } from '../../lib/time'
@@ -35,6 +54,10 @@ interface SearchHit {
   messageId: string
   content: string
   sessionTitle: string
+  /** IM：命中定位所需（旧服务端可能缺省） */
+  seq?: number
+  createdAt?: string
+  senderName?: string
 }
 
 /** 命中片段：以关键词为中心截取（去多余空白） */
@@ -48,7 +71,7 @@ function snippetOf(content: string, q: string): string {
 }
 
 export interface SessionListProps {
-  onSelect: (id: string) => void
+  onSelect: (id: string) => void | Promise<void | boolean>
 }
 
 export function SessionList({ onSelect }: SessionListProps): React.JSX.Element {
@@ -65,15 +88,13 @@ export function SessionList({ onSelect }: SessionListProps): React.JSX.Element {
   const pendingCount = useFriendsStore((s) => s.pendingCount)
   // M79-F：会话筛选 chip（团队 / 聊天；默认选中第一个「团队」）
   const sessionFilter = useUiStore((s) => s.sessionFilter)
-  const isChatKind = (kind?: string): boolean => kind === 'direct' || kind === 'group'
+  // IM：归档是独立视图（不混入团队 / 聊天筛选）
+  const [showArchived, setShowArchived] = React.useState(false)
+  const archivedCount = sessions.filter((s) => s.prefs?.archived).length
   const visibleSessions = React.useMemo(
-    () =>
-      sessionFilter === 'all'
-        ? sessions
-        : sessionFilter === 'chat'
-          ? sessions.filter((s) => isChatKind(s.kind))
-          : sessions.filter((s) => !isChatKind(s.kind)),
-    [sessions, sessionFilter],
+    // 归档视图不受团队 / 聊天筛选影响，避免“归档里有但看不到”
+    () => filterSessions(sessions, showArchived ? 'all' : sessionFilter, { archived: showArchived }),
+    [sessions, sessionFilter, showArchived],
   )
   // M31 修订：其他会话的画布写入标记（agent 写入小点；切到该会话即清零）
   // 临时隐藏画布：小点已注释，数据源同步不再订阅
@@ -92,30 +113,55 @@ export function SessionList({ onSelect }: SessionListProps): React.JSX.Element {
   const [query, setQuery] = React.useState('')
   const [hits, setHits] = React.useState<SearchHit[] | null>(null)
   const [searching, setSearching] = React.useState(false)
+  const [searchError, setSearchError] = React.useState<string | null>(null)
+  const [searchAttempt, setSearchAttempt] = React.useState(0)
+  /** IM：搜索筛选（我发的 / 含附件 / 时间范围） */
+  const [mineOnly, setMineOnly] = React.useState(false)
+  const [hasAttachment, setHasAttachment] = React.useState(false)
+  const [range, setRange] = React.useState<'all' | 'today' | '7d' | '30d'>('all')
 
   // 输入防抖（250ms）→ FTS 检索；清空恢复会话列表
   React.useEffect(() => {
     const q = query.trim()
+    setSearchError(null)
     if (!q) {
       setHits(null)
       setSearching(false)
       return
     }
     setSearching(true)
+    setHits(null)
+    const controller = new AbortController()
     const timer = setTimeout(() => {
-      void apiGet<{ results: SearchHit[] }>(`/api/search?q=${encodeURIComponent(q)}&limit=30`)
-        .then((res) => setHits(res.results))
-        .catch(() => setHits([]))
-        .finally(() => setSearching(false))
+      const params = new URLSearchParams({ q, limit: '30' })
+      if (mineOnly) params.set('mine', '1')
+      if (hasAttachment) params.set('hasAttachment', '1')
+      if (range !== 'all') {
+        const from = new Date()
+        if (range === 'today') from.setHours(0, 0, 0, 0)
+        else from.setDate(from.getDate() - (range === '7d' ? 7 : 30))
+        params.set('from', from.toISOString())
+      }
+      void apiGet<{ results: SearchHit[] }>(`/api/search?${params.toString()}`, { signal: controller.signal })
+        .then((res) => { if (!controller.signal.aborted) setHits(res.results) })
+        .catch((err: Error) => { if (!controller.signal.aborted) setSearchError(err.message) })
+        .finally(() => { if (!controller.signal.aborted) setSearching(false) })
     }, 250)
-    return () => clearTimeout(timer)
-  }, [query])
+    return () => { clearTimeout(timer); controller.abort() }
+  }, [query, searchAttempt, mineOnly, hasAttachment, range])
 
   /** 命中跳转：切到目标会话（异步加载消息）→ 延迟触发消息定位 */
   const jumpTo = (hit: SearchHit): void => {
     setQuery('')
-    onSelect(hit.sessionId)
-    window.setTimeout(() => useUiStore.getState().focusMessage(hit.messageId), 220)
+    void (async () => {
+      const pending = onSelect(hit.sessionId)
+      const version = useSessionStore.getState().selectionVersion
+      const selected = await pending
+      const state = useSessionStore.getState()
+      if (selected !== false && state.currentId === hit.sessionId && state.selectionVersion === version && !state.messageLoadError) {
+        useUiStore.getState().focusMessage(hit.messageId, hit.seq)
+      }
+    })().catch((err: Error) => toast.error(err.message))
   }
 
   const openCreate = (): void => {
@@ -133,7 +179,7 @@ export function SessionList({ onSelect }: SessionListProps): React.JSX.Element {
   React.useEffect(() => {
     if (!pendingCreate) return
     useUiStore.getState().consumeCreate()
-    setCreateSource({ kind: pendingCreate.kind, id: pendingCreate.id })
+    setCreateSource(pendingCreate.kind && pendingCreate.id ? { kind: pendingCreate.kind, id: pendingCreate.id, draft: pendingCreate.draft } : undefined)
     setCreateOpen(true)
   }, [pendingCreate])
 
@@ -253,6 +299,18 @@ export function SessionList({ onSelect }: SessionListProps): React.JSX.Element {
           {sessions.length > 0 && (
             <span className="ml-auto text-[11px] tabular-nums text-muted-foreground">{visibleSessions.length} 个会话</span>
           )}
+          <button
+            type="button"
+            className={cn(
+              'flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] transition-colors',
+              showArchived ? 'bg-primary/10 font-medium text-primary' : 'text-muted-foreground hover:text-foreground',
+            )}
+            title={showArchived ? '返回未归档会话' : '查看归档会话'}
+            onClick={() => setShowArchived((v) => !v)}
+          >
+            {showArchived ? <ArchiveRestore className="size-3" /> : <Archive className="size-3" />}
+            {showArchived ? '返回' : `归档 ${archivedCount}`}
+          </button>
         </div>
       )}
 
@@ -276,11 +334,72 @@ export function SessionList({ onSelect }: SessionListProps): React.JSX.Element {
             </button>
           )}
         </div>
+        {query.trim() && (
+          <div className="mt-1 flex flex-wrap items-center gap-1 text-[10.5px]">
+            {myUserId && (
+              <button
+                type="button"
+                aria-pressed={mineOnly}
+                className={cn(
+                  'rounded-full border px-1.5 py-0.5 transition-colors',
+                  mineOnly
+                    ? 'border-primary/40 bg-primary/10 text-primary'
+                    : 'text-muted-foreground hover:text-foreground',
+                )}
+                onClick={() => setMineOnly((v) => !v)}
+              >
+                我发的
+              </button>
+            )}
+            <button
+              type="button"
+              aria-pressed={hasAttachment}
+              className={cn(
+                'rounded-full border px-1.5 py-0.5 transition-colors',
+                hasAttachment
+                  ? 'border-primary/40 bg-primary/10 text-primary'
+                  : 'text-muted-foreground hover:text-foreground',
+              )}
+              onClick={() => setHasAttachment((v) => !v)}
+            >
+              含附件
+            </button>
+            <select
+              value={range}
+              onChange={(e) => setRange(e.target.value as typeof range)}
+              className="rounded-full border bg-background px-1.5 py-0.5 text-[10.5px] text-muted-foreground"
+              title="时间范围"
+            >
+              <option value="all">全部时间</option>
+              <option value="today">今天</option>
+              <option value="7d">近 7 天</option>
+              <option value="30d">近 30 天</option>
+            </select>
+            {(mineOnly || hasAttachment || range !== 'all') && (
+              <button
+                type="button"
+                className="ml-auto text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+                onClick={() => {
+                  setMineOnly(false)
+                  setHasAttachment(false)
+                  setRange('all')
+                }}
+              >
+                重置
+              </button>
+            )}
+          </div>
+        )}
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto p-2">
         {query.trim() ? (
-          searching && hits === null ? (
+          searchError ? (
+            <div role="alert" className="px-2 py-6 text-center text-[12.5px] text-muted-foreground">
+              <p>{searchError}</p>
+              <Button size="sm" variant="outline" onClick={() => setSearchAttempt((n) => n + 1)}>重试搜索</Button>
+            </div>
+          ) : searching && hits === null ? (
             <div className="flex items-center justify-center gap-2 py-8 text-[12.5px] text-muted-foreground">
               <Loader2 className="size-3.5 animate-spin" />
               搜索中…
@@ -302,6 +421,13 @@ export function SessionList({ onSelect }: SessionListProps): React.JSX.Element {
                   <div className="truncate text-[12px] font-medium text-foreground/85">
                     {hit.sessionTitle || '未命名会话'}
                   </div>
+                  {(hit.senderName || hit.createdAt) && (
+                    <div className="mt-0.5 flex items-center gap-1.5 text-[10.5px] text-muted-foreground">
+                      {hit.senderName && <span className="max-w-24 truncate">{hit.senderName}</span>}
+                      {hit.senderName && hit.createdAt && <span>·</span>}
+                      {hit.createdAt && <span>{timeAgo(hit.createdAt)}</span>}
+                    </div>
+                  )}
                   <p className="mt-0.5 line-clamp-2 text-[11.5px] leading-4 text-muted-foreground">
                     {snippetOf(hit.content, query.trim())}
                   </p>
@@ -332,7 +458,11 @@ export function SessionList({ onSelect }: SessionListProps): React.JSX.Element {
         {/* M79-F：筛选后无结果（列表非空） */}
         {!loading && sessions.length > 0 && visibleSessions.length === 0 && (
           <div className="px-2 py-8 text-center text-[12.5px] text-muted-foreground">
-            没有匹配「{sessionFilter === 'chat' ? '聊天' : '团队'}」的会话
+            {showArchived
+              ? '还没有归档会话'
+              : archivedCount > 0 && archivedCount === sessions.length
+                ? '会话已全部归档（点上方「归档」查看）'
+                : `没有匹配「${sessionFilter === 'chat' ? '聊天' : '团队'}」的会话`}
           </div>
         )}
 
@@ -371,9 +501,11 @@ export function SessionList({ onSelect }: SessionListProps): React.JSX.Element {
                   ) : s.kind === 'group' ? (
                     <Users className="size-3.5 shrink-0 text-muted-foreground" aria-label="群聊" />
                   ) : null}
+                  {s.prefs?.pinned && <Pin className="size-3 shrink-0 text-primary/70" aria-label="已置顶" />}
                   <span className={cn('min-w-0 flex-1 truncate text-[13px] font-medium', isActive && 'text-primary')}>
                     {s.title}
                   </span>
+                  {s.prefs?.muted && <BellOff className="size-3 shrink-0 text-muted-foreground/70" aria-label="免打扰" />}
                   {s.role && s.role !== 'owner' && (
                     <Badge
                       variant="outline"
@@ -394,14 +526,81 @@ export function SessionList({ onSelect }: SessionListProps): React.JSX.Element {
                   */}
                   {count > 0 && (
                     <span
-                      className="badge-pop inline-flex h-[18px] min-w-[18px] shrink-0 items-center justify-center rounded-full bg-destructive px-1 text-[10px] font-bold leading-none tabular-nums text-destructive-foreground shadow-sm"
-                      title={`${count} 条未读`}
+                      className={cn(
+                        'badge-pop inline-flex h-[18px] min-w-[18px] shrink-0 items-center justify-center rounded-full px-1 text-[10px] font-bold leading-none tabular-nums shadow-sm',
+                        s.prefs?.muted ? 'bg-muted-foreground/45 text-background' : 'bg-destructive text-destructive-foreground',
+                      )}
+                      title={`${count} 条未读${s.prefs?.muted ? '（免打扰）' : ''}`}
                       aria-label={`${count} 条未读`}
                     >
                       {count > 99 ? '99+' : count}
                     </span>
                   )}
                   <span className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
+                    {multiUser && (
+                    <button
+                      type="button"
+                      className="rounded p-1 text-muted-foreground hover:bg-background hover:text-foreground"
+                      title={s.prefs?.pinned ? '取消置顶' : '置顶会话'}
+                      aria-label={s.prefs?.pinned ? '取消置顶' : '置顶会话'}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        void useSessionStore.getState().setSessionPrefs(s.id, { pinned: !s.prefs?.pinned }).catch((err: Error) => toast.error(err.message))
+                      }}
+                    >
+                      {s.prefs?.pinned ? <PinOff className="size-3" /> : <Pin className="size-3" />}
+                    </button>
+                    )}
+                    {multiUser && (
+                    <button
+                      type="button"
+                      className="rounded p-1 text-muted-foreground hover:bg-background hover:text-foreground"
+                      title={s.prefs?.markedUnread ? '取消未读标记' : '标记未读（提醒自己回看）'}
+                      aria-label={s.prefs?.markedUnread ? '取消未读标记' : '标记未读'}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        void useSessionStore
+                          .getState()
+                          .setSessionPrefs(s.id, { markedUnread: !s.prefs?.markedUnread })
+                          .then(() => useSessionStore.getState().loadSessions())
+                          .catch((err: Error) => toast.error(err.message))
+                      }}
+                    >
+                      {s.prefs?.markedUnread ? <MailOpen className="size-3" /> : <Mail className="size-3" />}
+                    </button>
+                    )}
+                    {multiUser && (
+                    <button
+                      type="button"
+                      className="rounded p-1 text-muted-foreground hover:bg-background hover:text-foreground"
+                      title={s.prefs?.archived ? '取消归档' : '归档会话'}
+                      aria-label={s.prefs?.archived ? '取消归档' : '归档会话'}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        void useSessionStore
+                          .getState()
+                          .setSessionPrefs(s.id, { archived: !s.prefs?.archived })
+                          .then(() => useSessionStore.getState().loadSessions())
+                          .catch((err: Error) => toast.error(err.message))
+                      }}
+                    >
+                      {s.prefs?.archived ? <ArchiveRestore className="size-3" /> : <Archive className="size-3" />}
+                    </button>
+                    )}
+                    {multiUser && (
+                    <button
+                      type="button"
+                      className="rounded p-1 text-muted-foreground hover:bg-background hover:text-foreground"
+                      title={s.prefs?.muted ? '取消免打扰' : '免打扰（不弹消息提示）'}
+                      aria-label={s.prefs?.muted ? '取消免打扰' : '免打扰'}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        void useSessionStore.getState().setSessionPrefs(s.id, { muted: !s.prefs?.muted }).catch((err: Error) => toast.error(err.message))
+                      }}
+                    >
+                      {s.prefs?.muted ? <Bell className="size-3" /> : <BellOff className="size-3" />}
+                    </button>
+                    )}
                     {s.kind === 'direct' || s.kind === 'group' ? (
                       // M79-D：chat 形态仅提供「隐藏」（DM「删除」语义；新消息自动复现）；
                       // M79-AA 群管理补全：群聊重命名入口（仅群主——服务端同规收紧，editor 403）

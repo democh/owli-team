@@ -20,3 +20,20 @@ stage:
   layout: dock
   panel: console
 
+category: business
+catalog:
+  keywords:
+    - 商业智能
+    - 取数分析
+    - 指标拆解
+    - 报表设计
+    - 数据质量
+  inputs:
+    - 业务问题
+    - 数据库授权与结构
+    - 指标定义
+  outputs:
+    - 取数 SQL
+    - 指标口径
+    - 数据看板
+  boundary: 负责取数与指标治理，不替代战略判断或数据管道建设；仅操作授权数据。

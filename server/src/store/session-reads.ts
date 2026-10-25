@@ -24,19 +24,21 @@ export class SessionReadsStore {
 
   /** 上报已读（单调推进：max(既有, seq)；返回生效值） */
   set(userId: string, sessionId: string, seq: number): number {
-    const target = Math.max(0, Math.floor(seq))
     const current = this.get(userId, sessionId)
+    if (!Number.isSafeInteger(seq) || seq <= 0) return current
+    const head = this.db.get<{ seq: number }>('SELECT COALESCE(MAX(seq), 0) AS seq FROM messages WHERE session_id = ?', sessionId)
+    const target = Math.min(seq, Number(head?.seq ?? 0))
     if (target <= current) return current
     this.db.run(
       `INSERT INTO session_reads (user_id, session_id, last_read_seq, updated_at)
        VALUES (?, ?, ?, ?)
-       ON CONFLICT(user_id, session_id) DO UPDATE SET last_read_seq = excluded.last_read_seq, updated_at = excluded.updated_at`,
+       ON CONFLICT(user_id, session_id) DO UPDATE SET last_read_seq = MAX(session_reads.last_read_seq, excluded.last_read_seq), updated_at = excluded.updated_at`,
       userId,
       sessionId,
       target,
       nowIso(),
     )
-    return target
+    return this.get(userId, sessionId)
   }
 
   /**
@@ -54,9 +56,14 @@ export class SessionReadsStore {
        WHERE m.session_id IN (${placeholders})
          AND m.seq > COALESCE(r.last_read_seq, 0)
          AND (m.user_id IS NULL OR m.user_id <> ?)
+         AND m.recalled_at IS NULL
+         AND NOT EXISTS (
+           SELECT 1 FROM message_hides h WHERE h.message_id = m.id AND h.user_id = ?
+         )
        GROUP BY m.session_id`,
       userId,
       ...sessionIds,
+      userId,
       userId,
     )
     for (const row of rows) out.set(row.sid, Number(row.n))

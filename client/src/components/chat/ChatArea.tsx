@@ -10,13 +10,14 @@
  */
 import * as React from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
-import { ArrowDown, Bot, Eye, Hand, Hourglass, LayoutList, LayoutPanelLeft, Loader2, Rocket, RotateCcw, Users } from 'lucide-react'
+import { ArrowDown, Archive, Bot, Eye, Hand, Hourglass, LayoutList, LayoutPanelLeft, Loader2, Rocket, RotateCcw, Users } from 'lucide-react'
 import { toast } from 'sonner'
 import type { AgentDefinition } from '@multi-agent/shared'
-import { baseAgentId, resolveRelayMode } from '@multi-agent/shared'
+import { baseAgentId, resolveRelayMode, retiredScenesOf } from '@multi-agent/shared'
 import { labelOfMemberKey } from '../../lib/members'
 import { apiPatch, apiPost } from '../../lib/api'
 import { cn } from '../../lib/utils'
+import { openConversation } from '../../lib/navigation'
 import { resolveIcon } from '../../lib/avatar-icons'
 import { deriveRows, type WaveInfo } from '../../lib/chat-rows'
 import { useAgentStore, useGroup } from '../../stores/agent-store'
@@ -30,6 +31,7 @@ import { ShareDialog } from '../sessions/ShareDialog'
 import { OnlineDot } from './OnlineDot'
 import { ChatMembersDialog } from '../sessions/ChatMembersDialog'
 import { AgentAvatar } from '../agents/AgentAvatar'
+import { CatalogWelcome } from '../agents/CatalogWelcome'
 import { SceneStage } from '../scene/SceneStage'
 import { MainTabs, PanelToggleButton } from '../layout/MainTabs'
 import { useMediaQuery } from '../../lib/hooks'
@@ -42,6 +44,9 @@ import { MessageRail } from './MessageRail'
 import { WaveGroup } from './WaveGroup'
 import { WaveStrip } from './WaveStrip'
 import { Composer } from './Composer'
+import { TypingIndicator } from './TypingIndicator'
+import { PendingMessages } from './PendingMessages'
+import { useMessageReadTracker } from '../../lib/use-message-read-tracker'
 import { ApprovalPanel } from './ApprovalPanel'
 import { PlanReviewCard } from './PlanReviewCard'
 
@@ -133,10 +138,14 @@ export function ChatArea(): React.JSX.Element {
   const session = useCurrentSession()
   const order = useSessionStore((s) => s.order)
   const loading = useSessionStore((s) => s.loadingMessages)
+  const messageLoadError = useSessionStore((s) => s.messageLoadError)
+  const earlierLoadError = useSessionStore((s) => s.earlierLoadError)
   // 消息分页：更早历史（滑近顶部自动前插 / 定位未加载消息时逐页回退）
   const hasMore = useSessionStore((s) => s.hasMore)
   const loadingEarlier = useSessionStore((s) => s.loadingEarlier)
   const loadEarlier = useSessionStore((s) => s.loadEarlier)
+  const loadAtMessage = useSessionStore((s) => s.loadAtMessage)
+  const historyMode = useSessionStore((s) => s.historyMode)
   const latestRun = useSessionStore((s) => s.latestRun)
   const agents = useAgentStore((s) => s.agents)
   const active = useRunStore((s) => s.active)
@@ -144,7 +153,6 @@ export function ChatArea(): React.JSX.Element {
   // 本地挂接运行所属会话：非当前会话的运行状态不参与渲染（防跨会话残留串入消息流）
   const runSessionId = useRunStore((s) => s.sessionId)
   const attach = useRunStore((s) => s.attach)
-  const setMainTab = useUiStore((s) => s.setMainTab)
   const listMode = useSceneStore((s) => s.listMode)
   const narrow = useMediaQuery('(max-width: 900px)')
   const toggleListMode = useSceneStore((s) => s.toggleListMode)
@@ -158,6 +166,9 @@ export function ChatArea(): React.JSX.Element {
   const [membersOpen, setMembersOpen] = React.useState(false)
 
   const containerRef = React.useRef<HTMLDivElement>(null)
+  // 画布等其他页签下聊天 DOM 仍挂载，不能因“不可见但布局存在”推进已读。
+  const mainTab = useUiStore((s) => s.mainTab)
+  useMessageReadTracker(containerRef, currentId, order, mainTab === 'chat')
   const atBottomRef = React.useRef(true)
   /** M52-D：最近一次程序化贴底的滚动偏移（-1 = 尚未贴底过），供 onScroll 识别自身滚动回声 */
   const pinnedTopRef = React.useRef(-1)
@@ -166,13 +177,23 @@ export function ChatArea(): React.JSX.Element {
   const insertRef = React.useRef<((text: string) => void) | null>(null)
   // M12：「回到最新」浮标：atBottom 驱动显隐，missedRef 记录离开底部那一刻的消息数基线
   const [atBottom, setAtBottom] = React.useState(true)
-  const missedRef = React.useRef(0)
+  const missedRef = React.useRef<string>()
+  React.useEffect(() => {
+    missedRef.current = undefined
+    atBottomRef.current = true
+    pinnedTopRef.current = -1
+    prependAnchorRef.current = undefined
+    setAtBottom(true)
+  }, [currentId])
   // M37-3/7：视口窗口（首个/末个可见行下标）——滚动驱动，变化才落 state
   const [vp, setVp] = React.useState({ first: 0, last: 0 })
 
   // M57 P2：当前会话权限角色（兼容模式缺省 = owner；viewer = 只读共享）
   const myRole = session?.role ?? 'owner'
   const isViewer = myRole === 'viewer'
+  // 下线资产（历史兼容）：编制含已下线角色 → 只读（服务端另返回 409 兜底）
+  const retiredScenes = React.useMemo(() => retiredScenesOf(session?.participantIds ?? []), [session?.participantIds])
+  const retiredLocked = retiredScenes.length > 0
   // M79-AE：会话治理（触发策略等）仅属主可操作（兼容模式 / 无角色投影 → owner）
   const isOwner = !myRole || myRole === 'owner'
   // M79-E：触发策略与持球（等待徽章 / 仅点名唤起开关）
@@ -268,7 +289,7 @@ export function ChatArea(): React.JSX.Element {
     const el = containerRef.current
     if (!el) return
     // 消息分页：滑近顶部自动加载更早一页（快照滚动锚点，前插后由 useLayoutEffect 补偿）
-    if (el.scrollTop < 100 && hasMore && !loadingEarlier && order.length > 0) {
+    if (el.scrollTop < 100 && hasMore && !loadingEarlier && !earlierLoadError && !focusRequest && order.length > 0) {
       prependAnchorRef.current = { height: el.scrollHeight, top: el.scrollTop }
       void loadEarlier().catch(() => {
         prependAnchorRef.current = undefined
@@ -284,7 +305,7 @@ export function ChatArea(): React.JSX.Element {
       return
     }
     // 基线只在「贴底 / 刚离开底部」两个时刻刷新，持续上滑期间保持不动
-    if (near || atBottomRef.current) missedRef.current = order.length
+    if (near || atBottomRef.current) missedRef.current = order[order.length - 1]
     atBottomRef.current = near
     setAtBottom(near)
     // M37：视口窗口（悬浮阶段条 / 导航条共用）
@@ -303,11 +324,12 @@ export function ChatArea(): React.JSX.Element {
     el.scrollTop = el.scrollHeight
     pinnedTopRef.current = el.scrollTop
     atBottomRef.current = true
-    missedRef.current = order.length
+    missedRef.current = order[order.length - 1]
     setAtBottom(true)
   }
 
-  const missed = atBottom ? 0 : Math.max(0, order.length - missedRef.current)
+  const seenIndex = missedRef.current ? order.indexOf(missedRef.current) : -1
+  const missed = atBottom || seenIndex < 0 ? 0 : Math.max(0, order.length - seenIndex - 1)
 
   // 消息分页：前插锚点补偿——prepend 后把滚动偏移按新增高度差平移，用户视口不跳
   React.useLayoutEffect(() => {
@@ -324,20 +346,72 @@ export function ChatArea(): React.JSX.Element {
   // 消息定位（右侧接力视图 / M37 悬浮条与导航条点击）：滚动到目标行并闪光，随后自动清除
   // 分页回退：目标在未加载的更早历史中时，逐页向前加载直到命中或穷尽（每个 focusRequest 至多触发一轮）
   const focusPagedRef = React.useRef<string>()
+  /** IM：搜索命中的历史直达只触发一次（避免 effect 重跑反复重载） */
+  const focusAtRef = React.useRef<string>()
+  const focusIndex = focusRequest ? rows.findIndex((r) =>
+    r.kind === 'message' ? r.id === focusRequest.id : r.kind === 'wave' ? r.ids.includes(focusRequest.id) : false,
+  ) : -1
   React.useEffect(() => {
-    if (!focusRequest) return
-    const index = rows.findIndex((r) =>
-      r.kind === 'message' ? r.id === focusRequest.id : r.kind === 'wave' ? r.ids.includes(focusRequest.id) : false,
-    )
-    if (index >= 0) {
-      virtualizer.scrollToIndex(index, { align: 'center' })
-    } else if (hasMore && !loadingEarlier && focusPagedRef.current !== focusRequest.id) {
-      focusPagedRef.current = focusRequest.id
-      void loadEarlier().catch(() => undefined)
+    if (!focusRequest || loading) return
+    const stillCurrent = (): boolean => useUiStore.getState().focusRequest === focusRequest && useSessionStore.getState().currentId === currentId
+    const finishMissing = (message: string): void => {
+      if (!stillCurrent()) return
+      clearFocus()
+      toast.error(message)
     }
-    const t = setTimeout(clearFocus, 1900)
-    return () => clearTimeout(t)
-  }, [focusRequest, rows, virtualizer, clearFocus, hasMore, loadingEarlier, loadEarlier])
+    if (focusIndex >= 0) {
+      atBottomRef.current = false
+      pinnedTopRef.current = -1
+      missedRef.current = order[order.length - 1]
+      setAtBottom(false)
+      virtualizer.scrollToIndex(focusIndex, { align: 'center' })
+      const timer = setTimeout(() => { if (stillCurrent()) clearFocus() }, 1900)
+      return () => clearTimeout(timer)
+    }
+    if (loadingEarlier) return
+    // IM：搜索命中携带 seq → 直接加载目标附近一页（无需逐页回翻）
+    if (typeof focusRequest.seq === 'number' && focusRequest.seq > 0) {
+      const key = `${currentId}:${focusRequest.nonce}:${focusRequest.seq}`
+      if (focusAtRef.current === key) return
+      focusAtRef.current = key
+      atBottomRef.current = false
+      pinnedTopRef.current = -1
+      setAtBottom(false)
+      void loadAtMessage(focusRequest.seq)
+        .then(() => {
+          if (!useSessionStore.getState().byId.has(focusRequest.id)) {
+            finishMissing('未找到目标消息，可能已被删除')
+          }
+        })
+        .catch((err: Error) => finishMissing(err.message))
+      return
+    }
+    if (!hasMore || messageLoadError) {
+      finishMissing(messageLoadError ?? '未找到目标消息，可能已被删除')
+      return
+    }
+    const oldestId = order[0]
+    const key = `${currentId}:${focusRequest.nonce}:${focusRequest.id}:${oldestId}`
+    if (focusPagedRef.current === key) return
+    focusPagedRef.current = key
+    void loadEarlier().then(() => {
+      const state = useSessionStore.getState()
+      if (state.order[0] === oldestId && !state.loadingEarlier) finishMissing('无法继续加载目标消息，请重试')
+    }).catch((err: Error) => finishMissing(err.message))
+  }, [
+    focusRequest,
+    focusIndex,
+    currentId,
+    order,
+    loading,
+    messageLoadError,
+    virtualizer,
+    clearFocus,
+    hasMore,
+    loadingEarlier,
+    loadEarlier,
+    loadAtMessage,
+  ])
 
   // M37-3：当前波次（首个可见行起向前扫描的首个波次）；仅上滑离开底部时展示
   const currentWave = React.useMemo(() => {
@@ -394,6 +468,7 @@ export function ChatArea(): React.JSX.Element {
             </span>
           </span>
         )}
+        {session && <TypingIndicator sessionId={session.id} />}
         {sceneGroup?.stage ? (
           <button
             type="button"
@@ -513,22 +588,56 @@ export function ChatArea(): React.JSX.Element {
         </div>
       )}
 
+      {focusRequest && focusIndex < 0 && (
+        <div role="status" className="flex items-center gap-2 border-b px-4 py-2 text-[12px] text-muted-foreground">
+          <Loader2 className="size-3 animate-spin" />正在定位历史消息…
+          <Button size="xs" variant="ghost" onClick={clearFocus}>取消定位</Button>
+        </div>
+      )}
+      {earlierLoadError && !focusRequest && (
+        <div role="alert" className="flex items-center gap-2 border-b px-4 py-2 text-[12px] text-muted-foreground">
+          <span>{earlierLoadError}</span>
+          <Button size="xs" variant="outline" disabled={loadingEarlier} onClick={() => {
+            const el = containerRef.current
+            if (el) prependAnchorRef.current = { height: el.scrollHeight, top: el.scrollTop }
+            void loadEarlier().catch(() => { prependAnchorRef.current = undefined })
+          }}>重试加载历史</Button>
+        </div>
+      )}
+
       {/* M52-A：场景工作区宿主（stage 未声明 / 纯列表 → stream 直通，消息流零结构变化） */}
       <SceneStage group={sceneGroup} participants={participants}>
         {/* 消息流（虚拟列表）：aria-live 播报新消息（流式由 MessageItem 层 150ms 节流）；
             min-h 保底：计划卡等底部固定区内容超高时不得把消息区压没（避免与卡头视觉挤压）。
             M52-D：overflow-anchor:none——波次分隔行中途插入 / 实测行高回填会触发浏览器滚动锚定
             （静默改写 scrollTop 并丢出瞬时大 gap 的 scroll 事件），与贴底补正互斥；滚动位交由派发层接管 */}
-        <div className="relative min-h-[180px] flex-1">
+        <div className="relative flex min-h-[180px] flex-1 flex-col">
+        {historyMode && (
+          <div className="flex shrink-0 items-center justify-center gap-2 border-b bg-amber-500/10 px-3 py-1 text-[11px] text-amber-800">
+            正在查看历史消息
+            <button
+              type="button"
+              className="rounded border border-amber-500/40 px-1.5 py-0.5 transition-colors hover:bg-amber-500/10"
+              onClick={() => void useSessionStore.getState().selectSession(currentId)}
+            >
+              回到最新
+            </button>
+          </div>
+        )}
         <div
           ref={containerRef}
           onScroll={onScroll}
           role="log"
           aria-live="polite"
           aria-label="消息流"
-          className="h-full overflow-y-auto py-2 [overflow-anchor:none]"
+          className="min-h-0 flex-1 overflow-y-auto py-2 [overflow-anchor:none]"
         >
-          {!session ? (
+          {messageLoadError ? (
+            <div role="alert" className="flex h-full flex-col items-center justify-center gap-3 px-8 text-center text-[13px]">
+              <p>会话加载失败：{messageLoadError}</p>
+              <Button variant="outline" size="sm" onClick={() => { if (currentId) void openConversation(currentId) }}>重试加载会话</Button>
+            </div>
+          ) : !session ? (
             <div className="flex h-full flex-col items-center justify-center gap-4 px-8 text-center">
               <div className="flex items-end gap-3">
                 {agents.slice(0, 7).map((a, i) => (
@@ -541,10 +650,7 @@ export function ChatArea(): React.JSX.Element {
                 ))}
               </div>
               <div className="text-base font-semibold">Owli Team</div>
-              <Button variant="outline" size="sm" onClick={() => setMainTab('chat')}>
-                <Users className="size-4" />
-                在左侧新建会话开始
-              </Button>
+              <CatalogWelcome />
             </div>
           ) : loading && messageCount === 0 ? (
             <div className="flex h-full items-center justify-center gap-2 text-[13px] text-muted-foreground">
@@ -679,7 +785,9 @@ export function ChatArea(): React.JSX.Element {
               <AdjournPill />
             </>
           )}
-          <BottomFollower containerRef={containerRef} atBottomRef={atBottomRef} pinnedTopRef={pinnedTopRef} />
+          {!historyMode && (
+            <BottomFollower containerRef={containerRef} atBottomRef={atBottomRef} pinnedTopRef={pinnedTopRef} />
+          )}
 
           {/* M85 重设计（2026-09-25）：仅「有未读新消息」时浮现纯图标钮（无文字、不再常显）——
               上滑纯浏览历史时保持界面安静；未读数以小角标承载（aria/title 保留完整语义） */}
@@ -724,8 +832,23 @@ export function ChatArea(): React.JSX.Element {
           只读共享（viewer）：可查看消息与交付件，但不能发送 / 停止 / 审批
         </div>
       )}
+      {/* 下线资产（历史兼容）：历史消息可读，不再接受发言 / 派发 */}
+      {retiredLocked && (
+        <div
+          role="status"
+          className="flex shrink-0 items-center gap-2 border-t border-amber-200/70 bg-amber-50 px-4 py-1.5 text-[12px] text-amber-800"
+        >
+          <Archive className="size-3.5 shrink-0" />
+          包含已下线角色（{retiredScenes.join('、')}）：仅可查看历史内容，不能继续发送或派发；请新建会话重新组队
+        </div>
+      )}
       {/* （波次回放条已删除——2026-09-25 产品决策：用户确认不需要此入口，输入区更简洁） */}
-      <Composer onReady={(fn) => (insertRef.current = fn)} locked={isViewer} />
+      <PendingMessages sessionId={currentId} />
+      <Composer
+        onReady={(fn) => (insertRef.current = fn)}
+        locked={isViewer || retiredLocked}
+        lockedHint={retiredLocked ? '会话包含已下线角色：仅可查看历史内容' : undefined}
+      />
       <ShareDialog sessionId={session?.id} open={shareOpen} onOpenChange={setShareOpen} />
       {/* M79-F：群 / 私聊成员弹窗（名单 + 邀请好友 + 群主移出） */}
       <ChatMembersDialog session={session} open={membersOpen} onOpenChange={setMembersOpen} />

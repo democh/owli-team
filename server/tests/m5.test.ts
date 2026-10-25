@@ -208,6 +208,8 @@ describe('M5：并行与串行（引擎级）', () => {
     registerTimed('slow_read_b', true, 120)
     registerTimed('slow_write_a', false, 60)
     registerTimed('slow_write_b', false, 60)
+    const pm = env.prompts.get('pm')!
+    pm.tools = [...(pm.tools ?? []), 'slow_read_a', 'slow_read_b', 'slow_write_a', 'slow_write_b']
 
     const calls: LlmToolCall[] = [
       { id: 'c1', name: 'slow_read_a', arguments: '{}' },

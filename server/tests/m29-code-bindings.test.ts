@@ -141,7 +141,7 @@ describe('M29：技能层与场景协议', () => {
     for (const keyword of ['先读后写', '最小 diff', '共享文件所有权', '验证闭环', '缺陷回交', '提交与发布纪律', '依赖与配置纪律']) {
       expect(protocol, `development 协议缺少「${keyword}」`).toContain(keyword)
     }
-    // 新增场景协议后回归：sales 也持有专属协议（报价纪律在场）
-    expect(lib.groupProtocol('sales')).toContain('报价纪律')
+    // 跨场景协议保持独立：市场增长保留实验纪律。
+    expect(lib.groupProtocol('marketing')).toContain('实验纪律')
   })
 })

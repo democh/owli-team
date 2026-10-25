@@ -52,14 +52,16 @@
 
 | 方法 | 路径 | 说明 | 关键返回 |
 | --- | --- | --- | --- |
-| GET | `/api/sessions` | 会话列表（含消息数 / 最后摘要） | `{ sessions: Session[] }` |
+| GET | `/api/sessions` | 会话列表（含消息数 / 最后摘要 / 本人未读与 `prefs`；归档仍返回，由客户端视图过滤） | `{ sessions: Session[] }`（`prefs: { pinned, muted, archived, markedUnread }`；无记录 = 均关；`markedUnread` 时 `unreadCount ≥ 1`） |
 | POST | `/api/sessions` | 新建会话（M46：`participantIds` 空数组 → 填充全局唯一调度官；资产缺失 `400`） | `201 { session }` |
 | GET | `/api/sessions/:id` | 会话详情（含全部消息与最近 Run 快照；`?limit=`/`?before=` 游标分页——最近 N 条 / 该 seq 之前的更早一页，limit ≤ 500，缺省全量） | `{ session, messages, latestRun, project, memberReads, hasMore?, totalCount?, memberStats? }` |
+| POST | `/api/sessions/:id/transfer` | **IM 群主转让**（body `{ userId }`；仅 owner；目标须为现有活跃共享成员；direct `400`）：事务内改 `owner_id`、旧 owner 降为 editor、新 owner 移出成员表；留系统事件 / 审计 / `share-changed` / 新 owner 收件箱 | `{ session }` |
+| PATCH | `/api/sessions/:id/prefs` | **IM**：本人会话偏好（`{ pinned?, muted?, archived?, markedUnread? }`，至少一个；读级成员即可，仅影响本人；多端 `notify:session-prefs`） | `{ prefs: { pinned, muted, archived, markedUnread } }` |
 | PATCH | `/api/sessions/:id` | 重命名 / 切换「规划先行」`planFirst`（M24）/ 「串行执行」`serial`（M46-2，缺省开启）/ 「接力控制」`relay`（M86：`auto` / `manual` / `null` 恢复推导）/ 「自动编排」`autonomy`（M88：`auto` / `always-plan` / `never-plan` / `null` 恢复 auto；兼容 `planFirst`）/ **空间归属 `spaceId`**（P1；与改名同口径仅属主，校验存在性 + `notify:session-meta` 广播） | `{ session }` |
 | DELETE | `/api/sessions/:id?deleteWorkspace=&keepWorktree=` | 删除会话；默认连工作区删除，worktree 会话默认丢弃（需保留传 `keepWorktree=true`） | `{ ok, deleteWorkspace, worktreeDiscarded }` |
 | POST | `/api/sessions/:id/resume` | 断点继续（以 `interrupted` 快照启动新 Run） | `201 { runId, queue, queued }` |
 | GET | `/api/sessions/:id/tasks` | 任务清单（`write_todos` 落库，跨 Run 继承） | `{ tasks: TaskItem[] }` |
-| GET | `/api/search?q=&limit=&sessionId=` | 跨会话全文检索（FTS5 trigram + LIKE 回退；limit 默认 50、上限 100） | `{ results: [{ sessionId, sessionTitle, messageId, snippet, ... }] }` |
+| GET | `/api/search?q=&limit=&sessionId=&mine=&from=&to=&hasAttachment=` | 跨会话全文检索（FTS5 trigram + LIKE 回退；limit 默认 50、上限 100；**IM**：排除本人 `scope=self` 隐藏与已撤回消息；共享会话标题可见；`mine=1` 仅本人发送、`from/to` ISO 闭区间、`hasAttachment=1` 含附件；筛选在 SQL 层与可见性同层执行） | `{ results: [{ sessionId, sessionTitle, messageId, content, seq, createdAt, role, agentId?, memberKey?, userId?, senderName? }] }` |
 | POST | `/api/sessions/:id/members` | 添加成员（运行中允许；去重 + 校验角色存在；body `{ agentIds, souls? }`；M77：`agentIds` 可为成员键（分身 = `agentId~soulId`）；M46：与调度官 `invite_members` 共享内核，事件条措辞按发起者区分——用户「邀请了」/ 调度官「召集了」） | `201 { session, message }` （message = system 成员事件条） |
 | DELETE | `/api/sessions/:id/members/:memberKey` | 移除成员实例（M77：按成员键；运行中拒绝：串行 = 当前发言人 / 并行波 = 波内进行中成员；队列中的就地移出并广播 `queue:updated`；至少保留 1 名） | `{ session, message }` |
 | PATCH | `/api/sessions/:id/members/:memberKey` | 切换成员灵魂（body `{ soul: string \| null }`；经典实例：`null` = 恢复默认；分身实例：**键替换**（`luna~zen` → `luna~scholar`，运行中同步队列/便条），`null` → `400`；重复设置 / 同角其他实例已占用该灵魂 → `400`） | `{ session, message }` |
@@ -94,10 +96,11 @@
 
 | 方法 | 路径 | 说明 | 关键返回 |
 | --- | --- | --- | --- |
-| POST | `/api/sessions/:id/messages` | **双形态**：启动新 Run 或插话（见下） | `201 { message, runId, queue }` 或 `201 { message, injected: true, position, runId }` |
+| POST | `/api/sessions/:id/messages` | **双形态**：启动新 Run 或插话（见下）；`clientMessageId` 幂等接收（ADR 0228）；`replyToMessageId` 引用回复（ADR 0229） | `201 { message, runId, queue }` / `201 { message, injected: true, position, runId }` / `201 { message, dispatchError }`（消息已接收、AI 未启动）/ `200 { message, deduplicated: true, ... }`（重放） |
 | POST | `/api/sessions/:id/dispatch` | **M86 手动派发下一棒**（body `{ agentId, note? }`；目标须在场，支持角色 id / 成员键；非 viewer）：活跃 Run → 插到队首（不打断当前发言人）；空闲 → 新起 Run（队列 = `[agentId]`，**跳过平台路由**）；落系统事件条并广播 `queue:updated` | `{ runId, queue, queued }` |
-| PATCH | `/api/sessions/:id/messages/:messageId` | 编辑用户消息内容（运行中 `400`） | `{ message }` |
-| DELETE | `/api/sessions/:id/messages/:messageId` | 删除用户消息（运行中 `400` ） | `{ ok }` |
+| PATCH | `/api/sessions/:id/messages/:messageId` | 编辑用户消息内容（仅作者；运行中 / 已撤回 `400`；写 `editedAt` 并广播「已编辑」） | `{ message }` |
+| POST | `/api/sessions/:id/messages/:messageId/recall` | **IM 撤回**：仅作者、2 分钟内、非运行中；清空正文 / 附件并保留占位；引用快照投影 `recalled`；幂等 | `{ message }` |
+| DELETE | `/api/sessions/:id/messages/:messageId` | 删除消息（运行中 `400`）；`?scope=self` = 仅自己删除（含 viewer；个人视图隐藏，用户主题广播）；缺省 = 所有人生效（作者 / 属主） | `{ ok, scope? }` |
 | PUT | `/api/sessions/:id/messages/:messageId/reactions` | **M80-B**：挂表情回应（`{ emoji }`；幂等 toggle；写级成员，viewer `403`；兼容模式拒绝；同消息同用户 ≤8 种，超限 `429`；`isEmojiLike` 校验） | `{ reactions }` |
 | DELETE | `/api/sessions/:id/messages/:messageId/reactions?emoji=` | 摘除本人回应（仅本人；query 传参） | `{ reactions }` |
 | POST | `/api/sessions/:id/fork` | 从某条消息 fork 新会话（复制截至该条的历史） | `201 { session, copied }` |
@@ -108,6 +111,10 @@
 
 - 无活跃 Run → 启动新 Run：`{ "content": "帮我设计登录功能" }` → `201 { message, runId, queue }`，内容经 `GET /api/runs/:runId/stream` 消费；
 - 有活跃 Run → 插话：写入当前 Run 的待注入队列，在下一回合边界注入上下文，并 emit `user:message` 事件。
+- **幂等接收（ADR 0228）**：body 可附 `clientMessageId`（`[A-Za-z0-9_-]{1,100}`）。同一会话 + 作者 + 标识只落一条消息：摘要相同返回原消息与 `deduplicated: true`（含首次的运行结果）；摘要不同 `409`；消息已接收但随后被删除 `410`（重试不复活）。消息、接收凭据与会话消息序号同事务写入；凭据不随消息删除而消失。
+- **发送与 AI 解耦**：消息落库后引擎启动失败仍返回 `201`，附 `dispatchError`（客户端提示「消息已发送，AI 未完成启动」，不得据此重发）。
+- **消息生命周期（ADR 0230）**：消息随行 `editedAt` / `recalledAt`；撤回与仅自己删除的边界见上表。会话详情默认排除本人 `scope=self` 隐藏的消息（`totalCount` 同步），未读与列表最后预览同样排除；已撤回消息不计未读。
+- **引用回复（ADR 0229）**：body 可附 `replyToMessageId`。服务端在本会话解析并在发送时固化快照 `message.replyTo: { messageId, authorName?, excerpt, deleted? }`（摘要 ≤120 字，不信任客户端）；原消息后续编辑不改写引用，删除后仍保留摘要并标 `deleted: true`；目标不存在（已被删 / 越界）落墓碑快照后仍允许发送。幂等摘要包含引用目标。
 - 消息级范式（M24）：body 可附 `{ "mode": "plan | execute | review" }`（Composer 三态 chip，仅对**下一条消息**生效、发送后自动复位；缺省沿用会话 `planFirst` 或 `execute`），随用户消息持久化并在 `turn:start` / `wave:start` 携带。
 - **接力控制（M86，ADR 0223）**：`Session.relay` 控制「agent 之间是否自动接棒」。缺省按会话形态推导 —— `direct` / `group` 与**单成员编制**为 `manual`，零编制（待组队）与多成员 team 为 `auto`；`PATCH { "relay": "auto" | "manual" | null }` 显式覆盖。`manual` 下 `handoff` 工具只登记「建议下一棒」（回执说明不自动接棒，落 `handoff:suggested` 审计），不自动召集、不入队，Run 收尾交还用户；接棒只经 `POST /sessions/:id/dispatch` 由用户发起。已批准计划的步骤派发不受影响。
 - **自动编排（M88，ADR 0226）**：未显式选择范式时，服务端按「意图判定」决定本回合是否先出计划 / 末段是否评审：
@@ -569,7 +576,7 @@ Agent 侧对应四工具 `canvas_read` / `canvas_write` / `media_generate` / `me
 **行为变化（P2）**：
 
 - `GET /api/sessions` 返回「本人 + 共享给我」，每项附 `role`（`owner` / `editor` / `viewer`）；
-- `GET /api/search` 检索范围同步扩为「本人 + 共享」（跨用户仍不可见）；
+- `GET /api/search` 检索范围同步扩为「本人 + 共享」（跨用户仍不可见）；结果排除本人「仅自己删除」与已撤回消息（ADR 0233）；
 - 会话子路由写操作（消息 / 插话 / 停止 / 审批 / 成员 / 画布 / 上传……）对 `viewer` 一律 `403`（`POST /sessions/:id/leave` 例外）；`DELETE /api/sessions/:id` 与共享管理仅属主；
 - 共享会话（≥2 人类）上下文装配中人类消息改署昵称（`【Alice】…`），独占会话 / 兼容模式沿用 `【用户】`；`GET /api/sessions/:id` 附 `humanNames`（userId → 昵称；客户端消息气泡署名，兼容模式为空）；
 - 变更广播 `notify:share-changed`（payload `{ sessionId, userId, action, role? }`）+ 审计 `session.share-*`；
@@ -657,9 +664,9 @@ per-user 私人素材库（跨会话复用上传 / 收藏的图片 / 视频 / �
 
 | 方法 | 路径 | 权限 | 说明 |
 | --- | --- | --- | --- |
-| GET | `/api/inbox?since=&limit=` | 本人 | 收件箱增量（`{ items, cursor, unreadCount }`；actorName 随行投影） |
+| GET | `/api/inbox?since=&limit=` | 本人 | 收件箱增量（`{ items, cursor, nextCursor, hasMore, unreadCount }`；`cursor` 只推进到本页实收末条，积压超一页按 `hasMore` 继续拉取；actorName 随行投影） |
 | POST | `/api/inbox/read` | 本人 | 单项 / 整段已读（`{ ids? }` 或 `{ upTo }`） |
-| POST | `/api/sessions/:id/read` | 读级（viewer 亦可） | 会话已读上报（`{ seq }`；单调推进 + 本人其他端 `notify:read-state` 广播；**M80-C**：开关开 → 会话主题广播 `notify:read-receipt`，关闭者不广播且自身空投影——对等双向） |
+| POST | `/api/sessions/:id/read` | 读级（viewer 亦可） | 会话已读上报（`{ seq }`；水位夹到会话最大 `seq`，非法值忽略；仅推进不回退；返回生效值 `lastReadSeq`；生效后自动解除 `markedUnread` 并广播 `notify:session-prefs`；本人其他端 `notify:read-state` 广播；**M80-C**：开关开 → 会话主题广播 `notify:read-receipt`，关闭者不广播且自身空投影——对等双向） |
 | GET | `/api/ws/stats` | admin | 实时通道观测（连接 / 活跃用户 / 队列水位 / evictions / resyncs） |
 | GET | `/api/me`（等价 `/api/auth/me`）· PATCH `/api/auth/profile` | 本人 | 画像维护（`displayName / headline / bio / avatar`；null = 清除） |
 | GET | `/api/users/search?q=` | 成员 | 用户搜索（隐私开关：searchable=false 仅精确 username；排除自己 / 停用 / 拉黑对；30 次/分） |
@@ -677,7 +684,13 @@ per-user 私人素材库（跨会话复用上传 / 收藏的图片 / 视频 / �
 | GET | `/api/avatars/:file` | 登录用户 | 头像文件读取（文件名白名单防穿越；`immutable` 长缓存；缺失 404 → 客户端回退首字） |
 | `notify:presence` | — | 好友 ∪ 同会话成员 | 收件人 = 好友 ∪ 主体所属会话的属主与全部人类成员（`createPresenceRecipients`；去重 / 排除本人 / 无关联不可见；ADR 0197） |
 
-WS 新帧（`/ws`）：`notify:inbox` / `notify:read-state` / `notify:presence` / `notify:friends-changed` / `notify:session-meta` / `notify:read-receipt`（M80-C）/ `notify:reaction`（M80-B）/ `resync` / `error(code=conn_evicted|acl-changed)`；客户端 `read` / `inbox-ack`。详见 ADR 0188–0198、0206–0208。
+WS 新帧（`/ws`）：`notify:typing`（IM：临时 typing 帧，`ephemeral=true` / `seq=0`，不落重放、不推进游标；payload `{ userId, name? }`）/ `notify:session-prefs`（IM：置顶 / 免打扰多端同步；用户主题）/ `notify:inbox` / `notify:read-state` / `notify:presence` / `notify:friends-changed` / `notify:session-meta` / `notify:read-receipt`（M80-C）/ `notify:reaction`（M80-B）/ `resync` / `error(code=conn_evicted|acl-changed)`；客户端 `read` / `inbox-ack` / `typing`。详见 ADR 0188–0198、0206–0208、0232。
+
+**正在输入（ADR 0232）**：客户端帧 `{ type: 'typing', sessionId }`；服务端按会话 ACL 校验，1.5s 节流，向同会话其他连接发 `notify:typing`（排除发送者连接）。临时帧不写重放缓冲、不参与游标；客户端 3s 节流、6s 无新帧过期，收到该用户消息立即清除。
+
+**消息删除帧（ADR 0230）**：`notify:message-deleted` 会话主题帧（硬删除）payload `{ messageId }`；仅自己删除走用户主题帧，payload `{ sessionId, messageId, scope: 'self' }`（客户端按 `sessionId` 定位当前会话）。
+
+**通知代际（ADR 0228）**：`welcome`、通知帧与 `GET /api/notifications` 响应携带 `epoch`（进程级）。客户端发现代际变化即清空会话游标并重订阅；订阅游标超出/早于服务端重放缓冲、或轮询结果 `truncated=true` 时服务端/客户端触发权威对账（收件箱 + 会话列表 + 当前会话消息）。
 
 ## 25. 空间（Space，工作生活一体 P1–P3）
 

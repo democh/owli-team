@@ -8,7 +8,7 @@
  * 内核组件本身的行为由上游库保证，这里验证块级装配与数据装配。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { Markdown } from '../src/components/chat/Markdown'
 import { gameStatsChips } from '../src/components/game/GameResultView'
@@ -289,7 +289,7 @@ describe('```kline 块（Markdown 路由 + 内核装配）', () => {
     await user.click(screen.getByTitle('全屏查看'))
     expect(screen.getByRole('dialog')).toBeInTheDocument()
     await waitFor(() => expect(vi.mocked(createKlineChart)).toHaveBeenCalledTimes(2))
-    fireEvent.keyDown(window, { key: 'Escape' })
+    await user.keyboard('{Escape}')
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
   })
 
@@ -400,7 +400,7 @@ describe('```game 块（Markdown 路由 + 结果视图）', () => {
     await screen.findByText('茅台多空对峙推演 · 静态矩阵博弈')
     await user.click(screen.getByTitle('全屏查看'))
     expect(screen.getByRole('dialog')).toBeInTheDocument()
-    fireEvent.keyDown(window, { key: 'Escape' })
+    await user.keyboard('{Escape}')
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
   })
 

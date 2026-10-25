@@ -20,3 +20,20 @@ stage:
   layout: dock
   panel: console
 
+category: business
+catalog:
+  keywords:
+    - 融资资本
+    - 打磨 BP
+    - 投资人问答
+    - 更新进展
+    - 条款估值
+  inputs:
+    - 商业计划
+    - 财务指标
+    - 融资阶段
+  outputs:
+    - 融资材料
+    - 投资人简报
+    - 数据室清单
+  boundary: 不保证融资成功，不替代法律与财务尽调。

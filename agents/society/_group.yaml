@@ -22,3 +22,20 @@ agenda:
 stage:
   layout: roundtable
   panel: pool
+category: discussion
+catalog:
+  keywords:
+    - 议题圆桌
+    - 组织议题研讨
+    - 核查一组说法
+    - 梳理各方立场
+    - 对比政策做法
+  inputs:
+    - 讨论议题
+    - 事实资料
+    - 参与视角与轮数
+  outputs:
+    - 事实基线
+    - 立场图谱
+    - 观察报告
+  boundary: 区分事实与价值判断，不把模拟立场当作群体真实意见。

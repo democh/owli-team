@@ -643,7 +643,8 @@ describe('Composer 范式选择器（M24）', () => {
     await user.type(box, '创建登录模块')
     await user.keyboard('{Enter}')
     await waitFor(() => expect(requestCount('/api/sessions/s1/messages', 'POST')).toBe(1))
-    expect(requestBodies('/api/sessions/s1/messages', 'POST')[0]).toEqual({ content: '创建登录模块', mode: 'plan' })
+    expect(requestBodies('/api/sessions/s1/messages', 'POST')[0]).toMatchObject({ content: '创建登录模块', mode: 'plan' })
+        expect(requestBodies('/api/sessions/s1/messages', 'POST')[0].clientMessageId).toBeTruthy()
 
     // 发送后复位：清空输入、提示消失
     await waitFor(() => expect(box).toHaveValue(''))

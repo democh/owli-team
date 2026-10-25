@@ -1173,4 +1173,85 @@ ALTER TABLE sessions ADD COLUMN autonomy TEXT;
 ALTER TABLE messages ADD COLUMN mode_source TEXT;
 `,
   },
+  {
+    version: 38,
+    name: 'im_reliable_delivery',
+    sql: `
+-- 消息序号独立于存活消息，删除末条并重启后也不复用序号。
+ALTER TABLE sessions ADD COLUMN message_seq INTEGER NOT NULL DEFAULT 0;
+UPDATE sessions SET message_seq = COALESCE((SELECT MAX(seq) FROM messages WHERE session_id = sessions.id), 0);
+ALTER TABLE messages ADD COLUMN client_message_id TEXT;
+-- 接收凭据与消息原子写入；删除消息仍保留凭据，重试不会复活已删除内容。
+CREATE TABLE IF NOT EXISTS message_submissions (
+  session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+  user_id TEXT NOT NULL,
+  client_message_id TEXT NOT NULL,
+  request_hash TEXT NOT NULL,
+  message_id TEXT NOT NULL,
+  result TEXT,
+  PRIMARY KEY (session_id, user_id, client_message_id)
+);
+-- 收件箱清理不能回退同步水位。
+CREATE TABLE IF NOT EXISTS inbox_cursors (
+  user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  seq INTEGER NOT NULL DEFAULT 0
+);
+INSERT INTO inbox_cursors (user_id, seq) SELECT user_id, MAX(seq) FROM user_inbox GROUP BY user_id;
+`,
+  },
+  {
+    version: 39,
+    name: 'run_execution_snapshots',
+    sql: `
+-- 版本化执行快照：计划派发、意图与循环守卫随 Run 恢复；触发身份独立于会话属主。
+ALTER TABLE runs ADD COLUMN trigger_user_id TEXT;
+ALTER TABLE runs ADD COLUMN execution_state TEXT;
+`,
+  },
+  {
+    version: 40,
+    name: 'im_reply_and_session_prefs',
+    sql: `
+-- 引用回复快照（作者 / 摘要固化，原消息删除后仍可展示）
+ALTER TABLE messages ADD COLUMN reply_to TEXT;
+-- 会话个人偏好（仅本人可见；不参与 ACL）
+CREATE TABLE IF NOT EXISTS session_prefs (
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+  pinned INTEGER NOT NULL DEFAULT 0,
+  muted INTEGER NOT NULL DEFAULT 0,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (user_id, session_id)
+);
+CREATE INDEX IF NOT EXISTS idx_session_prefs_user ON session_prefs(user_id, pinned);
+`,
+  },
+  {
+    version: 41,
+    name: 'im_message_lifecycle',
+    sql: `
+-- 编辑 / 撤回：撤回清空正文与附件但保留行（锚点 / 引用墓碑 / 审计）。
+ALTER TABLE messages ADD COLUMN edited_at TEXT;
+ALTER TABLE messages ADD COLUMN recalled_at TEXT;
+ALTER TABLE messages ADD COLUMN recalled_by TEXT;
+-- 仅自己删除：个人视图隐藏，不影响其他成员与消息行。
+CREATE TABLE IF NOT EXISTS message_hides (
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+  session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+  hidden_at TEXT NOT NULL,
+  PRIMARY KEY (user_id, message_id)
+);
+CREATE INDEX IF NOT EXISTS idx_message_hides_session ON message_hides(session_id, user_id);
+`,
+  },
+  {
+    version: 42,
+    name: 'session_prefs_archive_unread',
+    sql: `
+-- IM：归档与手动标记未读（个人偏好，不参与 ACL）。
+ALTER TABLE session_prefs ADD COLUMN archived INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE session_prefs ADD COLUMN marked_unread INTEGER NOT NULL DEFAULT 0;
+`,
+  },
 ]

@@ -1,6 +1,6 @@
 id: blank
-name: 空场景
-description: 不引入任何角色，只与一个通用助手直聊——单 Agent 模式，独立完成各类任务
+name: 通用助手
+description: 一位通用助手独立完成文档、调研和数据整理任务；与零成员的自动组队不同
 icon: message-circle
 theme: ["#64748b", "#94a3b8"]
 objective: 由通用助手独立完成用户需求
@@ -16,3 +16,20 @@ agenda:
     prompt: 把下面这组数据整理成表格并做要点分析：
   - label: 直接干活
     prompt: 帮我完成这个任务：
+category: other
+catalog:
+  keywords:
+    - 空场景
+    - 起草文档
+    - 调研对比
+    - 整理数据
+    - 直接干活
+  inputs:
+    - 任务目标
+    - 已有素材
+    - 输出格式
+  outputs:
+    - 文档草稿
+    - 调研对比
+    - 数据整理
+  boundary: 一位助手独立完成；需要多角色协作时请选择场景或自动组队。

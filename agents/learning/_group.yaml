@@ -20,3 +20,20 @@ stage:
   layout: dock
   panel: coach
 
+category: learning
+catalog:
+  keywords:
+    - 学习成长
+    - 学习路径
+    - 每日练习
+    - 输出检验
+    - 书单推荐
+  inputs:
+    - 学习目标
+    - 当前水平
+    - 时间与材料
+  outputs:
+    - 学习路线
+    - 练习反馈
+    - 分阶段书单
+  boundary: 提供学习辅助，不替代考试诚信要求与真实练习。

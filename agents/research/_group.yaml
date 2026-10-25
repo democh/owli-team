@@ -22,3 +22,20 @@ stage:
   layout: roundtable
   panel: pool
 
+category: learning
+catalog:
+  keywords:
+    - 深度研究
+    - 快速调研
+    - 竞品对比
+    - 事实核查
+    - 深度专题
+  inputs:
+    - 研究问题
+    - 资料范围
+    - 证据与时效要求
+  outputs:
+    - 研究报告
+    - 证据清单
+    - 结论与局限
+  boundary: 面向问题研究与证据综合，不代替学术研究设计或投稿；无法核实的资料明确标注。

@@ -4,7 +4,7 @@
  * - AgentEditor：model 候选来自已启用服务的模型清单（datalist）→ 保存 PUT model。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { ConnectionDefinition, ConsoleAgentDetail } from '@multi-agent/shared'
 import { AgentEditor } from '../src/components/console/AgentEditor'
@@ -71,7 +71,15 @@ const AGENT_DETAIL: ConsoleAgentDetail = {
 beforeEach(() => {
   fetchMock.mockReset()
   vi.stubGlobal('fetch', fetchMock)
-  useAgentStore.setState({ agents: [], groups: [], presets: [], skills: [], loaded: true, loading: false, statuses: {} })
+  useAgentStore.setState({
+    agents: [],
+    groups: [],
+    presets: [],
+    skills: [],
+    loaded: true,
+    loading: false,
+    statuses: {},
+  })
   useConnectionsStore.setState({
     connections: [],
     bindings: [],
@@ -86,16 +94,71 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  vi.restoreAllMocks()
   vi.unstubAllGlobals()
 })
 
 describe('多 Provider：ModelProvidersSection', () => {
+  it('连续切换 A → B 编辑时，字段和保存目标均属于 B', async () => {
+    const a = makeLlmConnection({ id: 'a', name: 'A' })
+    const b = makeLlmConnection({
+      id: 'b',
+      name: 'B',
+      config: { baseUrl: 'https://b.example/v1', models: ['model-b'] },
+    })
+    fetchMock.mockImplementation((url: string, init?: RequestInit) =>
+      Promise.resolve(
+        url === '/api/connections/b' && init?.method === 'PUT'
+          ? jsonResponse({ connection: b })
+          : jsonResponse({ connections: [a, b] }),
+      ),
+    )
+    render(<ModelProvidersSection />)
+    await screen.findByText('A')
+    fireEvent.click(screen.getAllByTitle('编辑')[0])
+    expect(screen.getByLabelText(/^名称/)).toHaveValue('A')
+    fireEvent.click(screen.getAllByTitle('编辑')[1])
+    expect(screen.getByLabelText(/^名称/)).toHaveValue('B')
+    expect(screen.getByLabelText(/接入地址/)).toHaveValue('https://b.example/v1')
+    fireEvent.click(screen.getByRole('button', { name: '保存' }))
+    await waitFor(() => {
+      const call = fetchMock.mock.calls.find(
+        ([url, init]) => url === '/api/connections/b' && init?.method === 'PUT',
+      )
+      expect(call).toBeTruthy()
+      expect(JSON.parse(String(call![1].body)).config).toEqual(b.config)
+    })
+  })
+
+  it('取消放弃修改时保留原编辑对象；确认后才切换', async () => {
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
+    fetchMock.mockImplementation(() =>
+      Promise.resolve(
+        jsonResponse({
+          connections: [makeLlmConnection({ id: 'a', name: 'A' }), makeLlmConnection({ id: 'b', name: 'B' })],
+        }),
+      ),
+    )
+    render(<ModelProvidersSection />)
+    await screen.findByText('A')
+    fireEvent.click(screen.getAllByTitle('编辑')[0])
+    fireEvent.change(screen.getByLabelText(/^名称/), { target: { value: 'A 的草稿' } })
+    fireEvent.click(screen.getAllByTitle('编辑')[1])
+    expect(confirm).toHaveBeenCalledTimes(1)
+    expect(screen.getByLabelText(/^名称/)).toHaveValue('A 的草稿')
+    confirm.mockReturnValue(true)
+    fireEvent.click(screen.getAllByTitle('编辑')[1])
+    expect(screen.getByLabelText(/^名称/)).toHaveValue('B')
+  })
+
   it('空态说明系统默认；新建保存 POST llm 连接（config + secret）', async () => {
     const calls: Array<{ url: string; init?: RequestInit }> = []
     fetchMock.mockImplementation((url: string, init?: RequestInit) => {
       calls.push({ url, init })
       if (url === '/api/connections' && init?.method === 'POST')
-        return Promise.resolve(jsonResponse({ connection: makeLlmConnection({ id: 'conn_new', name: '我的网关' }) }))
+        return Promise.resolve(
+          jsonResponse({ connection: makeLlmConnection({ id: 'conn_new', name: '我的网关' }) }),
+        )
       if (url === '/api/connections') return Promise.resolve(jsonResponse({ connections: [] }))
       return Promise.resolve(jsonResponse({}, 404))
     })
@@ -116,7 +179,10 @@ describe('多 Provider：ModelProvidersSection', () => {
       const body = JSON.parse(String(post!.init?.body)) as Record<string, unknown>
       expect(body.kind).toBe('llm')
       expect(body.name).toBe('我的网关')
-      expect(body.config).toEqual({ baseUrl: 'https://gw.example.com/v1', models: ['qwen-max', 'qwen-turbo'] })
+      expect(body.config).toEqual({
+        baseUrl: 'https://gw.example.com/v1',
+        models: ['qwen-max', 'qwen-turbo'],
+      })
       expect(body.secret).toEqual({ apiKey: 'sk-mine-12345678' })
     })
   })
@@ -153,7 +219,8 @@ describe('多 Provider：AgentEditor 模型名', () => {
       if (url === '/api/console/agents/pm' && init?.method === 'PUT')
         return Promise.resolve(jsonResponse({ agent: AGENT_DETAIL }))
       if (url === '/api/console/agents/pm') return Promise.resolve(jsonResponse({ agent: AGENT_DETAIL }))
-      if (url === '/api/connections') return Promise.resolve(jsonResponse({ connections: [makeLlmConnection()] }))
+      if (url === '/api/connections')
+        return Promise.resolve(jsonResponse({ connections: [makeLlmConnection()] }))
       if (url === '/api/console/tools') return Promise.resolve(jsonResponse({ tools: [] }))
       // 写操作收尾 refreshAll（控制台三接口 + 校验 + agent-store 重拉）
       if (url === '/api/console/agents') return Promise.resolve(jsonResponse({ agents: [] }))

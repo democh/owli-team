@@ -38,6 +38,10 @@ export interface InboxRouterDeps {
   readReceiptAllowed?: (userId: string) => boolean
   /** M80-C：已读回执会话主题广播（对等原则——仅开关开启者投影给他人） */
   publishReceipt?: (userId: string, sessionId: string, lastReadSeq: number) => void
+  /** IM：会话个人偏好（读到最新后解除「标记未读」） */
+  sessionPrefs?: import('../store/session-prefs.js').SessionPrefsStore
+  /** IM：偏好变更多端广播 */
+  publishPrefs?: (userId: string, sessionId: string, prefs: import('@multi-agent/shared').SessionPrefs) => void
 }
 
 export function createInboxRouter(deps: InboxRouterDeps): Router {
@@ -50,18 +54,19 @@ export function createInboxRouter(deps: InboxRouterDeps): Router {
     if (!me) return res.json({ items: [], cursor: 0, unreadCount: 0 }) // 兼容模式无收件箱
     const since = Number(req.query.since ?? 0)
     const limit = Number(req.query.limit ?? 200)
-    const items = deps.inbox.listSince(
-      me.id,
-      Number.isFinite(since) && since > 0 ? since : 0,
-      Number.isFinite(limit) && limit > 0 ? Math.min(limit, 500) : 200,
-    )
+    const floor = Number.isSafeInteger(since) && since > 0 ? since : 0
+    const pageSize = Number.isFinite(limit) && limit > 0 ? Math.min(Math.floor(limit), 500) : 200
+    const page = deps.inbox.listSince(me.id, floor, pageSize + 1)
+    const hasMore = page.length > pageSize
+    const items = page.slice(0, pageSize)
+    const nextCursor = items.at(-1)?.seq ?? floor
     const actorIds = [...new Set(items.map((i) => i.actorId).filter((x): x is string => !!x))]
     const names = new Map(actorIds.map((id) => [id, deps.auth.getUser(id)?.displayName]))
     const projected = items.map((i) => {
       const name = i.actorId ? names.get(i.actorId) : undefined
       return name ? { ...i, actorName: name } : i
     })
-    res.json({ items: projected, cursor: deps.inbox.cursor(me.id), unreadCount: deps.inbox.unreadCount(me.id) })
+    res.json({ items: projected, cursor: nextCursor, nextCursor, hasMore, unreadCount: deps.inbox.unreadCount(me.id) })
   })
 
   /** 单项 / 整段已读（幂等） */
@@ -84,6 +89,11 @@ export function createInboxRouter(deps: InboxRouterDeps): Router {
     if (!parsed.success) return res.status(400).json({ error: firstIssue(parsed.error) })
     if (!me) return res.json({ ok: true, lastReadSeq: 0 }) // 兼容模式：无账号（无未读语义）
     const lastReadSeq = deps.reads.set(me.id, session.id, parsed.data.seq)
+    // IM：真实读到消息后解除「标记未读」（标记是提醒，不是永久状态）
+    if (lastReadSeq > 0 && deps.sessionPrefs?.get(me.id, session.id).markedUnread) {
+      const prefs = deps.sessionPrefs.set(me.id, session.id, { markedUnread: false })
+      deps.publishPrefs?.(me.id, session.id, prefs)
+    }
     deps.publishRead?.(me.id, session.id, lastReadSeq)
     // M80-C：REST 降级路径同样广播已读回执（对等原则：关闭开关者不投影）
     if (deps.readReceiptAllowed?.(me.id)) deps.publishReceipt?.(me.id, session.id, lastReadSeq)

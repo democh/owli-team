@@ -4,7 +4,7 @@
  * 覆盖：
  * - 无 @ 消息：PRS 的 intent 块决定首波范式（needsPlan → plan 挂起；modeSource=router 落库）；
  * - 会话策略 never-plan：同一需求直接执行（不挂起）；
- * - 显式「先出计划」：规则判定直接投首棒 plan（不走 PRS，modeSource=rule）；
+ * - 显式「先出计划」：规则判定直接投首棒 plan（不走 PRS，modeSource=user）；
  * - 收口评审门：计划带验收标准 → 作者收口波以 review 范式发言（submit_review）。
  */
 import { describe, expect, it } from 'vitest'
@@ -129,7 +129,7 @@ describe('M88：PRS 意图决定首波范式', () => {
     expect(env.events.listByRun(runId).some((e) => e.type === 'intent:decided')).toBe(false)
   })
 
-  it('显式「先出计划」：规则判定直接投首棒规划（不走 PRS，modeSource=rule）', async () => {
+  it('显式「先出计划」：规则判定直接投首棒规划（不走 PRS，modeSource=user）', async () => {
     const env = makeEnv()
     const session = env.sessions.create(['pm', 'backend'], 'M88 显式规划')
     const { requests } = installScript(env, {
@@ -141,7 +141,7 @@ describe('M88：PRS 意图决定首波范式', () => {
     const plan = await waitFor(() => env.planReviews.pendingOf(session.id)[0], '规划挂起')
     expect(plan.agentId).toBe('pm')
     const stored = env.sessions.messages(session.id).find((m) => m.id === message.id)!
-    expect(stored.modeSource).toBe('rule')
+    expect(stored.modeSource).toBe('user')
     // @ 直达不走 PRS
     expect(requests.some((r) => r.responseFormat)).toBe(false)
     env.planReviews.resolve(plan.id, 'approve')

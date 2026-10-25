@@ -20,6 +20,7 @@ interface ArtifactListResponse {
   artifacts: Artifact[]
   revision?: number
   total?: number
+  hasMore?: boolean
 }
 
 interface ArtifactChangesResponse {
@@ -36,12 +37,15 @@ export interface ArtifactState {
   byPath: Map<string, Artifact>
   loading: boolean
   loaded: boolean
-  ensure: (sessionId: string, opts?: { force?: boolean }) => Promise<void>
+  total: number
+  error: string | null
+  ensure: (sessionId: string, opts?: { force?: boolean; reconcile?: boolean }) => Promise<void>
   refresh: (sessionId: string) => Promise<void>
 }
 
 let inflight: Promise<void> | null = null
 let inflightKey = ''
+let generation = 0
 let mergeTimer: ReturnType<typeof setTimeout> | undefined
 let pendingSession: string | undefined
 
@@ -54,12 +58,15 @@ function applyList(sessionId: string, res: ArtifactListResponse): void {
     byPath: new Map(artifacts.map((a) => [a.path, a])),
     loading: false,
     loaded: true,
+    total: res.total ?? artifacts.length,
+    error: null,
   })
 }
 
 function applyChanges(sessionId: string, res: ArtifactChangesResponse): boolean {
   const state = useArtifactStore.getState()
   if (state.sessionId !== sessionId) return false
+  if (res.revision < state.revision) return true
   // 增量截断（服务端单次上限 500）→ 交由调用方全量重拉
   if (res.upserts.length + res.deletes.length >= 500) return false
   if (res.upserts.length === 0 && res.deletes.length === 0) {
@@ -75,7 +82,13 @@ function applyChanges(sessionId: string, res: ArtifactChangesResponse): boolean 
     if (!known.has(artifact.path)) artifacts.push(artifact)
   }
   artifacts.sort((a, b) => b.mtime - a.mtime)
-  useArtifactStore.setState({ revision: res.revision, byPath, artifacts })
+  useArtifactStore.setState({
+    revision: res.revision,
+    byPath,
+    artifacts,
+    total: artifacts.length,
+    error: null,
+  })
   return true
 }
 
@@ -86,6 +99,8 @@ export const useArtifactStore = create<ArtifactState>((set, get) => ({
   byPath: new Map(),
   loading: false,
   loaded: false,
+  total: 0,
+  error: null,
 
   ensure: async (sessionId, opts = {}) => {
     const state = get()
@@ -97,22 +112,54 @@ export const useArtifactStore = create<ArtifactState>((set, get) => ({
         byPath: new Map(),
         loaded: false,
         loading: true,
+        total: 0,
+        error: null,
       })
     } else if (state.loaded && !opts.force) {
       return
     } else if (!state.loading) {
-      set({ loading: true })
+      set({ loading: true, error: null })
     }
-    const key = `${sessionId}~${opts.force ? 1 : 0}`
-    if (inflight && inflightKey === key) return inflight
+    const key = `${sessionId}~${opts.reconcile ? 1 : 0}`
+    if (inflight && inflightKey === key && state.sessionId === sessionId) return inflight
     inflightKey = key
-    const task = apiGet<ArtifactListResponse>(`/api/sessions/${sessionId}/artifacts`)
-      .then((res) => {
-        if (get().sessionId === sessionId) applyList(sessionId, res)
-      })
-      .catch(() => {
-        // 静默：展示层回退「名称 + 扩展名图标」，不阻塞消息渲染
-        if (get().sessionId === sessionId) set({ loading: false })
+    const version = ++generation
+    const isCurrent = (): boolean => generation === version && get().sessionId === sessionId
+    const task = (async () => {
+      // 顺序取齐分页；版本变化时重新取快照，避免 offset 漂移造成漏项。
+      for (let attempt = 0; attempt < 3; attempt++) {
+        let offset = 0
+        let revision: number | undefined
+        const byPath = new Map<string, Artifact>()
+        while (isCurrent()) {
+          const params = new URLSearchParams()
+          if (offset) {
+            params.set('offset', String(offset))
+            params.set('limit', '500')
+          }
+          if (opts.reconcile && attempt === 0 && offset === 0) params.set('refresh', '1')
+          const query = params.toString()
+          const res = await apiGet<ArtifactListResponse>(
+            `/api/sessions/${sessionId}/artifacts${query ? `?${query}` : ''}`,
+          )
+          if (!isCurrent()) return
+          if (offset > 0 && revision !== res.revision) break
+          revision = res.revision
+          const page = res.artifacts ?? []
+          for (const artifact of page) byPath.set(artifact.path, artifact)
+          offset += page.length
+          if (!(res.hasMore ?? (typeof res.total === 'number' && offset < res.total))) {
+            applyList(sessionId, { ...res, artifacts: [...byPath.values()] })
+            return
+          }
+          if (page.length === 0) throw new Error('交付件分页未返回数据，请重试刷新')
+        }
+        if (!isCurrent()) return
+      }
+      throw new Error('工作区正在持续更新，请稍后重试刷新')
+    })()
+      .catch((err: unknown) => {
+        if (isCurrent()) set({ loading: false, error: err instanceof Error ? err.message : '交付件加载失败' })
       })
       .finally(() => {
         if (inflight === task) {
@@ -126,6 +173,12 @@ export const useArtifactStore = create<ArtifactState>((set, get) => ({
 
   refresh: async (sessionId) => {
     const state = get()
+    if (state.loading && inflight && state.sessionId === sessionId) {
+      await inflight
+      if (get().sessionId === sessionId) return get().refresh(sessionId)
+      return
+    }
+    const version = generation
     if (state.sessionId !== sessionId || !state.loaded || state.revision === 0) {
       return get().ensure(sessionId, { force: true })
     }
@@ -133,11 +186,13 @@ export const useArtifactStore = create<ArtifactState>((set, get) => ({
       const res = await apiGet<ArtifactChangesResponse>(
         `/api/sessions/${sessionId}/artifacts/changes?since=${state.revision}`,
       )
+      if (generation !== version || get().sessionId !== sessionId) return
       if (applyChanges(sessionId, res)) return
     } catch {
       // 增量失败 → 全量兜底
     }
-    return get().ensure(sessionId, { force: true })
+    if (generation === version && get().sessionId === sessionId)
+      return get().ensure(sessionId, { force: true })
   },
 }))
 
@@ -149,7 +204,7 @@ function scheduleRefresh(sessionId: string): void {
     mergeTimer = undefined
     const target = pendingSession
     pendingSession = undefined
-    if (!target) return
+    if (!target || useSessionStore.getState().currentId !== target) return
     void useArtifactStore.getState().refresh(target)
   }, MERGE_WINDOW_MS)
 }
@@ -158,12 +213,18 @@ function scheduleRefresh(sessionId: string): void {
 useSessionStore.subscribe((state, prev) => {
   if (state.currentId !== prev.currentId) {
     if (!state.currentId) {
+      generation++
+      inflight = null
+      inflightKey = ''
       useArtifactStore.setState({
         sessionId: undefined,
         revision: 0,
         artifacts: [],
         byPath: new Map(),
         loaded: false,
+        loading: false,
+        total: 0,
+        error: null,
       })
       return
     }

@@ -79,6 +79,7 @@ export interface NotifyBusTransport {
 }
 
 export class NotifyHub {
+  private readonly epoch = randomUUID()
   private wss?: WebSocketServer
   private clients = new Map<string, Client>()
   private buffers = new Map<string, { seq: number; events: NotifyEnvelope[] }>()
@@ -88,6 +89,8 @@ export class NotifyHub {
   private resyncs = 0
   /** M79-L：跨实例总线传输（memory 模式缺省 = 不挂载，现状零变化） */
   private transport?: NotifyBusTransport
+  /** IM：typing 节流（`clientId:sessionId` → 上次广播时间） */
+  private readonly typingAt = new Map<string, number>()
 
   constructor(
     private readonly cfg: AppConfig,
@@ -192,6 +195,7 @@ export class NotifyHub {
     const envelope: NotifyEnvelope = {
       v: 1,
       id: `n_${randomUUID().slice(0, 8)}`,
+      epoch: this.epoch,
       seq: ++buf.seq,
       type,
       ts: new Date().toISOString(),
@@ -208,6 +212,34 @@ export class NotifyHub {
       if (client.subscriptions.has(sessionId)) this.sendTracked(client, frame)
     }
     return envelope
+  }
+
+  /**
+   * IM：临时帧扇出（不写重放缓冲、不分配 seq、不参与断线补发）。
+   * 用于 typing 这类「过期即无意义」的瞬时状态。
+   */
+  private fanoutEphemeral(
+    sessionId: string,
+    type: NotifyType,
+    payload: Record<string, unknown>,
+    excludeClientId?: string,
+  ): void {
+    const envelope: NotifyEnvelope = {
+      v: 1,
+      id: `n_${randomUUID().slice(0, 8)}`,
+      ephemeral: true,
+      epoch: this.epoch,
+      seq: 0,
+      type,
+      ts: new Date().toISOString(),
+      sessionId,
+      payload,
+    }
+    const frame = JSON.stringify(envelope)
+    for (const client of this.clients.values()) {
+      if (client.id === excludeClientId) continue
+      if (client.subscriptions.has(sessionId)) this.sendTracked(client, frame)
+    }
   }
 
   /** M79-L：远程条目 → 本地投递（不再回写总线，防回环） */
@@ -355,14 +387,15 @@ export class NotifyHub {
     }
     if (sessionId) {
       const buf = this.buffers.get(sessionId)
-      if (!buf) return { notifications: [], cursor: 0 }
+      if (!buf) return { notifications: [], cursor: 0, epoch: this.epoch }
       const floor = floorOf(sessionId)
       const notifications = buf.events.filter((e) => e.seq > floor)
       const minSeq = buf.events[0]?.seq ?? buf.seq
       return {
         notifications,
+        epoch: this.epoch,
         cursor: buf.seq,
-        truncated: floor > 0 && floor < minSeq - 1 ? true : undefined,
+        truncated: floor > buf.seq || (floor > 0 && floor < minSeq - 1) ? true : undefined,
       }
     }
     const all: NotifyEnvelope[] = []
@@ -372,11 +405,11 @@ export class NotifyHub {
       cursor = Math.max(cursor, buf.seq)
       const floor = floorOf(sid)
       const minSeq = buf.events[0]?.seq ?? buf.seq
-      if (floor > 0 && floor < minSeq - 1) truncated = true
+      if (floor > buf.seq || (floor > 0 && floor < minSeq - 1)) truncated = true
       all.push(...buf.events.filter((e) => e.seq > floor))
     }
     all.sort((a, b) => a.ts.localeCompare(b.ts))
-    return { notifications: all, cursor, truncated: truncated || undefined }
+    return { notifications: all, epoch: this.epoch, cursor, truncated: truncated || undefined }
   }
 
   private onConnection(socket: WebSocket, user?: AuthUser): void {
@@ -430,6 +463,9 @@ export class NotifyHub {
             const cursor = msg.cursors?.[id]
             if (typeof cursor === 'number') {
               const buf = this.buffers.get(id)
+              if (!buf || cursor > buf.seq || cursor < (buf.events[0]?.seq ?? 1) - 1) {
+                this.send(client, { type: 'resync', reason: 'replay-gap', sessionId: id })
+              }
               if (buf) {
                 for (const env of buf.events.filter((e) => e.seq > cursor)) {
                   this.sendRaw(client, env)
@@ -442,6 +478,24 @@ export class NotifyHub {
         }
         case 'unsubscribe': {
           for (const id of msg.sessionIds ?? []) client.subscriptions.delete(id)
+          break
+        }
+        case 'typing': {
+          // IM：正在输入（临时帧；本人连接不回显；服务端 1.5s 节流防刷）
+          if (!client.user || typeof msg.sessionId !== 'string') break
+          const authDeps = this.getAuthDeps?.()
+          if (authDeps && !authDeps.access.canAccessSession(client.user, msg.sessionId)) break
+          const throttleKey = `${client.id}:${msg.sessionId}`
+          const now = Date.now()
+          if (now - (this.typingAt.get(throttleKey) ?? 0) < 1500) break
+          this.typingAt.set(throttleKey, now)
+          const name = authDeps?.auth.getUser(client.user.id)?.displayName
+          this.fanoutEphemeral(
+            msg.sessionId,
+            'notify:typing',
+            { userId: client.user.id, ...(name ? { name } : {}) },
+            client.id,
+          )
           break
         }
         case 'read': {
@@ -490,6 +544,7 @@ export class NotifyHub {
       }
     })
     socket.on('close', () => {
+      for (const key of this.typingAt.keys()) if (key.startsWith(`${client.id}:`)) this.typingAt.delete(key)
       this.clients.delete(client.id)
       if (presenceNotified && user) this.presenceHooks?.onDisconnect?.(user.id)
     })
@@ -500,7 +555,7 @@ export class NotifyHub {
         presenceNotified = false
       }
     })
-    this.send(client, { type: 'welcome', heartbeatMs: this.cfg.wsHeartbeatMs })
+    this.send(client, { type: 'welcome', epoch: this.epoch, heartbeatMs: this.cfg.wsHeartbeatMs })
   }
 
   private tick(): void {

@@ -3,7 +3,7 @@
  * 1) 健康生活：打卡走查 → 三轨打卡卡（周网格点格 + streak 徽标）；
  * 2) 学习成长：出题走查 → 每日一练（点选 + 提交回填）；
  * 3) 出行旅行：行程走查 → 行程卡（按天分组 + 今天高亮）；
- * 4) 财富管理：理财走查 → 目标进度环（40% / 53%）+ 记账流水（负数色标）；
+ * 4) 历史流水卡片：目标进度环（40% / 53%）+ 记账流水（负数色标）；
  * 5) 个人管理：签到走查 → 情绪签到（档位 + 提交回填）。
  * 锚点：data-tracks-card / data-track / data-day-dot / data-streak / data-quiz-card /
  * data-quiz-option / data-quiz-submit / data-itinerary-card / data-itinerary-day /
@@ -72,12 +72,12 @@ test('M40 · 出行旅行：行程卡（按天分组 + 今天高亮）', async (
   await expect(todayGroup).toContainText('龙井茶园')
 })
 
-test('M40 · 财富管理：目标进度环 + 记账流水', async ({ page }) => {
+test('M40 · 历史卡片：目标进度环 + 记账流水', async ({ page }) => {
   await openApp(page)
-  await createSession(page, { title: `E2E-M40-理财-${Date.now()}`, scene: '财富管理' })
+  await createSession(page, { title: `E2E-M40-流水-${Date.now()}`, scene: '空场景' })
   const log = page.getByRole('log', { name: '消息流' })
 
-  await sendMessage(page, '@钱程 理财走查：看一下目标进度与本月流水。')
+  await sendMessage(page, '历史流水走查：展示已有目标进度与流水卡片。')
   await expectYourTurn(page)
 
   const goals = log.locator('[data-goals-card]').first()

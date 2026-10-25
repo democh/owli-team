@@ -1,9 +1,10 @@
 import fs from 'node:fs'
+import { createHash } from 'node:crypto'
 import path from 'node:path'
 import { Router } from 'express'
 import type { Request, RequestHandler } from 'express'
 import type { UserAvatar, MessageAttachment } from '@multi-agent/shared'
-import type { Session } from '@multi-agent/shared'
+import type { ChatMessage, MessageReplyRef, Session } from '@multi-agent/shared'
 import { MEMBER_SEP, baseAgentId, memberKeyOf, soulIdOfMember, isEmojiLike } from '@multi-agent/shared'
 import { findSoulCollision, resolveMembers } from '../orchestration/members.js'
 import { buildMentionTokens, parseMentionsWithTokens } from '../orchestration/parser.js'
@@ -23,10 +24,14 @@ import {
   reactionSchema,
   renameSessionSchema,
   resumeSessionSchema,
+  sessionPrefsSchema,
+  transferOwnerSchema,
   sendMessageSchema,
   uploadSchema,
 } from './schemas.js'
 import { classifyKind } from '../store/artifacts.js'
+import type { MessageSearchFilters } from '../store/sessions.js'
+import { DuplicateSubmissionError } from '../store/sessions.js'
 import { inviteMembersCore } from '../tools/roster.js'
 import { applySpaceSoulDefaults } from '../store/spaces.js'
 import { safeFileName } from '../util/attachments.js'
@@ -62,16 +67,18 @@ export function createSessionsRouter(deps: ApiDeps): Router {
     // M57 P2：本人 + 共享给我（逐行标注 role：owner / editor / viewer）；兼容模式 = 全量
     const sessions = uid ? deps.sessions.listForUser(uid) : deps.sessions.list(null)
     // M79-A：服务端权威未读（单查询聚合；多端一致；客户端徽章数据源）
-    let list =
-      uid && deps.reads
-        ? (() => {
-            const counts = deps.reads.unreadFor(
-              uid,
-              sessions.map((s) => s.id),
-            )
-            return sessions.map((s) => ({ ...s, unreadCount: counts.get(s.id) ?? 0 }))
-          })()
-        : sessions
+    const counts = uid && deps.reads ? deps.reads.unreadFor(uid, sessions.map((s) => s.id)) : undefined
+    // IM：个人偏好随行投影（无记录 = 均关；不回写库）
+    const prefMap = uid && deps.sessionPrefs ? deps.sessionPrefs.forSessions(uid, sessions.map((s) => s.id)) : undefined
+    let list = sessions.map((s) => {
+      const prefs = prefMap?.get(s.id) ?? (prefMap ? { pinned: false, muted: false, archived: false, markedUnread: false } : undefined)
+      const count = counts?.get(s.id) ?? 0
+      return {
+        ...s,
+        ...(counts ? { unreadCount: Math.max(count, prefs?.markedUnread ? 1 : 0) } : {}),
+        ...(prefs ? { prefs } : {}),
+      }
+    })
     if (uid) {
       // M79-D：隐藏过滤（无未读才隐藏；新消息自动复现）
       const hidden = deps.hides?.hiddenFor(uid)
@@ -96,10 +103,53 @@ export function createSessionsRouter(deps: ApiDeps): Router {
     if (!q) return res.status(400).json({ error: 'q 必填（搜索关键词）' })
     const limit = Number(req.query.limit)
     const scoped = String(req.query.sessionId ?? '')
-    let results = deps.sessions.search(q, Number.isFinite(limit) && limit > 0 ? Math.min(limit, 100) : 50, ownerIdOf(req))
+    const uid = ownerIdOf(req)
+    const filters: MessageSearchFilters = {}
+    const mine = String(req.query.mine ?? '') === '1' || String(req.query.mine ?? '') === 'true'
+    if (mine && uid) filters.userId = uid
+    const fromRaw = String(req.query.from ?? '').trim()
+    const toRaw = String(req.query.to ?? '').trim()
+    if (fromRaw) {
+      const ts = Date.parse(fromRaw)
+      if (!Number.isFinite(ts)) return res.status(400).json({ error: 'from 时间格式不正确' })
+      filters.from = new Date(ts).toISOString()
+    }
+    if (toRaw) {
+      const ts = Date.parse(toRaw)
+      if (!Number.isFinite(ts)) return res.status(400).json({ error: 'to 时间格式不正确' })
+      filters.to = new Date(ts).toISOString()
+    }
+    if (String(req.query.hasAttachment ?? '') === '1' || String(req.query.hasAttachment ?? '') === 'true') {
+      filters.hasAttachment = true
+    }
+    let results = deps.sessions.search(
+      q,
+      Number.isFinite(limit) && limit > 0 ? Math.min(limit, 100) : 50,
+      uid,
+      filters,
+    )
     if (scoped) results = results.filter((r) => r.sessionId === scoped)
-    const titles = new Map(deps.sessions.list(ownerIdOf(req)).map((s) => [s.id, s.title]))
-    res.json({ results: results.map((r) => ({ ...r, sessionTitle: titles.get(r.sessionId) ?? '' })) })
+    // IM：标题需覆盖「共享给我」的会话（list 只看本人所有，会把共享会话标题置空）
+    const titles = new Map(
+      (uid ? deps.sessions.listForUser(uid) : deps.sessions.list(null)).map((s) => [s.id, s.title]),
+    )
+    const agentNames = new Map(deps.prompts.list().map((a) => [a.id, a.name]))
+    res.json({
+      results: results.map((r) => {
+        const key = r.memberKey ?? r.agentId
+        const senderName =
+          r.role === 'user'
+            ? (r.userId ? deps.auth.getUser(r.userId)?.displayName : undefined)
+            : r.role === 'system'
+              ? '系统'
+              : (key ? agentNames.get(baseAgentId(key)) : undefined)
+        return {
+          ...r,
+          sessionTitle: titles.get(r.sessionId) ?? '',
+          ...(senderName ? { senderName } : {}),
+        }
+      }),
+    })
   })
 
   router.post('/sessions', async (req, res) => {
@@ -222,8 +272,20 @@ export function createSessionsRouter(deps: ApiDeps): Router {
       }
       return out
     })()
+    // IM：仅自己删除——个人视图过滤（未读数 / 列表预览在存储层另行排除）。
+    const hidden = meId && deps.messageHides ? deps.messageHides.ids(meId, entry.session.id) : undefined
+    const visible = hidden && hidden.size > 0 ? entry.messages.filter((m) => !hidden.has(m.id)) : entry.messages
+    // 引用指向「被我隐藏」的消息时，本次投影显示已删除（不修改共享内存对象，防影响他人）。
+    const projected =
+      hidden && hidden.size > 0
+        ? visible.map((m) =>
+            m.replyTo && hidden.has(m.replyTo.messageId)
+              ? { ...m, replyTo: { ...m.replyTo, deleted: true, recalled: false } }
+              : m,
+          )
+        : visible
     if (limit > 0) {
-      const all = entry.messages
+      const all = projected
       const upto = beforeRaw !== undefined && Number.isFinite(beforeRaw) ? all.filter((m) => (m.seq ?? 0) < beforeRaw) : all
       const page = upto.slice(-limit)
       const memberStats: Record<string, { speaks: number; artifacts: number }> = {}
@@ -248,7 +310,7 @@ export function createSessionsRouter(deps: ApiDeps): Router {
         memberStats,
       })
     }
-    res.json({ session: entry.session, messages: withReactions(entry.messages), latestRun, project: project ?? null, humanNames, humanProfiles, memberReads })
+    res.json({ session: entry.session, messages: withReactions(projected), latestRun, project: project ?? null, humanNames, humanProfiles, memberReads })
   })
 
   /** 任务清单（M3：write_todos 落库，跨 Run 继承） */
@@ -313,6 +375,8 @@ export function createSessionsRouter(deps: ApiDeps): Router {
   router.post('/sessions/:id/plans/:planId/resolve', (req, res) => {
     const session = deps.sessions.getSession(req.params.id)
     if (!session) return res.status(404).json({ error: '会话不存在' })
+    // 下线资产（历史兼容）：批准会启动执行，与发送同口径拒绝
+    deps.access.assertSessionExecutable(userOf(req), session.id)
     if (!deps.plans) return res.status(400).json({ error: '计划功能未启用' })
     const parsed = planResolveSchema.safeParse(req.body ?? {})
     if (!parsed.success) return res.status(400).json({ error: firstIssue(parsed.error) })
@@ -334,8 +398,10 @@ export function createSessionsRouter(deps: ApiDeps): Router {
       return res.json({ plan: rejected, launched: null })
     }
     // 稍后批准：无挂起 → 新起执行 Run（队列 = 步骤负责人；plan→executing）
+    const triggerUserId = userOf(req)?.id
+    if (deps.access.multiUser && !triggerUserId) return res.status(403).json({ error: '缺少操作者身份，无法批准计划' })
     try {
-      const launched = deps.engine.launchPlanExecution(session.id, plan.id)
+      const launched = deps.engine.launchPlanExecution(session.id, plan.id, { triggerUserId })
       // M79-Y：计划批准广播（成员计划卡实时更新为已批准；触发者另有 SSE 与之一致）
       deps.notify.publish({
         type: 'notify:plan-updated',
@@ -352,11 +418,15 @@ export function createSessionsRouter(deps: ApiDeps): Router {
   router.post('/sessions/:id/resume', (req, res) => {
     const session = deps.sessions.getSession(req.params.id)
     if (!session) return res.status(404).json({ error: '会话不存在' })
+    // 下线资产（历史兼容）：断点继续同样属于执行入口
+    deps.access.assertSessionExecutable(userOf(req), session.id)
     const parsed = resumeSessionSchema.safeParse(req.body ?? {})
     if (!parsed.success) return res.status(400).json({ error: firstIssue(parsed.error) })
     const runId = parsed.data.runId
+    const triggerUserId = userOf(req)?.id
+    if (deps.access.multiUser && !triggerUserId) return res.status(403).json({ error: '缺少操作者身份，无法恢复运行' })
     try {
-      const result = deps.engine.resume(session.id, runId)
+      const result = deps.engine.resume(session.id, runId, { triggerUserId })
       res.status(201).json(result)
     } catch (err) {
       res.status(400).json({ error: (err as Error).message })
@@ -710,9 +780,35 @@ export function createSessionsRouter(deps: ApiDeps): Router {
   router.post('/sessions/:id/messages', ...messageGuards, (req, res) => {
     const session = deps.sessions.getSession(req.params.id)
     if (!session) return res.status(404).json({ error: '会话不存在' })
+    // 下线资产（历史兼容）：历史消息与交付件仍可读，但不再接受新发言
+    deps.access.assertSessionExecutable(userOf(req), session.id)
     const parsed = sendMessageSchema.safeParse(req.body ?? {})
     if (!parsed.success) return res.status(400).json({ error: firstIssue(parsed.error) })
     const content = parsed.data.content
+    // 接收凭据先于附件重校验：响应丢失后的重试不会因附件已清理而再次发送。
+    const clientMessageId = parsed.data.clientMessageId
+    const replyToMessageId = parsed.data.replyToMessageId
+    const requestHash = createHash('sha256').update(JSON.stringify({
+      content, mode: parsed.data.mode ?? null, attachments: parsed.data.attachments ?? [],
+      replyToMessageId: replyToMessageId ?? null,
+    })).digest('hex')
+    /** 已接收过的提交：返回原结果（无运行结果说明进程中断在记录前，补播一次）。 */
+    const replay = (prior: ReturnType<typeof deps.sessions.messageSubmission>): boolean => {
+      if (!prior) return false
+      if (!prior.result)
+        deps.notify.publish({ type: 'notify:turn-end', sessionId: session.id, payload: { message: prior.message } })
+      res.json({
+        ...(prior.result ?? { dispatchError: '消息已接收，运行状态未确认；请勿重复发送正文' }),
+        message: prior.message,
+        deduplicated: true,
+      })
+      return true
+    }
+    if (
+      clientMessageId &&
+      replay(deps.sessions.messageSubmission(session.id, userOf(req)?.id ?? '', clientMessageId, requestHash))
+    )
+      return
     // M79-H：拉黑对消息面切断（仅人物私聊）——拉黑 = 不可联系（既有 DM 历史仍可回看；团队协作不受影响）
     // 文案不泄漏拉黑事实：被拉黑方统一「对方设置了隐私限制」；拉黑方本人给出可操作原因
     if (deps.friends && session.kind === 'direct') {
@@ -756,19 +852,71 @@ export function createSessionsRouter(deps: ApiDeps): Router {
       attachments = verified
     }
 
-    const message = deps.sessions.appendMessage({
-      sessionId: session.id,
-      role: 'user',
-      // M57：人类消息作者（多用户署名 / 归因）
-      userId: userOf(req)?.id || undefined,
-      content,
-      mentions: [],
-      status: 'complete',
-      // M33：附件随消息持久化（多模态通道与消息内渲染依据）
-      attachments: attachments && attachments.length > 0 ? attachments : undefined,
-      // 约定：用户消息不占用 Agent 回合序号
-      turnIndex: -1,
-    })
+    // 引用回复：同会话校验 + 快照（作者 / 摘要），原消息删除后仍可读。
+    const buildReply = (target: ChatMessage): MessageReplyRef => {
+      const key = target.memberKey ?? target.agentId
+      const agentLabel = key
+        ? resolveMembers(session, deps.prompts).find((m) => m.key === key || m.agentId === target.agentId)?.label
+        : undefined
+      const authorName =
+        target.role === 'user'
+          ? (target.userId ? deps.auth.getUser(target.userId)?.displayName : '你')
+          : target.role === 'system'
+            ? '系统'
+            : (agentLabel ?? target.agentId)
+      const plain = target.content.replace(/\s+/g, ' ').trim()
+      const attachmentLabel = target.attachments?.length
+        ? `[附件] ${target.attachments.map((a) => a.name).join('、')}`
+        : ''
+      return {
+        messageId: target.id,
+        ...(authorName ? { authorName } : {}),
+        excerpt: (plain || attachmentLabel || '（无正文）').slice(0, 120),
+      }
+    }
+    let replyTo: MessageReplyRef | undefined
+    if (replyToMessageId) {
+      const target = deps.sessions.messageById(session.id, replyToMessageId)
+      // 目标在点击回复后被删 / 越界：仍允许发送，落墓碑快照（不阻塞用户表达）。
+      replyTo = target
+        ? buildReply(target)
+        : { messageId: replyToMessageId, excerpt: '原消息已删除', deleted: true }
+    }
+
+    let message: ReturnType<typeof deps.sessions.appendMessage>
+    try {
+      message = deps.sessions.appendMessage(
+        {
+          sessionId: session.id,
+          clientMessageId,
+          ...(replyTo ? { replyTo } : {}),
+          role: 'user',
+          // M57：人类消息作者（多用户署名 / 归因）
+          userId: userOf(req)?.id || undefined,
+          content,
+          mentions: [],
+          status: 'complete',
+          // M33：附件随消息持久化（多模态通道与消息内渲染依据）
+          attachments: attachments && attachments.length > 0 ? attachments : undefined,
+          // 约定：用户消息不占用 Agent 回合序号
+          turnIndex: -1,
+        },
+        requestHash,
+      )
+    } catch (err) {
+      // 多实例并发：另一实例已接收同一标识 → 返回其权威结果。
+      if (clientMessageId && err instanceof DuplicateSubmissionError) {
+        replay(deps.sessions.messageSubmission(session.id, userOf(req)?.id ?? '', clientMessageId, requestHash))
+        return
+      }
+      throw err
+    }
+    const accepted = (result: Record<string, unknown> = {}): void => {
+      deps.sessions.completeSubmission(message, result)
+      const latest = deps.sessions.messageById(session.id, message.id) ?? message
+      deps.notify.publish({ type: 'notify:turn-end', sessionId: session.id, payload: { message: latest } })
+      res.status(201).json({ ...result, message: latest })
+    }
 
     try {
       // M79-E：触发判断矩阵（设计 §8.3；引擎边界之外的路由层单点实现）
@@ -818,27 +966,19 @@ export function createSessionsRouter(deps: ApiDeps): Router {
       const shouldTrigger = agentTargeted || waitingHit || (!humanDirected && routeMode === 'auto')
       if (!shouldTrigger) {
         // 无 SSE 流：向会话订阅者补播（客户端同会话 upsert；跨会话消息计未读 + 列表对账）
-        deps.notify.publish({ type: 'notify:turn-end', sessionId: session.id, payload: { message } })
-        return res.status(201).json({ message })
+        return accepted()
       }
       if (deps.engine.activeRunOf(session.id)) {
         // M3：同会话互斥——运行中再发送 = 插话
         const result = deps.engine.inject(session.id, message.id)
-        const latest = deps.sessions.messages(session.id).find((m) => m.id === message.id) ?? message
-        // M79-W：群聊式全同步——插话消息同样广播给会话订阅者（触发型消息此前只走 SSE 单播，
-        // 其他真人成员看不到该消息；客户端按同会话 upsert / 跨会话未读处理）
-        deps.notify.publish({ type: 'notify:turn-end', sessionId: session.id, payload: { message: latest } })
-        return res.status(201).json({ message: latest, injected: true, position: result.position, runId: result.runId })
+        return accepted({ injected: true, position: result.position, runId: result.runId })
       }
       // M24：Composer 消息级范式（仅对本次发送生效；engine.launch 持久化到用户消息，执行后复位）
       const result = deps.engine.launch(session.id, message.id, { mode: parsed.data.mode })
-      const latest = deps.sessions.messages(session.id).find((m) => m.id === message.id) ?? message
-      // M79-W：群聊式全同步——触发型消息（@agent / 持球命中 / auto 路由）同样广播给会话订阅者
-      // （M79-D 补播仅覆盖 !shouldTrigger 分支；此处补齐，客户端同会话 upsert / 跨会话未读）
-      deps.notify.publish({ type: 'notify:turn-end', sessionId: session.id, payload: { message: latest } })
-      res.status(201).json({ message: latest, ...result })
+      accepted({ ...result })
     } catch (err) {
-      res.status(400).json({ error: (err as Error).message })
+      // 消息已经提交，AI 启动失败不能伪装成发送失败（否则用户重试会重复发言）。
+      accepted({ dispatchError: (err as Error).message })
     }
   })
 
@@ -851,13 +991,10 @@ export function createSessionsRouter(deps: ApiDeps): Router {
   router.post('/sessions/:id/dispatch', (req, res) => {
     const session = deps.sessions.getSession(req.params.id)
     if (!session) return res.status(404).json({ error: '会话不存在' })
+    // 统一写权 + 下线成员闸门（viewer → 403；含下线角色 → 409）
+    deps.access.assertSessionExecutable(userOf(req), session.id)
     const parsed = dispatchSchema.safeParse(req.body ?? {})
     if (!parsed.success) return res.status(400).json({ error: firstIssue(parsed.error) })
-    if (deps.access.multiUser) {
-      const me = userOf(req)
-      const role = me ? deps.access.sessionRole(me, session.id) : undefined
-      if (!me || !role || role === 'viewer') return res.status(403).json({ error: '只读共享成员不可派发' })
-    }
     // 目标归一：成员键（分身）优先，其次基础角色 id
     const raw = parsed.data.agentId.trim().replace(/^@/, '')
     const target =
@@ -873,6 +1010,76 @@ export function createSessionsRouter(deps: ApiDeps): Router {
     } catch (err) {
       res.status(400).json({ error: (err as Error).message })
     }
+  })
+
+  /**
+   * IM：群主转让（仅当前属主；目标须为现有共享成员）。
+   * 旧群主降为 editor 保留访问；新群主从成员表移入 owner。
+   */
+  router.post('/sessions/:id/transfer', (req, res) => {
+    const me = userOf(req)
+    const session = deps.access.assertSessionOwner(me, req.params.id)
+    if (!deps.access.multiUser || !session.ownerId) {
+      return res.status(400).json({ error: '群主转让需要多用户模式' })
+    }
+    if (session.kind === 'direct') return res.status(400).json({ error: '私聊不支持转让群主' })
+    const parsed = transferOwnerSchema.safeParse(req.body ?? {})
+    if (!parsed.success) return res.status(400).json({ error: firstIssue(parsed.error) })
+    const targetId = parsed.data.userId
+    if (targetId === session.ownerId) return res.status(400).json({ error: '对方已经是群主' })
+    const target = deps.auth.getUser(targetId)
+    if (!target || target.status !== 'active') return res.status(400).json({ error: '目标账号不存在或已停用' })
+    if (!deps.members.has(session.id, targetId)) {
+      return res.status(400).json({ error: '只能转让给当前群成员' })
+    }
+    const oldOwner = deps.auth.getUser(session.ownerId)
+    const updated = deps.sessions.transferOwner(session.id, target.id, me?.id)
+    if (!updated) return res.status(404).json({ error: '会话不存在' })
+    deps.audit?.record({
+      actor: 'user',
+      action: 'session.owner-transfer',
+      userId: me?.id,
+      ip: req.ip,
+      resourceType: 'session',
+      resourceId: session.id,
+      sessionId: session.id,
+      detail: { from: session.ownerId, to: target.id },
+    })
+    // 群内留痕 + 全成员实时刷新（旧群主保留 editor 席位）
+    const message = deps.sessions.appendMessage({
+      sessionId: session.id,
+      role: 'system',
+      content: `${oldOwner?.displayName ?? '群主'} 将群主转让给 ${target.displayName}`,
+      mentions: [],
+      status: 'complete',
+    })
+    deps.notify.publish({ type: 'notify:turn-end', sessionId: session.id, payload: { message } })
+    deps.notify.publish({
+      type: 'notify:share-changed',
+      sessionId: session.id,
+      payload: { sessionId: session.id, userId: target.id, action: 'owner', role: 'owner' },
+    })
+    deps.deliverInbox?.({
+      userId: target.id,
+      type: 'system',
+      title: `你已成为「${session.title}」的群主`,
+      sessionId: session.id,
+      actorId: me?.id,
+    })
+    res.json({ session: updated })
+  })
+
+  /** IM：会话个人偏好（仅本人；置顶 / 免打扰；多端用户主题同步） */
+  router.patch('/sessions/:id/prefs', (req, res) => {
+    const me = userOf(req)
+    const session = deps.access.assertSession(me, req.params.id)
+    if (!me) return res.status(400).json({ error: '个人偏好需要账号体系（兼容模式无效）' })
+    if (!deps.sessionPrefs) return res.status(503).json({ error: '个人偏好未装配' })
+    const parsed = sessionPrefsSchema.safeParse(req.body ?? {})
+    if (!parsed.success) return res.status(400).json({ error: firstIssue(parsed.error) })
+    const prefs = deps.sessionPrefs.set(me.id, session.id, parsed.data)
+    deps.notify.publishToUser(me.id, 'notify:session-prefs', { sessionId: session.id, prefs })
+    res.json({ prefs })
   })
 
   /** M79-D：隐藏会话（仅本人列表；DM「删除」语义——新消息自动复现） */
@@ -909,19 +1116,74 @@ export function createSessionsRouter(deps: ApiDeps): Router {
     if (message.userId && meId && message.userId !== meId) {
       return res.status(403).json({ error: '只能编辑自己发送的消息' })
     }
-    const updated = deps.sessions.patchMessage(req.params.id, message.id, { content: parsed.data.content })
+    if (message.recalledAt) return res.status(400).json({ error: '已撤回的消息不能编辑' })
+    const updated = deps.sessions.patchMessage(req.params.id, message.id, {
+      content: parsed.data.content,
+      editedAt: new Date().toISOString(),
+    })
     // M79-X：群聊式全同步——编辑结果广播（upsert 语义覆盖更新；其他成员实时可见）
     deps.notify.publish({ type: 'notify:turn-end', sessionId: req.params.id, payload: { message: updated } })
     res.json({ message: updated })
   })
 
-  /** M8：删除单条消息 */
-  router.delete('/sessions/:id/messages/:messageId', (req, res) => {
+  /** IM：撤回（仅作者 + 时限；正文 / 附件清空，保留占位；引用方投影为「已撤回」） */
+  const RECALL_WINDOW_MS = 2 * 60_000
+  router.post('/sessions/:id/messages/:messageId/recall', (req, res) => {
     if (!deps.sessions.getSession(req.params.id)) return res.status(404).json({ error: '会话不存在' })
-    if (deps.engine.activeRunOf(req.params.id)) return res.status(400).json({ error: '会话运行中，暂不能删除消息' })
-    // M79-X：他人的人类消息仅会话属主可删除（兼容模式 / 历史消息无 userId → 放行；agent/system 消息不受限）
     const target = deps.sessions.messageById(req.params.id, req.params.messageId)
     if (!target) return res.status(404).json({ error: '消息不存在' })
+    if (target.role !== 'user') return res.status(400).json({ error: '只能撤回自己发送的消息' })
+    const me = userOf(req)
+    // 兼容模式无账号：历史无 userId 的用户消息视为本人
+    if (target.userId && target.userId !== me?.id) return res.status(403).json({ error: '只能撤回自己发送的消息' })
+    if (target.recalledAt) return res.json({ message: target, deduplicated: true })
+    if (deps.engine.activeRunOf(req.params.id)) return res.status(400).json({ error: '会话运行中，暂不能撤回' })
+    if (Date.now() - Date.parse(target.createdAt) > RECALL_WINDOW_MS) {
+      return res.status(400).json({ error: '超过可撤回时限（2 分钟）' })
+    }
+    const updated = deps.sessions.recallMessage(req.params.id, target.id, me?.id ?? '')
+    deps.audit?.record({
+      actor: 'user',
+      action: 'message.recall',
+      userId: me?.id,
+      ip: req.ip,
+      resourceType: 'message',
+      resourceId: target.id,
+      sessionId: req.params.id,
+    })
+    deps.notify.publish({ type: 'notify:turn-end', sessionId: req.params.id, payload: { message: updated } })
+    res.json({ message: updated })
+  })
+
+  /** M8：删除单条消息（`?scope=self` = 仅自己删除；缺省 = 所有人生效，沿用既有权限） */
+  router.delete('/sessions/:id/messages/:messageId', (req, res) => {
+    if (!deps.sessions.getSession(req.params.id)) return res.status(404).json({ error: '会话不存在' })
+    const target = deps.sessions.messageById(req.params.id, req.params.messageId)
+    if (!target) return res.status(404).json({ error: '消息不存在' })
+    const meForHide = userOf(req)
+    if (String(req.query.scope ?? '') === 'self') {
+      if (!meForHide) return res.status(400).json({ error: '仅自己删除需要账号体系（兼容模式无效）' })
+      if (!deps.messageHides) return res.status(503).json({ error: '个人删除未装配' })
+      deps.messageHides.hide(meForHide.id, req.params.id, target.id)
+      deps.audit?.record({
+        actor: 'user',
+        action: 'message.hide-self',
+        userId: meForHide.id,
+        ip: req.ip,
+        resourceType: 'message',
+        resourceId: target.id,
+        sessionId: req.params.id,
+      })
+      // 本人多端同步（其他成员无感）
+      deps.notify.publishToUser(meForHide.id, 'notify:message-deleted', {
+        sessionId: req.params.id,
+        messageId: target.id,
+        scope: 'self',
+      })
+      return res.json({ ok: true, scope: 'self' })
+    }
+    if (deps.engine.activeRunOf(req.params.id)) return res.status(400).json({ error: '会话运行中，暂不能删除消息' })
+    // M79-X：他人的人类消息仅会话属主可删除（兼容模式 / 历史消息无 userId → 放行；agent/system 消息不受限）
     const meId = userOf(req)?.id
     if (target.role === 'user' && target.userId && meId && target.userId !== meId) {
       try {

@@ -193,6 +193,7 @@ describe('建会话组队台 · 空编制（M48）', () => {
     render(<SessionList onSelect={() => undefined} />)
 
     await user.click(screen.getByTitle('新建会话'))
+    await user.click(screen.getByRole('button', { name: '任务预设' }))
     await user.click(screen.getByRole('button', { name: '组队来源：产品发布' }))
     expect(screen.getByText('快速组队 · 产品发布')).toBeInTheDocument()
     expect(screen.getByText('已选 2 位')).toBeInTheDocument()

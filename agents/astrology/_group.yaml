@@ -23,3 +23,20 @@ agenda:
 stage:
   layout: dock
   panel: chartboard
+category: culture
+catalog:
+  keywords:
+    - 星象占星
+    - 本命盘解读
+    - 行运与流年
+    - 合盘分析
+    - 择时参考
+  inputs:
+    - 出生时间地点
+    - 研习主题
+    - 双方知情的合盘资料
+  outputs:
+    - 星盘解读
+    - 行运参考
+    - 互动模式札记
+  boundary: 仅供文化参考；不预测确定事件，不以星盘诊断或决定重大事项。

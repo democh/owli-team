@@ -482,6 +482,29 @@ describe('M33：装配器视觉注入护栏（buildWindow）', () => {
     expect(out.tokens).toBeGreaterThanOrEqual(6 * VISION_TOKENS_PER_IMAGE)
   })
 
+  it('裁剪历史并插入摘要后，多图仍回填到原消息而不是摘要', () => {
+    const messages = [
+      ...Array.from({ length: 6 }, (_, i) => userMessage(i + 1, undefined, `历史约束 ${i}：${'需要保留的口径。'.repeat(20)}`)),
+      userMessage(7, [imageAttachment(7, 0), imageAttachment(7, 1)], '最新多图消息'),
+    ]
+    const out = buildWindow({
+      messages,
+      agentId: 'pm',
+      agents: [],
+      fromSeq: 0,
+      budgetTokens: 300,
+      toolDetailKeep: 4,
+      loadImage: (p) => ({ mime: 'image/png', dataUrl: `data:image/png;base64,${p}` }),
+    })
+    expect(out.droppedGroups).toBeGreaterThan(0)
+    expect(out.retainedUserMessages).toBeGreaterThan(0)
+    const latest = out.messages.at(-1)!
+    expect(textOfContent(out.messages[0].content)).toContain('历史发言要点')
+    expect(imageParts(out.messages[0].content)).toHaveLength(0)
+    expect(textOfContent(latest.content)).toContain('最新多图消息')
+    expect(imageParts(latest.content)).toHaveLength(2)
+  })
+
   it('单图 >8MB 或读取失败 → 跳过且不占视觉配额', () => {
     const messages = [
       userMessage(1, [imageAttachment(1, 0, 1024 * 1024), imageAttachment(1, 1, 9 * 1024 * 1024), imageAttachment(1, 2)]),

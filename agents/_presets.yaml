@@ -7,440 +7,1004 @@
 presets:
   - id: weekly-review
     name: 周经营例会
-    description: 财务 / 增长 / 销售三方汇报，幕僚长收敛出经营简报与下周优先级
+    description: 财务、增长与经营指标复盘，由幕僚长汇总简报与下周优先级
     icon: calendar-clock
-    theme: ["#6366f1", "#818cf8"]
-    members: [chief, finance, growth, sales]
+    theme: [ "#6366f1", "#818cf8" ]
+    members: [ chief, finance, growth, insight ]
     prompt: |-
-      主持本周经营例会：请 @周正 先给出财务测算（收入 / 成本 / 现金流口径），@高扬 汇报增长指标与实验结论，@陆征 更新重点客户与回款风险，最后由 @柏川 收敛为经营简报与下周优先级。
+      主持本周经营例会：请 @周正 先给出财务测算（收入 / 成本 / 现金流口径），@高扬 汇报增长指标与实验结论，@甄明 解释经营指标波动、归因与数据局限，最后由 @柏川 收敛为经营简报与下周优先级。
+      资料不足时先确认目标、输入与约束，不编造事实或完成情况。由 @柏川 牵头确认分工；如未明确最终汇总者，由 @柏川 汇总交付与待确认项。
     order: 10
+    category: business
+    catalog:
+      keywords:
+        - 周经营例会
+        - 幕僚长
+        - 财务管家
+        - 增长负责人
+        - 经营分析师
+      inputs:
+        - 商业问题
+        - 经营数据
+        - 资源与约束
+        - 账目与凭证
+        - 主体与地区
+      outputs:
+        - 经营简报
+        - 下周优先级
+      boundary: 提供战略判断与经营解释，不替代用户决策；数据库取数由 BI、数据管道由数据工程负责。
 
   - id: content-campaign
     name: 内容营销战役
     description: 一轮完整内容战役：目标拆解 → 选题日历 → 搜索投放 → 品牌物料
     icon: sparkles
-    theme: ["#f43f5e", "#fb7185"]
-    members: [growth, content, seo, brand]
+    theme: [ "#f43f5e", "#fb7185" ]
+    members: [ growth, content, seo, brand ]
     prompt: |-
       发起一轮内容营销战役：@高扬 先拆解目标与 KPI 口径，@林悦 产出选题与发布日历，@韩枫 给出关键词词表与投放建议，@云舒 补齐品牌物料规范，最终汇总为战役方案与内容日历。
+      资料不足时先确认目标、输入与约束，不编造事实或完成情况。由 @高扬 牵头确认分工；如未明确最终汇总者，由 @高扬 汇总交付与待确认项。
     order: 20
+    category: business
+    catalog:
+      keywords:
+        - 内容营销战役
+        - 增长负责人
+        - 内容策划
+        - 搜索投放
+        - 品牌视觉
+      inputs:
+        - 产品与客群
+        - 渠道数据
+        - 预算与目标
+      outputs:
+        - 内容战役方案
+        - 发布日历
+      boundary: 面向企业获客，不承诺排名或转化收益；预算与发布由用户确认。
 
   - id: product-launch
     name: 产品发布冲刺
     description: 研发 × 市场联动：发布范围、上线检查单与内容准备
     icon: rocket
-    theme: ["#3b82f6", "#60a5fa"]
-    members: [pm, growth, content, devops]
+    theme: [ "#3b82f6", "#60a5fa" ]
+    members: [ pm, growth, content, devops ]
     prompt: |-
       规划一次产品发布冲刺：@费利 给出发布范围与验收清单，@高扬 制定上线后的增长动作，@林悦 准备发布内容包，@奥托 输出上线检查单与回滚预案。
+      资料不足时先确认目标、输入与约束，不编造事实或完成情况。由 @费利 牵头确认分工；如未明确最终汇总者，由 @费利 汇总交付与待确认项。
     order: 30
+    category: technology
+    catalog:
+      keywords:
+        - 产品发布冲刺
+        - 产品经理
+        - 增长负责人
+        - 内容策划
+        - DevOps 工程师
+      inputs:
+        - 需求与验收标准
+        - 代码与运行环境
+        - 约束条件
+        - 产品与客群
+        - 渠道数据
+      outputs:
+        - 发布范围与验收清单
+        - 上线检查与回滚预案
+      boundary: 需提供实际项目上下文；部署和高风险变更须授权，不凭空声称测试通过。
 
   - id: tax-season
     name: 报税合规检查
     description: 报税季：账目口径、申报清单与合同合规风险排查
     icon: receipt
-    theme: ["#10b981", "#34d399"]
-    members: [finance, tax, legal]
+    theme: [ "#10b981", "#34d399" ]
+    members: [ finance, tax, legal ]
     prompt: |-
       发起报税季合规检查：@周正 汇总账目与税务数据口径，@郑清 输出税种与申报清单，@卢明 审阅合同与用工合规风险，汇总为风险清单与待办。
+      资料不足时先确认目标、输入与约束，不编造事实或完成情况。由 @周正 牵头确认分工；如未明确最终汇总者，由 @周正 汇总交付与待确认项。
     order: 40
+    category: business
+    catalog:
+      keywords:
+        - 报税合规检查
+        - 财务管家
+        - 税务顾问
+        - 法务顾问
+      inputs:
+        - 账目与凭证
+        - 主体与地区
+        - 合规问题
+      outputs:
+        - 申报清单
+        - 合规风险与待办
+      boundary: 面向企业经营财务，不提供家庭理财规划；申报与法律结论需专业人士复核。
 
   - id: funding-round
     name: 融资冲刺
     description: BP / 数据室 / 投资人材料准备与条款风险检查
     icon: banknote
-    theme: ["#8b5cf6", "#a78bfa"]
-    members: [fundraiser, finance, ir, legal]
+    theme: [ "#8b5cf6", "#a78bfa" ]
+    members: [ fundraiser, finance, ir, legal ]
     prompt: |-
       启动融资冲刺：@江源 统筹 BP 与数据室材料，@周正 提供财务预测与关键指标，@何洛 准备投资人简报与常见 Q&A，@卢明 检查协议条款与风险点。
+      资料不足时先确认目标、输入与约束，不编造事实或完成情况。由 @江源 牵头确认分工；如未明确最终汇总者，由 @江源 汇总交付与待确认项。
     order: 50
+    category: business
+    catalog:
+      keywords:
+        - 融资冲刺
+        - 融资顾问
+        - 财务管家
+        - 投资者关系
+        - 法务顾问
+      inputs:
+        - 商业计划
+        - 财务指标
+        - 融资阶段
+        - 账目与凭证
+        - 主体与地区
+      outputs:
+        - BP 与数据室清单
+        - 投资人问答与条款风险
+      boundary: 不保证融资成功，不替代法律与财务尽调。
 
   - id: hiring-outsourcing
     name: 外包与招聘
     description: 虚拟团队组建：招聘渠道、协作 SOP 与外包合同审阅
     icon: user-plus
-    theme: ["#64748b", "#94a3b8"]
-    members: [recruiter, ops, legal]
+    theme: [ "#64748b", "#94a3b8" ]
+    members: [ recruiter, ops, legal ]
     prompt: |-
       组建虚拟团队：@罗宾 给出招聘与外包方案（渠道 / 预算 / 节奏），@齐安 梳理协作流程与交接 SOP，@卢明 审阅外包合同关键条款。
+      资料不足时先确认目标、输入与约束，不编造事实或完成情况。由 @罗宾 牵头确认分工；如未明确最终汇总者，由 @罗宾 汇总交付与待确认项。
     order: 60
+    category: business
+    catalog:
+      keywords:
+        - 外包与招聘
+        - 招聘外包
+        - 运营经理
+        - 法务顾问
+      inputs:
+        - 团队目标
+        - 现有流程
+        - 资源约束
+        - 账目与凭证
+        - 主体与地区
+      outputs:
+        - 招聘外包方案
+        - 协作 SOP 与合同审阅要点
+      boundary: 提供组织与事务安排；真实招聘、采购和外部沟通需用户授权。
 
   - id: health-sprint
     name: 健康打卡方案
     description: 训练 × 饮食 × 作息：一份可执行的四周健康计划
     icon: heart-pulse
-    theme: ["#ef4444", "#f87171"]
-    members: [fitness, nutrition, wellness]
+    theme: [ "#ef4444", "#f87171" ]
+    members: [ fitness, nutrition, wellness ]
     prompt: |-
       发起四周健康计划：@马骁 给出训练安排与强度建议，@陶然 给出饮食配比与食谱思路，@程眠 梳理作息与睡眠方案，汇总为一份可执行的健康计划与打卡节奏。
+      资料不足时先确认目标、输入与约束，不编造事实或完成情况。由 @马骁 牵头确认分工；如未明确最终汇总者，由 @马骁 汇总交付与待确认项。
     order: 70
+    category: life
+    catalog:
+      keywords:
+        - 健康打卡方案
+        - 健身教练
+        - 营养师
+        - 作息顾问
+      inputs:
+        - 健康目标
+        - 日常饮食作息
+        - 运动基础与限制
+      outputs:
+        - 四周健康计划
+        - 打卡安排
+      boundary: 不诊断、不处方；疼痛、慢病或特殊人群应先咨询医疗专业人士。
 
   - id: learning-season
     name: 学习成长季
     description: 学习计划 × 语言练习 × 书单：一块完整的学习路线图
     icon: graduation-cap
-    theme: ["#eab308", "#facc15"]
-    members: [tutor, language, reading]
+    theme: [ "#eab308", "#facc15" ]
+    members: [ tutor, language, reading ]
     prompt: |-
       发起一轮学习成长季：@裴知 定学习计划与里程碑，@洛语 设计语言练习路径，@舒卷 给出分阶段书单，汇总为学习方案与每周打卡节奏。
+      资料不足时先确认目标、输入与约束，不编造事实或完成情况。由 @裴知 牵头确认分工；如未明确最终汇总者，由 @裴知 汇总交付与待确认项。
     order: 80
+    category: learning
+    catalog:
+      keywords:
+        - 学习成长季
+        - 学习导师
+        - 语言陪练
+        - 阅读搭子
+      inputs:
+        - 学习目标
+        - 当前水平
+        - 时间与材料
+      outputs:
+        - 学习路线图
+        - 练习与书单
+      boundary: 提供学习辅助，不替代考试诚信要求与真实练习。
 
   - id: trip-planning
     name: 出行规划
     description: 行程 × 预算 × 事务清单：一次说走就走的出行准备
     icon: plane
-    theme: ["#06b6d4", "#22d3ee"]
-    members: [travel, life-admin]
+    theme: [ "#06b6d4", "#22d3ee" ]
+    members: [ travel, life-admin ]
     prompt: |-
       规划一次出行：@牧野 给出行程计划（交通 / 住宿 / 景点与预算），@常乐 梳理证件、预订与出行前事务清单，汇总为出行计划与检查清单。
+      资料不足时先确认目标、输入与约束，不编造事实或完成情况。由 @牧野 牵头确认分工；如未明确最终汇总者，由 @牧野 汇总交付与待确认项。
     order: 90
+    category: life
+    catalog:
+      keywords:
+        - 出行规划
+        - 行程规划师
+        - 生活管家
+      inputs:
+        - 目的地与日期
+        - 预算与偏好
+        - 证件和出行限制
+        - 近期目标
+        - 待办与时间安排
+      outputs:
+        - 行程与预算
+        - 出行检查清单
+      boundary: 价格、签证与交通需核实时效；不代订、不提供财务负担判断。
 
   - id: growth-localization
     name: 出海本地化
     description: 目标市场 × 本地化方案 × 关键词：内容出海一条龙
     icon: globe
-    theme: ["#f43f5e", "#fb7185"]
-    members: [growth, localizer, seo]
+    theme: [ "#f43f5e", "#fb7185" ]
+    members: [ growth, localizer, seo ]
     prompt: |-
       启动一轮出海本地化：@高扬 明确目标市场与增长目标，@梁语 给出译文与术语对照，@韩枫 做关键词本地化，汇总为本地化方案与上线节奏。
+      资料不足时先确认目标、输入与约束，不编造事实或完成情况。由 @高扬 牵头确认分工；如未明确最终汇总者，由 @高扬 汇总交付与待确认项。
     order: 100
+    category: business
+    catalog:
+      keywords:
+        - 出海本地化
+        - 增长负责人
+        - 本地化专员
+        - 搜索投放
+      inputs:
+        - 产品与客群
+        - 渠道数据
+        - 预算与目标
+      outputs:
+        - 本地化方案
+        - 术语与关键词表
+      boundary: 面向企业获客，不承诺排名或转化收益；预算与发布由用户确认。
 
   - id: data-briefing
     name: 数据快报
     description: NL2SQL 取数 × 经营解读 × 财务口径：一份可复现的月度数据快报
     icon: database
-    theme: ["#ec4899", "#f472b6"]
-    members: [bi, insight, finance]
+    theme: [ "#ec4899", "#f472b6" ]
+    members: [ bi, insight, finance ]
     prompt: |-
       出一份月度数据快报：@沈析 先对齐口径并从数据库取数（关键指标：营收 / 订单量 / 客单价，带 SQL 与校验），@甄明 基于取数结果做经营解读与波动归因，@周正 核对财务口径并标注差异，汇总为数据快报与口径附录。
+      资料不足时先确认目标、输入与约束，不编造事实或完成情况。由 @沈析 牵头确认分工；如未明确最终汇总者，由 @沈析 汇总交付与待确认项。
     order: 110
+    category: business
+    catalog:
+      keywords:
+        - 数据快报
+        - BI 分析师
+        - 经营分析师
+        - 财务管家
+      inputs:
+        - 业务问题
+        - 数据库授权与结构
+        - 指标定义
+        - 商业问题
+        - 经营数据
+      outputs:
+        - 月度数据快报
+        - SQL 与口径附录
+      boundary: 负责取数与指标治理，不替代战略判断或数据管道建设；仅操作授权数据。
 
   - id: incident-response
     name: 线上故障响应
     description: 止血 × 修复 × 回归：一次生产故障的完整处置链路
     icon: activity
-    theme: ["#84cc16", "#a3e635"]
-    members: [sre, devops, backend, qa]
+    theme: [ "#84cc16", "#a3e635" ]
+    members: [ sre, devops, backend, qa ]
     prompt: |-
       启动一轮线上故障处置：@江屿 先分级止血（SSH 采集证据与时间线，输出处置记录），@奥托 执行回滚 / 暂停发布，@马克斯 定位并修复代码缺陷，@诺娃 回归验证，汇总为事故复盘与改进项表。
+      资料不足时先确认目标、输入与约束，不编造事实或完成情况。由 @江屿 牵头确认分工；如未明确最终汇总者，由 @江屿 汇总交付与待确认项。
     order: 120
+    category: technology
+    catalog:
+      keywords:
+        - 线上故障响应
+        - SRE 工程师
+        - DevOps 工程师
+        - 后端工程师
+        - 测试工程师
+      inputs:
+        - 故障现象与时间线
+        - 日志指标
+        - 环境授权
+        - 需求与验收标准
+        - 代码与运行环境
+      outputs:
+        - 故障处置记录
+        - 事故复盘与改进项
+      boundary: 先止血与留证；生产写操作、重启和回滚需明确授权。
 
   - id: invest-review
     name: 投研快评
     description: 快速摸底：技术面位置 × 舆情面异动，投研主管收口一页快评
     icon: trending-up
-    theme: ["#dc2626", "#ef4444"]
-    members: [invest-lead, analyst-ta, analyst-news]
+    theme: [ "#dc2626", "#ef4444" ]
+    members: [ invest-lead, analyst-ta, analyst-news ]
     prompt: |-
       出一份投研快评：@雷动 围绕业绩增长给出技术面位置与关键位（支撑 / 压力 / 失效条件），@闻笛 梳理近期待验证的公告与舆情要点（附信源等级），最后由主管收口为一页快评（结论 + 置信度 + 待观察信号 + 风险声明）。
+      资料不足时先确认目标、输入与约束，不编造事实或完成情况。由 @祝衡 牵头确认分工；如未明确最终汇总者，由 @祝衡 汇总交付与待确认项。
     order: 130
+    category: investment
+    catalog:
+      keywords:
+        - 投研快评
+        - 投研主管
+        - 技术面分析师
+        - 舆情新闻分析师
+      inputs:
+        - 标的与研究问题
+        - 周期与数据
+        - 风险约束
+      outputs:
+        - 一页投研快评
+        - 风险与观察信号
+      boundary: 投资研究参考，不构成投资建议；不保证收益、不代客交易。
 
   - id: strategy-research
     name: 策略研究
     description: 从标的到回测到实施：基本面口径 × 技术信号 × 策略验证一条链
     icon: line-chart
-    theme: ["#dc2626", "#ef4444"]
-    members: [quant, analyst-fa, analyst-ta, invest-lead]
+    theme: [ "#dc2626", "#ef4444" ]
+    members: [ quant, analyst-fa, analyst-ta, invest-lead ]
     prompt: |-
       启动一轮策略研究：@秦砚 围绕增长主线先给基本面筛选口径与候选池特征，@雷动 把技术信号转成可判定规则（参数与周期口径），@方程 完成回测验证（口径 / 五件套指标 / 参数敏感性）并给出条件触发式实施计划，最后由主管收口为策略研究简报与下一步验证清单。
+      资料不足时先确认目标、输入与约束，不编造事实或完成情况。由 @方程 牵头确认分工；如未明确最终汇总者，由 @方程 汇总交付与待确认项。
     order: 140
+    category: investment
+    catalog:
+      keywords:
+        - 策略研究
+        - 量化策略师
+        - 基本面分析师
+        - 技术面分析师
+        - 投研主管
+      inputs:
+        - 标的与研究问题
+        - 周期与数据
+        - 风险约束
+      outputs:
+        - 策略研究简报
+        - 回测与验证清单
+      boundary: 投资研究参考，不构成投资建议；不保证收益、不代客交易。
 
   - id: bull-bear-duel
-    name: 多空对弈
+    name: 投研观点交锋
     description: 多方与空方逐轮对抗：证据交锋 × 量化走子，主管终局裁决
     icon: scale
-    theme: ["#dc2626", "#ef4444"]
-    members: [invest-lead, analyst-fa, analyst-ta, analyst-news, quant]
+    theme: [ "#dc2626", "#ef4444" ]
+    members: [ invest-lead, analyst-fa, analyst-ta, analyst-news, quant ]
     prompt: |-
-      组织一轮多空对弈（围绕增长与估值的对抗推演，默认 3 轮）：@秦砚 持多方立论，@雷动 持空方立论，每轮挂证据与置信度并回应对方论据；@闻笛 汇拢双方证据弹药（附信源等级），随后由方程逐轮量化走子、主管终局裁决（胜负 + 置信度 + 核心依据 + 翻盘条件）。
+      组织一轮投研观点交锋（围绕增长与估值的对抗推演，默认 3 轮）：@秦砚 持多方立论，@雷动 持空方立论，每轮挂证据与置信度并回应对方论据；@闻笛 汇拢双方证据弹药（附信源等级），随后由方程逐轮量化走子、主管终局裁决（胜负 + 置信度 + 核心依据 + 翻盘条件）。
+      资料不足时先确认目标、输入与约束，不编造事实或完成情况。由 @祝衡 牵头确认分工；如未明确最终汇总者，由 @祝衡 汇总交付与待确认项。
     order: 150
+    category: investment
+    catalog:
+      keywords:
+        - 投研观点交锋
+        - 投研主管
+        - 基本面分析师
+        - 技术面分析师
+        - 舆情新闻分析师
+        - 量化策略师
+      inputs:
+        - 标的与研究问题
+        - 周期与数据
+        - 风险约束
+      outputs:
+        - 投研观点对照
+        - 证据与置信度裁决
+      boundary: 投资研究参考，不构成投资建议；不保证收益、不代客交易。
 
   - id: negotiation-rehearsal
     name: 谈判彩排
     description: 定策略 → 多轮出价 → 复盘：真实谈判前先练一遍
     icon: handshake
-    theme: ["#f59e0b", "#8b5cf6"]
-    members: [tactician, negotiator, counterpart]
+    theme: [ "#f59e0b", "#8b5cf6" ]
+    members: [ tactician, negotiator, counterpart ]
     prompt: |-
       组织一场谈判彩排（严格轮流出价，默认 3 轮）：@谭成 先定目标 / 底线 / BATNA 与出价序列并开场出价，@祁弈 按设定立场真实还价（不轻易让步），@苏纵 全程旁观记录锚定与让步失误，终局由 @苏纵 复盘（成交区间 ZOPA + 得失评分 + 改进点）。
+      资料不足时先确认目标、输入与约束，不编造事实或完成情况。由 @苏纵 牵头确认分工；如未明确最终汇总者，由 @苏纵 汇总交付与待确认项。
     order: 170
+    category: discussion
+    catalog:
+      keywords:
+        - 谈判彩排
+        - 谈判教练
+        - 谈判手
+        - 对手模拟
+      inputs:
+        - 谈判议题
+        - 双方立场
+        - 目标底线与备选方案
+      outputs:
+        - 谈判彩排记录
+        - 策略复盘
+      boundary: 演练不等于真实对方反应；不擅自承诺、报价或对外谈判。
 
   - id: issue-roundtable
     name: 议题圆桌
     description: 事实核查 × 立场图谱 × 政策伦理：多方研讨收口观察报告
     icon: globe
-    theme: ["#0ea5e9", "#14b8a6"]
-    members: [moderator, stakeholder, policy-advisor]
+    theme: [ "#0ea5e9", "#14b8a6" ]
+    members: [ moderator, stakeholder, policy-advisor ]
     prompt: |-
       组织一场社会议题研讨（默认 3 轮）：@齐观 开场定议题边界与轮数并先行核查事实基线（来源分级），@方衡 推演各方立场与关切，@允中 补政策伦理视角（公平 / 权利 / 后果）；终局由 @齐观 收口观察报告（含事实基线章 + 共识与分歧 + 政策伦理章）。
+      资料不足时先确认目标、输入与约束，不编造事实或完成情况。由 @齐观 牵头确认分工；如未明确最终汇总者，由 @齐观 汇总交付与待确认项。
     order: 180
+    category: discussion
+    catalog:
+      keywords:
+        - 议题圆桌
+        - 议题主持
+        - 立场推演官
+        - 政策伦理顾问
+      inputs:
+        - 讨论议题
+        - 事实资料
+        - 参与视角与轮数
+      outputs:
+        - 议题观察报告
+        - 共识与分歧
+      boundary: 区分事实与价值判断，不把模拟立场当作群体真实意见。
 
   - id: writing-sprint
     name: 写作冲刺
     description: 选题 → 初稿 → 定稿：长文创作三轮推进
     icon: pen-tool
-    theme: ["#92400e", "#d97706"]
-    members: [storyline, author, editor]
+    theme: [ "#92400e", "#d97706" ]
+    members: [ storyline, author, editor ]
     prompt: |-
       组织一场写作冲刺（串行创作链）：@曲径 先定选题、切入角度与大纲（附调性示范），@文藻 按大纲起草正文（先出首节样例并确认语感），@锦言 润色校对出定稿（给修改意见不越权改写）；收尾由 @锦言 交还定稿状态与待确认项。
+      资料不足时先确认目标、输入与约束，不编造事实或完成情况。由 @曲径 牵头确认分工；如未明确最终汇总者，由 @曲径 汇总交付与待确认项。
     order: 190
+    category: creative
+    catalog:
+      keywords:
+        - 写作冲刺
+        - 选题策划
+        - 主笔
+        - 编辑
+      inputs:
+        - 主题与受众
+        - 素材与提纲
+        - 风格篇幅
+      outputs:
+        - 文章大纲与草稿
+        - 编辑意见与定稿状态
+      boundary: 面向长文成稿，不代替账号运营；尊重原创，不虚构事实或引用。
 
   - id: job-hunt-sprint
     name: 求职冲刺
     description: 定位 → 简历 → 模拟面试 → 谈薪：求职全流程陪跑
     icon: target
-    theme: ["#0f766e", "#2dd4bf"]
-    members: [career-advisor, resume-coach, interview-coach, comp-advisor]
+    theme: [ "#0f766e", "#2dd4bf" ]
+    members: [ career-advisor, resume-coach, interview-coach, comp-advisor ]
     prompt: |-
       组织一场求职冲刺（串行陪跑）：@程途 先做职业定位与路径规划（目标 / 差距 / 路线），@履新 按目标岗位 STAR 化打磨简历（只用真实经历），@问达 做一轮模拟面试并逐轮复盘（简历即题纲），@薪言 收口 offer 评估与谈薪策略（含彩排建议）。
+      资料不足时先确认目标、输入与约束，不编造事实或完成情况。由 @程途 牵头确认分工；如未明确最终汇总者，由 @程途 汇总交付与待确认项。
     order: 200
+    category: life
+    catalog:
+      keywords:
+        - 求职冲刺
+        - 职业顾问
+        - 简历顾问
+        - 面试教练
+        - 薪酬顾问
+      inputs:
+        - 真实经历
+        - 目标岗位
+        - 薪酬与 offer 条件
+      outputs:
+        - 求职路线与简历
+        - 面试复盘与谈薪策略
+      boundary: 不编造经历，不保证录用；薪酬比较不延伸为个人理财规划。
 
   - id: game-kickoff
     name: 游戏立项
     description: GDD → 数值 / 叙事并行 → 玩法验证：游戏设计开工
     icon: flame
-    theme: ["#7c3aed", "#ec4899"]
-    members: [game-designer, balance-designer, narrative-designer, playtester]
+    theme: [ "#7c3aed", "#ec4899" ]
+    members: [ game-designer, balance-designer, narrative-designer, playtester ]
     prompt: |-
       组织一次游戏立项（三路并行 + 模拟验证）：@游心 先立核心循环与体验支柱（GDD 骨架），@千衡 设计数值体系（成长 / 经济 / 平衡表）、@织境 搭建世界观（与玩法节点咬合）并行展开，@百试 做模拟玩法验证（口径先行）并把问题回交设计者。
+      资料不足时先确认目标、输入与约束，不编造事实或完成情况。由 @游心 牵头确认分工；如未明确最终汇总者，由 @游心 汇总交付与待确认项。
     order: 210
-
-  - id: home-purchase
-    name: 购房决策
-    description: 选房 → 贷款 → 装修：置业决策链推进
-    icon: map
-    theme: ["#c2410c", "#fb923c"]
-    members: [home-finder, mortgage-advisor, reno-designer]
-    prompt: |-
-      组织一次购房决策（串行推进）：@择邻 先梳理需求与看房清单（含一票否决项），@家树 按预算测算贷款方案与税费（2-3 档对比），@筑居 规划装修预算与施工排期（含缓冲）；收尾由 @筑居 交还预算总表与下一步。
-    order: 220
-
-  - id: care-plan
-    name: 照护规划
-    description: 照护方案 → 陪诊准备 → 康养建议：家庭照护支持
-    icon: heart-handshake
-    theme: ["#be185d", "#f472b6"]
-    members: [care-planner, care-escort, elder-advisor]
-    prompt: |-
-      组织一次照护规划（串行推进）：@顾宁 先出照护方案与排班（含照护者喘息安排），@陪安 按方案准备陪诊（资料与问题清单），@颐和 给适老化改造与康养活动建议；全程非医疗诊断，异常症状直接建议就医。
-    order: 230
+    category: creative
+    catalog:
+      keywords:
+        - 游戏立项
+        - 玩法策划
+        - 数值策划
+        - 叙事策划
+        - 玩法验证
+      inputs:
+        - 目标体验
+        - 玩法概念
+        - 平台与资源
+      outputs:
+        - GDD 骨架
+        - 数值叙事方案与验证问题
+      boundary: 模拟验证不等于真实玩家测试，不承诺游戏开发或上线已完成。
 
   - id: chart-combo
     name: 命盘合参
     description: 八字 × 紫微交叉参看：命局结构合盘研习
     icon: moon
-    theme: ["#1e293b", "#f59e0b"]
-    members: [bazi, ziwei]
+    theme: [ "#1e293b", "#f59e0b" ]
+    members: [ bazi, ziwei ]
     prompt: |-
       组织一次命盘合参（八字 + 紫微交叉参看）：@观复 先出四柱排盘与五行结构（附真太阳时校正说明），@星垣 以紫微十二宫与四化对照同一主题展开；两人各指认盘面依据，最后由 @星垣 收敛两份参考解读的共同线索与分歧点，标注参考区间，不做结论性建议。
+      资料不足时先确认目标、输入与约束，不编造事实或完成情况。由 @观复 牵头确认分工；如未明确最终汇总者，由 @观复 汇总交付与待确认项。
     order: 240
+    category: culture
+    catalog:
+      keywords:
+        - 命盘合参
+        - 四柱研习师
+        - 紫微研习师
+      inputs:
+        - 研习主题
+        - 出生或起卦参数
+        - 时间地点口径
+      outputs:
+        - 八字与紫微解读
+        - 共同线索与分歧
+      boundary: 仅供传统文化研习，不作宿命断言，不替代医疗、法律或投资决策。
 
   - id: oracle-crossread
     name: 卦象互参
     description: 六爻 × 梅花两卦对照：一题两占交叉验证
     icon: sparkles
-    theme: ["#1e293b", "#f59e0b"]
-    members: [liuyao, meihua]
+    theme: [ "#1e293b", "#f59e0b" ]
+    members: [ liuyao, meihua ]
     prompt: |-
       组织一次卦象互参（六爻 + 梅花对照解）：@灼见 先按起卦参数（方式 + 种子）出六爻全盘（装卦 / 世应 / 动爻），@心易 以梅花体用生克解同一主题；两卦结论并列呈现，一致与分歧分别标注，应期给参考窗口不给铁口直断。
+      资料不足时先确认目标、输入与约束，不编造事实或完成情况。由 @灼见 牵头确认分工；如未明确最终汇总者，由 @灼见 汇总交付与待确认项。
     order: 250
+    category: culture
+    catalog:
+      keywords:
+        - 卦象互参
+        - 六爻研习师
+        - 梅花研习师
+      inputs:
+        - 研习主题
+        - 出生或起卦参数
+        - 时间地点口径
+      outputs:
+        - 两卦对照解读
+        - 参考窗口与局限
+      boundary: 仅供传统文化研习，不作宿命断言，不替代医疗、法律或投资决策。
 
   - id: full-horoscope
     name: 星盘全解
     description: 本命 → 行运 → 合盘三段递进：星盘全景研习
     icon: star
-    theme: ["#312e81", "#a5b4fc"]
-    members: [natal, transit, synastry]
+    theme: [ "#312e81", "#a5b4fc" ]
+    members: [ natal, transit, synastry ]
     prompt: |-
       组织一次星盘全解（本命 → 行运 → 合盘三段递进）：@司辰 先出本命盘结构与关键格局（相位 orb 口径注明），@星移 叠加当期行运重点时间窗（倾向描述不断言事件），@合璧 做合盘互动模式参考（双方知情前提）；收尾由 @合璧 将三段串成一份参考解读，挑战相位表述为课题与成长点。
+      资料不足时先确认目标、输入与约束，不编造事实或完成情况。由 @司辰 牵头确认分工；如未明确最终汇总者，由 @司辰 汇总交付与待确认项。
     order: 260
+    category: culture
+    catalog:
+      keywords:
+        - 星盘全解
+        - 本命占星师
+        - 行运占星师
+        - 关系占星师
+      inputs:
+        - 出生时间地点
+        - 研习主题
+        - 双方知情的合盘资料
+      outputs:
+        - 星盘参考解读
+        - 互动课题与成长点
+      boundary: 仅供文化参考；不预测确定事件，不以星盘诊断或决定重大事项。
 
   - id: startup-launch
     name: 创业启动
     description: 想法到第一版计划：战略 / 财务 / 合规 / 获客 / 产品五方会审
     icon: rocket
-    theme: ["#6366f1", "#34d399"]
-    members: [chief, finance, legal, growth, pm]
+    theme: [ "#6366f1", "#34d399" ]
+    members: [ chief, finance, legal, growth, pm ]
     prompt: |-
       组织一次创业启动会审：@柏川 先收敛商业模式与优先级（做什么 / 不做什么），@周正 给出启动资金与三个月现金流口径，@卢明 提示主体与合规红线，@高扬 制定冷启动获客动作，@费利 把第一版产品范围与验收清单定下来；收尾汇总为「启动路线图与首月行动计划」。
+      资料不足时先确认目标、输入与约束，不编造事实或完成情况。由 @柏川 牵头确认分工；如未明确最终汇总者，由 @柏川 汇总交付与待确认项。
     order: 320
+    category: business
+    catalog:
+      keywords:
+        - 创业启动
+        - 幕僚长
+        - 财务管家
+        - 法务顾问
+        - 增长负责人
+        - 产品经理
+      inputs:
+        - 商业问题
+        - 经营数据
+        - 资源与约束
+        - 账目与凭证
+        - 主体与地区
+      outputs:
+        - 启动路线图
+        - 首月行动计划
+      boundary: 提供战略判断与经营解释，不替代用户决策；数据库取数由 BI、数据管道由数据工程负责。
 
   - id: career-pivot
     name: 职业转型
-    description: 定位 → 财务承受力 → 谈薪彩排：换赛道前的全链推演
+    description: 定位 → 模拟面试 → offer 对比 → 谈判准备：换赛道前的职业推演
     icon: compass
-    theme: ["#0f766e", "#f59e0b"]
-    members: [career-advisor, wealth, tactician, interview-coach]
+    theme: [ "#0f766e", "#f59e0b" ]
+    members: [ career-advisor, interview-coach, comp-advisor, tactician ]
     prompt: |-
-      组织一次职业转型推演：@程途 先做定位与路径规划（目标 / 差距 / 路线），@钱程 评估转型期的财务承受力（现金流断点与安全线），@苏纵 准备 offer 谈判策略与底线，@问达 做一轮模拟面试并逐轮复盘；收尾汇总为「转型路线图与风险预案」。
+      组织一次职业转型推演：@程途 先做定位与差距分析（目标 / 路线），@问达 做一轮模拟面试并复盘，@薪言 对比薪酬结构与 offer 条件，@苏纵 准备谈判目标、底线与备选方案；收尾汇总为「转型路线图与谈判准备清单」，不涉及家庭理财。
+      资料不足时先确认目标、输入与约束，不编造事实或完成情况。由 @程途 牵头确认分工；如未明确最终汇总者，由 @程途 汇总交付与待确认项。
     order: 330
+    category: life
+    catalog:
+      keywords:
+        - 职业转型
+        - 职业顾问
+        - 薪酬顾问
+        - 谈判教练
+        - 面试教练
+      inputs:
+        - 真实经历
+        - 目标岗位
+        - 薪酬与 offer 条件
+        - 谈判议题
+        - 双方立场
+      outputs:
+        - 转型路线图
+        - offer 比较与谈判准备清单
+      boundary: 不编造经历，不保证录用；薪酬比较不延伸为个人理财规划。
 
   - id: annual-review
     name: 年度复盘
     description: 经营 / 个人 / 财务 / 健康四维复盘：把一年变成下一年的基线
     icon: calendar-clock
-    theme: ["#6366f1", "#f43f5e"]
-    members: [chief, coach, finance, fitness]
+    theme: [ "#6366f1", "#f43f5e" ]
+    members: [ chief, coach, finance, fitness ]
     prompt: |-
       主持年度复盘（四维并进）：@柏川 复盘经营面的关键决策与得失，@周正 给出财务三口径年度账（收入 / 成本 / 现金），@于清 梳理个人状态与精力曲线，@马骁 复盘健康执行与下一年基线；收尾汇总为「年度复盘报告与下一年三件大事」。
+      资料不足时先确认目标、输入与约束，不编造事实或完成情况。由 @柏川 牵头确认分工；如未明确最终汇总者，由 @柏川 汇总交付与待确认项。
     order: 340
+    category: business
+    catalog:
+      keywords:
+        - 年度复盘
+        - 幕僚长
+        - 生活教练
+        - 财务管家
+        - 健身教练
+      inputs:
+        - 商业问题
+        - 经营数据
+        - 资源与约束
+        - 近期目标
+        - 待办与时间安排
+      outputs:
+        - 年度复盘报告
+        - 下一年三件大事
+      boundary: 提供战略判断与经营解释，不替代用户决策；数据库取数由 BI、数据管道由数据工程负责。
 
   - id: ecommerce-growth
     name: 电商增长
     description: 选品 → 店铺运营 → 取数 → 投流：一条链把盘口做起来
     icon: package
-    theme: ["#ea580c", "#ec4899"]
-    members: [category-scout, store-operator, bi, growth]
+    theme: [ "#ea580c", "#ec4899" ]
+    members: [ category-scout, store-operator, bi, growth ]
     prompt: |-
       启动一轮电商增长：@探市 先做选品评估与保本测算，@守铺 排店铺节奏与定价区间（保本线硬约束），@沈析 建经营看板与取数口径（转化 / 退货 / 净利），@高扬 设计投流实验（指标 / 预算 / 止损线）；收尾汇总为「增长方案与本月动作表」。
+      资料不足时先确认目标、输入与约束，不编造事实或完成情况。由 @探市 牵头确认分工；如未明确最终汇总者，由 @探市 汇总交付与待确认项。
     order: 350
+    category: business
+    catalog:
+      keywords:
+        - 电商增长
+        - 选品参谋
+        - 店铺运营
+        - BI 分析师
+        - 增长负责人
+      inputs:
+        - 商品与店铺数据
+        - 成本库存
+        - 增长目标
+        - 业务问题
+        - 数据库授权与结构
+      outputs:
+        - 电商增长方案
+        - 本月动作表
+      boundary: 数据与保本口径先确认；不保证销量，不擅自投流或下单。
 
   - id: content-monetize
     name: 内容商业化
     description: 定位 → 脚本 → 变现设计 → 财务口径：创作者拿到第一笔收入
     icon: megaphone
-    theme: ["#86198f", "#22c55e"]
-    members: [account-strategist, script-writer, monetizer, finance]
+    theme: [ "#86198f", "#22c55e" ]
+    members: [ account-strategist, script-writer, monetizer, finance ]
     prompt: |-
       启动内容商业化：@立帜 先校准账号定位与商业化适配性，@先声 产出三类变现内容的脚本（广告 / 带货 / 付费），@点金 设计变现路径与报价区间（含红线自查），@周正 给个人经营的财务口径与税务提示；收尾汇总为「商业化方案与首发动作」。
+      资料不足时先确认目标、输入与约束，不编造事实或完成情况。由 @立帜 牵头确认分工；如未明确最终汇总者，由 @立帜 汇总交付与待确认项。
     order: 360
+    category: creative
+    catalog:
+      keywords:
+        - 内容商业化
+        - 账号定位师
+        - 脚本写手
+        - 商业化顾问
+        - 财务管家
+      inputs:
+        - 账号定位
+        - 内容数据
+        - 目标受众与商业约束
+        - 账目与凭证
+        - 主体与地区
+      outputs:
+        - 商业化方案
+        - 首发动作清单
+      boundary: 面向账号经营，不承诺流量或收入；发布、广告合作需用户确认。
 
   - id: home-makeover
     name: 家装全案设计
     description: 需求 → 布局 → 效果图全案：主案定风格、规划出布局、可视化出图
     icon: armchair
-    theme: ["#0d9488", "#5eead4"]
-    members: [interior-designer, space-planner, visualizer]
+    theme: [ "#0d9488", "#5eead4" ]
+    members: [ interior-designer, space-planner, visualizer ]
     prompt: |-
       做一套家装全案设计（逐棒推进）：@成竹 先做需求研判与风格定位（情绪板方向 + 色材基调，走 styleboard），@规方 按方案口径出空间规划与布局数据（尺度校验 + scene 文件，走 layout），@塑光 搭 3D 场景并出核心视角效果图（先快照再图生图，走 render）；收尾由 @塑光 汇总方案总览与建议的下一步。
+      资料不足时先确认目标、输入与约束，不编造事实或完成情况。由 @成竹 牵头确认分工；如未明确最终汇总者，由 @成竹 汇总交付与待确认项。
     order: 270
+    category: creative
+    catalog:
+      keywords:
+        - 家装全案设计
+        - 主案设计师
+        - 空间规划师
+        - 3D 可视化设计师
+      inputs:
+        - 户型尺寸
+        - 生活需求
+        - 风格与空间限制
+      outputs:
+        - 风格与空间方案
+        - 布局数据与效果图
+      boundary: 不提供施工预算核定；承重、消防与拆改安全须现场专业人员确认。
 
   - id: move-in-check
     name: 入宅联审
-    description: 户型解析 → 堪舆点评 → 装修避让：入宅前的格局复核闭环
+    description: 户型解析 → 堪舆文化参考 → 空间布局复核：入宅前的格局复核闭环
     icon: compass
-    theme: ["#991b1b", "#fbbf24"]
-    members: [plan-surveyor, yangzhai-master, reno-designer]
+    theme: [ "#991b1b", "#fbbf24" ]
+    members: [ plan-surveyor, yangzhai-master, space-planner ]
     prompt: |-
-      组织一次入宅前格局复核（先盘后论）：@察隅 先做户型解析与坐向采集（含数据等级与存疑项），@司南 排盘做分维度点评与改善参考（盘面走 `::: pan luopan` 整卡），@筑居 按点评结论做装修避让与预算校核（涉结构拆改标注需现场核实）。
+      组织一次入宅前格局复核（先盘后论）：@察隅 先做户型解析与坐向采集（含数据等级与存疑项），@司南 排盘做分维度点评（盘面走 `::: pan luopan` 整卡，仅作文化参考），@规方 复核空间布局、动线与尺度并列出现场待核实项。堪舆解读不作为结构拆改或安全判断依据，不承诺装修预算和施工排期。
+      资料不足时先确认目标、输入与约束，不编造事实或完成情况。由 @察隅 牵头确认分工；如未明确最终汇总者，由 @察隅 汇总交付与待确认项。
     order: 370
+    category: culture
+    catalog:
+      keywords:
+        - 入宅联审
+        - 户型解析师
+        - 阳宅堪舆师
+        - 空间规划师
+      inputs:
+        - 户型图与尺寸
+        - 坐向与地点
+        - 研习问题
+        - 户型尺寸
+        - 生活需求
+      outputs:
+        - 户型与空间动线复核
+        - 文化参考与现场待核实项
+      boundary: 仅供传统文化参考；结构安全、拆改和施工预算需现场专业确认。
 
   - id: tarot-quickread
     name: 塔罗三张快解
     description: 抽牌 → 牌阵解读 → 意象叙事 → 考据出处：一轮完整的三张牌阵研习
     icon: sparkles
-    theme: ["#7c3aed", "#c084fc"]
-    members: [tarot-reader, symbol-narrator, tarot-historian]
+    theme: [ "#7c3aed", "#c084fc" ]
+    members: [ tarot-reader, symbol-narrator, tarot-historian ]
     prompt: |-
       做一次三张牌阵研习（过去 / 现在 / 建议）：@观照 用 tarot_draw 抽牌并按牌阵解读（牌面为据，不作宿命断言），@释象 就关键牌面做意象叙事补充，@考源 给出核心牌义的历史出处与流变；收尾汇总为一份解读札记，注明文化参考定位。
+      资料不足时先确认目标、输入与约束，不编造事实或完成情况。由 @观照 牵头确认分工；如未明确最终汇总者，由 @观照 汇总交付与待确认项。
     order: 380
-
-  - id: trpg-oneshot
-    name: 跑团快速开团
-    description: 剧本 → 规则 → NPC → 主持：一场单发（one-shot）跑团的完整开局
-    icon: dices
-    theme: ["#b91c1c", "#f59e0b"]
-    members: [scenario-writer, rule-keeper, npc-player, gm-host]
-    prompt: |-
-      组织一场单发跑团：@构幕 先出剧本框架（背景 / 冲突 / 三条线索），@执规 定规则口径与安全工具（骰子走 dice_roll，种子可复现），@入戏 准备两位关键 NPC 的设定与声口，@开卷 主持开场回合并推进第一幕；全程玩家向娱乐体验，不作现实预测。
-    order: 390
+    category: culture
+    catalog:
+      keywords:
+        - 塔罗三张快解
+        - 牌阵解读
+        - 意象叙事
+        - 塔罗考据
+      inputs:
+        - 研习问题
+        - 牌阵偏好
+        - 已有牌面或抽牌参数
+      outputs:
+        - 牌阵解读札记
+        - 意象与历史出处
+      boundary: 仅供文化与叙事研习，不作宿命断言或重大决策依据。
 
   - id: paper-sprint
     name: 论文冲刺
     description: 文献 → 方法 → 成稿 → 投稿：论文生产链一轮完整推进
     icon: graduation-cap
-    theme: ["#1d4ed8", "#38bdf8"]
-    members: [lit-reviewer, methodologist, paper-editor, submit-advisor]
+    theme: [ "#1d4ed8", "#38bdf8" ]
+    members: [ lit-reviewer, methodologist, paper-editor, submit-advisor ]
     prompt: |-
       启动论文冲刺（逐棒推进）：@索隐 先出文献综述与研究缺口（引用真实性可回溯），@定矩 审定研究设计与方法口径，@琢稿 按学术规范打磨成稿结构与表达，@叩门 给出目标期刊 / 会议清单与投稿材料清单；收尾汇总为「论文推进计划与当前稿件状态」。
+      资料不足时先确认目标、输入与约束，不编造事实或完成情况。由 @索隐 牵头确认分工；如未明确最终汇总者，由 @索隐 汇总交付与待确认项。
     order: 400
+    category: learning
+    catalog:
+      keywords:
+        - 论文冲刺
+        - 文献综述员
+        - 研究方法顾问
+        - 学术编辑
+        - 投稿顾问
+      inputs:
+        - 研究课题
+        - 文献与数据
+        - 稿件和投稿要求
+      outputs:
+        - 论文推进计划
+        - 稿件状态与投稿清单
+      boundary: 不伪造引用、实验或数据；作者对研究真实性与署名负责。
 
   - id: philosophy-teatime
     name: 哲学茶席
     description: 追问 → 思想实验 → 伦理框架：把一个困扰想得更清楚
     icon: coffee
-    theme: ["#57534e", "#a8a29e"]
-    members: [socratic-host, thought-experimenter, ethics-moderator]
+    theme: [ "#57534e", "#a8a29e" ]
+    members: [ socratic-host, thought-experimenter, ethics-moderator ]
     prompt: |-
       开一席哲学茶席：@叩问 先用苏格拉底式追问澄清我真正的问题，@设境 设计一个思想实验把隐含假设暴露出来，@议善 用三种伦理框架并列分析（多元立场并列，不作意识形态输出）；收尾记录「问题澄清 + 我的暂定立场 + 待想清单」。
+      资料不足时先确认目标、输入与约束，不编造事实或完成情况。由 @叩问 牵头确认分工；如未明确最终汇总者，由 @叩问 汇总交付与待确认项。
     order: 410
+    category: discussion
+    catalog:
+      keywords:
+        - 哲学茶席
+        - 追问主持
+        - 思想实验
+        - 伦理研讨
+      inputs:
+        - 困扰或命题
+        - 背景假设
+        - 讨论目标
+      outputs:
+        - 问题澄清
+        - 暂定立场与待想清单
+      boundary: 呈现多元论证，不给唯一人生答案，不替代心理或法律专业帮助。
 
   - id: relationship-checkup
     name: 关系体检
     description: 沟通练习 → 调解视角 → 相处方案：一段关系的状态梳理
     icon: heart-handshake
-    theme: ["#db2777", "#fb7185"]
-    members: [rel-coach, mediator, date-coach]
+    theme: [ "#db2777", "#fb7185" ]
+    members: [ rel-coach, mediator, date-coach ]
     prompt: |-
       做一次关系状态梳理：@知言 先梳理现状与沟通模式（不诊断、不贴标签），@居间 从双方视角各做一次立场复述，@初见 给出具体场景的沟通练习脚本；收尾汇总为「关系体检与下周一个可执行的小练习」。危机信号直接建议转介专业帮助。
+      资料不足时先确认目标、输入与约束，不编造事实或完成情况。由 @知言 牵头确认分工；如未明确最终汇总者，由 @知言 汇总交付与待确认项。
     order: 420
-
-  - id: home-week
-    name: 家庭一周安排
-    description: 菜单 → 家务 → 孩子 / 宠物：把一周家务排成清爽清单
-    icon: home
-    theme: ["#f59e0b", "#84cc16"]
-    members: [chef, home, parenting, pet]
-    prompt: |-
-      安排家庭一周事务：@唐味 出一周菜单与采买清单（按人数与口味），@温居 排家务分区与排期，@苗雨 安排孩子的作息与活动，@柯萌 补齐宠物照护要点；收尾汇总为一张可打钩的周清单。
-    order: 430
-
-  - id: wealth-checkup
-    name: 财务体检
-    description: 收支 → 保障 → 大额决策：个人财务的一轮完整检视
-    icon: piggy-bank
-    theme: ["#059669", "#34d399"]
-    members: [wealth, insurance-planner, big-ticket-advisor]
-    prompt: |-
-      做一次个人财务体检：@钱程 先盘收支与目标储蓄（预算口径），@保宁 检视保障缺口与保额合理性（先保障后投资），@慎衡 就近期一笔大额支出做决策清单；收尾汇总为「财务体检报告与三条优先动作」，先稳后进。
-    order: 440
-
-  - id: rights-check
-    name: 维权路径评估
-    description: 时效 → 路径对比 → 证据清单：个人维权的第一步走对
-    icon: scale
-    theme: ["#334155", "#94a3b8"]
-    members: [rights-advisor, labor-advisor, contract-checker]
-    prompt: |-
-      评估一次维权路径：@持正 先做时效状态与四路对比（协商 / 投诉 / 仲裁 / 诉讼），@守薪 若涉劳动纠纷给出仲裁口径与材料清单，@审微 审相关合同 / 协议的风险条款；收尾汇总为「维权方案与证据清单」，重大事项建议转执业律师。
-    order: 450
+    category: life
+    catalog:
+      keywords:
+        - 关系体检
+        - 情感顾问
+        - 关系调解
+        - 相亲陪练
+      inputs:
+        - 关系情境
+        - 沟通片段
+        - 双方目标与边界
+      outputs:
+        - 关系沟通梳理
+        - 下周练习
+      boundary: 不诊断、不操控他人；暴力或危机信号优先寻求现实安全支持。
 
   - id: mock-trial
     name: 模拟庭审
     description: 原告主张 → 被告抗辩 → 审判长裁决：一轮庭审对抗演练
     icon: gavel
-    theme: ["#78350f", "#fbbf24"]
-    members: [plaintiff-counsel, defense-counsel, presiding-judge]
+    theme: [ "#78350f", "#fbbf24" ]
+    members: [ plaintiff-counsel, defense-counsel, presiding-judge ]
     prompt: |-
       组织一场模拟庭审（程序正义框架）：@申言 立原告主张与举证清单，@析辩 逐条抗辩并质证，@端衡 主持程序、归纳争点并出具模拟判决书；模拟推演性质，不针对真实未决案件。
+      资料不足时先确认目标、输入与约束，不编造事实或完成情况。由 @申言 牵头确认分工；如未明确最终汇总者，由 @申言 汇总交付与待确认项。
     order: 460
-
-  - id: sales-sprint
-    name: 销售冲刺
-    description: 线索 → 话术 → 客户成功 → 客服闭环：一轮打单全链演练
-    icon: target
-    theme: ["#0891b2", "#22d3ee"]
-    members: [bd, sales, success, support]
-    prompt: |-
-      组织一轮销售冲刺：@秦拓 先盘线索池与优先级，@陆征 出报价与话术方案（每条线索有下一动作），@安然 设计签约后的客户成功陪跑节奏，@夏禾 补齐客服 SOP 与升级阈值；收尾汇总为「本周打单动作表」。
-    order: 470
+    category: discussion
+    catalog:
+      keywords:
+        - 模拟庭审
+        - 原告代理
+        - 被告代理
+        - 审判长
+      inputs:
+        - 虚构或教学案情
+        - 证据材料
+        - 程序与法域
+      outputs:
+        - 诉辩与质证记录
+        - 模拟判决书
+      boundary: 仅限教学与模拟，不代替真实案件法律意见或司法判断。
 
   - id: mind-reset
     name: 情绪安顿
     description: 陪谈 → 正念练习 → 心理科普：一轮非治疗的情绪支持闭环
     icon: heart-handshake
-    theme: ["#0d9488", "#f472b6"]
-    members: [emotion-companion, mindfulness-guide, psycho-educator]
+    theme: [ "#0d9488", "#f472b6" ]
+    members: [ emotion-companion, mindfulness-guide, psycho-educator ]
     prompt: |-
       我最近状态不太好，帮我安顿一下：@听澜 先接住情绪、梳理状态（非治疗，先复述），@安屿 给我一个三分钟就能做的练习与一周安排（含独自执行版与暂停信号），@知澄 科普相关概念（含自助边界与求助渠道）；出现危机信号直接建议专业帮助。
+      资料不足时先确认目标、输入与约束，不编造事实或完成情况。由 @听澜 牵头确认分工；如未明确最终汇总者，由 @听澜 汇总交付与待确认项。
     order: 480
+    category: life
+    catalog:
+      keywords:
+        - 情绪安顿
+        - 情绪陪谈师
+        - 正念引导师
+        - 心理科普员
+      inputs:
+        - 当前感受
+        - 愿意分享的情境
+        - 自助偏好
+      outputs:
+        - 情绪梳理
+        - 自助练习与求助边界
+      boundary: 非治疗情绪支持，不做诊断；危机或持续困扰需专业帮助。
 
   - id: bullbear-pk
     name: 多空对决
     description: 标的对抗研判：多空两支专家队立论 / 举证 / 质证 / 结辩，裁决长终局裁决（全程可视化）
     icon: scale
-    theme: ["#dc2626", "#059669"]
-    members: [judge, bull-lead, bear-lead, bull-quant, bear-quant]
+    theme: [ "#dc2626", "#059669" ]
+    members: [ judge, bull-lead, bear-lead, bull-quant, bear-quant ]
     prompt: |-
       围绕下面的标的组织一场多空对决：请 @顾鉴 先确认对决要素（标的 / 周期 / 轮数 / 模式），@向阳 与 @知寒 逐轮立论，@陆准 与 @程实 负责量化举证与质证回应，@顾鉴 逐轮判定并出终局裁决书；不预测点位、不构成投资建议。
+      资料不足时先确认目标、输入与约束，不编造事实或完成情况。由 @顾鉴 牵头确认分工；如未明确最终汇总者，由 @顾鉴 汇总交付与待确认项。
     order: 55
+    category: investment
+    catalog:
+      keywords:
+        - 多空对决
+        - 裁决长
+        - 多方主辩
+        - 空方主辩
+        - 多方证据官
+        - 空方证据官
+      inputs:
+        - 标的与周期
+        - 双方论点与证据
+        - 对决轮数
+      outputs:
+        - 多空质证记录
+        - 终局裁决书
+      boundary: 多空对抗推演独立于常规投研；不预测点位、不构成投资建议。

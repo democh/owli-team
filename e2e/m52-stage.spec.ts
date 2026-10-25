@@ -7,8 +7,8 @@
  *    dock·board（创作工作室）/ dock·coach（职业发展）；
  * 4) M52-B · arena 窄屏降级：单流 + 席位横条（左右席栏与中轴席位不渲染）；
  * 5) M52-C · 既有场景接入逐场景走查：C1 研讨域（头脑风暴 / 深度研究 / 商业战略，roundtable·pool）/
- *    C2 工作域（站点可靠性·市场增长·销售客户·商业智能·融资资本 console + 投资研究 versus）/
- *    C3 生活域（健康生活 / 学习成长 / 出行旅行 / 财富管理 / 个人管理，coach）；
+ *    C2 工作域（站点可靠性·市场增长·商业智能·融资资本 console + 投资研究 versus）/
+ *    C3 生活域（健康生活 / 学习成长 / 出行旅行 / 个人管理，coach）；
  * 6) M52-C · roundtable 窄屏降级：席位横条 + M58 无产物不渲染汇聚板抽屉；
  * 7) M52-D · arena 席位发言流：左右席下栏投影（空态 → 该席发言条目 + 轮次徽标）；
  * 8) M58 · 面板无数据不展示：六面板就绪判定接入宿主（无数据零工作区结构）；标题合行
@@ -272,14 +272,6 @@ test('M52-C2 · 市场增长（dock·console）：无数据不渲染工作区', 
   await expect(page.getByText('看板面板')).toHaveCount(0)
 })
 
-test('M52-C2 · 销售客户（dock·console）：无数据不渲染工作区', async ({ page }) => {
-  await openApp(page)
-  await createSession(page, { scene: '销售客户', title: `E2E-M52C-销售-${Date.now()}` })
-
-  await expect(page.locator('.scene-dock')).toHaveCount(0)
-  await expect(page.getByText('看板面板')).toHaveCount(0)
-})
-
 test('M52-C2 · 商业智能（dock·console）：无数据不渲染工作区', async ({ page }) => {
   await openApp(page)
   await createSession(page, { scene: '商业智能', title: `E2E-M52C-BI-${Date.now()}` })
@@ -407,14 +399,6 @@ test('M52-C3 · 学习成长（dock·coach）：无数据不渲染工作区', as
 test('M52-C3 · 出行旅行（dock·coach）：无数据不渲染工作区', async ({ page }) => {
   await openApp(page)
   await createSession(page, { scene: '出行旅行', title: `E2E-M52C-旅行-${Date.now()}` })
-
-  await expect(page.locator('.scene-dock')).toHaveCount(0)
-  await expect(page.getByText('陪跑面板')).toHaveCount(0)
-})
-
-test('M52-C3 · 财富管理（dock·coach）：无数据不渲染工作区', async ({ page }) => {
-  await openApp(page)
-  await createSession(page, { scene: '财富管理', title: `E2E-M52C-财富-${Date.now()}` })
 
   await expect(page.locator('.scene-dock')).toHaveCount(0)
   await expect(page.getByText('陪跑面板')).toHaveCount(0)

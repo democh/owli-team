@@ -9,7 +9,7 @@ import { resolveRelayMode } from '@multi-agent/shared'
 import fs from 'node:fs'
 import path from 'node:path'
 import type { AppConfig } from '../config.js'
-import type { LlmMessageInput } from '../llm/provider.js'
+import { abortError, type LlmMessageInput } from '../llm/provider.js'
 import type { MemoryService, RecallOutcome } from '../memory/service.js'
 import type { ArtifactStore } from '../store/artifacts.js'
 import type { ArtifactIndex } from '../store/artifact-index.js'
@@ -74,6 +74,8 @@ export interface PrepareTurnInput {
   reviewTargets?: TurnInstructionExtra['reviewTargets']
   /** M24：上一棒交接期望（{from, expectedOutput}；仅带期望时渲染） */
   handoffs?: TurnInstructionExtra['handoffs']
+  /** 本成员在此 Run 已通过 load_skill 激活的技能正文 */
+  loadedSkills?: string[]
   /** M28：按需工具发现概览（<tool_discovery>；启用发现时注入 L3，未启用不注入） */
   toolDiscoveryBlock?: string
   /** M79-J（§8.8）：会话人类成员（human_roster + 回合交还指令；无人类 = 不注入） */
@@ -115,6 +117,7 @@ export class ContextService {
   }
 
   async prepareTurn(input: PrepareTurnInput): Promise<PreparedTurn> {
+    if (input.signal?.aborted) throw abortError()
     const { cfg } = this.deps
     // M87：会话首次访问时校准索引（已有校准记录则零 IO，不给每回合引入扫描延迟）
     if (this.deps.index && !input.signal?.aborted) {
@@ -125,7 +128,9 @@ export class ContextService {
       }
     }
     // M25：语义召回（超时 / 失败静默；同一回合的多次重装配复用同一结果）
+    if (input.signal?.aborted) throw abortError()
     const recall = await this.recallFor(input)
+    if (input.signal?.aborted) throw abortError()
     const first = this.assemble(input, recall)
     if (first.estimatedTokens <= cfg.contextBudgetTokens * COMPRESS_THRESHOLD) {
       return first
@@ -146,7 +151,7 @@ export class ContextService {
         signal: input.signal,
         runId: input.runId,
       })
-    })
+    }, input.signal)
 
     if (reused) {
       const second = this.assemble(input, recall)
@@ -154,6 +159,7 @@ export class ContextService {
       // 复用后仍超总预算 → 走更激进压缩（正常广播本次结果）
       const forced = await this.withCompressionLock(input.sessionId, () =>
         this.deps.compressor.compress({ sessionId: input.sessionId, keepRecentTurns: 1, signal: input.signal, runId: input.runId }),
+        input.signal,
       )
       if (!forced?.compressed) return second
       const third = this.assemble(input, recall)
@@ -182,6 +188,7 @@ export class ContextService {
     if (second.estimatedTokens > cfg.contextBudgetTokens) {
       const forced = await this.withCompressionLock(input.sessionId, () =>
         this.deps.compressor.compress({ sessionId: input.sessionId, keepRecentTurns: 1, signal: input.signal, runId: input.runId }),
+        input.signal,
       )
       if (forced?.compressed) {
         second = this.assemble(input, recall)
@@ -211,25 +218,23 @@ export class ContextService {
         signal: input.signal,
         runId: input.runId,
       }),
+      input.signal,
     )
   }
 
   /** M16：会话级压缩互斥（同会话压缩串行化；先到者失败不阻塞后到者） */
-  private async withCompressionLock<T>(sessionId: string, fn: () => Promise<T>): Promise<T> {
-    const pending = this.compressions.get(sessionId)
-    if (pending) {
-      try {
-        await pending
-      } catch {
-        // 先到者失败：本路径自行压缩
-      }
-    }
-    const task = fn()
-    this.compressions.set(sessionId, task as Promise<unknown>)
+  private async withCompressionLock<T>(sessionId: string, fn: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+    const pending = this.compressions.get(sessionId) ?? Promise.resolve()
+    // 等待前先登记队尾，后到者只能等待本任务，不能同时越过上一把锁。
+    const task = pending.catch(() => undefined).then(() => {
+      if (signal?.aborted) throw abortError()
+      return fn()
+    })
+    this.compressions.set(sessionId, task)
     try {
       return await task
     } finally {
-      if (this.compressions.get(sessionId) === (task as Promise<unknown>)) this.compressions.delete(sessionId)
+      if (this.compressions.get(sessionId) === task) this.compressions.delete(sessionId)
     }
   }
 
@@ -285,9 +290,11 @@ export class ContextService {
     // 灵魂（§26 · M77）：会话覆盖（经典）> 成员键内嵌（分身）> 角色默认（souls/default.md）；无灵魂 = 不注入
     const soul = prompts.soul(input.agentId, session.memberSouls?.[input.agentId])
 
-    // 预载 Skill（front-matter skills 的正文直接进提示）
+    // 渐进披露：具备 load_skill 的角色先只看技能索引，正文按需加载并在本 Run 内复用；
+    // 旧角色若未声明加载工具，保留预载兜底，避免技能能力静默消失。
+    const skillNames = (agent.tools ?? []).includes('load_skill') ? (input.loadedSkills ?? []) : (agent.skills ?? [])
     const preloaded: Array<{ name: string; body: string }> = []
-    for (const name of agent.skills ?? []) {
+    for (const name of new Set(skillNames)) {
       const skill = skills.get(name)
       if (skill) preloaded.push({ name: skill.name, body: skill.body })
     }

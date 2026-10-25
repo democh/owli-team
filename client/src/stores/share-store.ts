@@ -6,6 +6,7 @@
  * - POST   /api/sessions/:id/shares          → 邀请（{ username, role }）
  * - PATCH  /api/sessions/:id/shares/:userId  → 改角色（{ role }）
  * - DELETE /api/sessions/:id/shares/:userId  → 移出
+ * - POST   /api/sessions/:id/transfer        → 群主转让（目标须为共享成员）
  * - POST   /api/sessions/:id/leave           → 自助退出
  * 每次写操作响应回传最新共享视图（服务端为真相）；面板打开时按 sessionId 懒加载。
  */
@@ -35,6 +36,7 @@ export interface ShareState {
   invite: (sessionId: string, username: string, role: SessionShareRole) => Promise<void>
   setRole: (sessionId: string, userId: string, role: SessionShareRole) => Promise<void>
   remove: (sessionId: string, userId: string) => Promise<void>
+  transferOwner: (sessionId: string, userId: string) => Promise<void>
   leave: (sessionId: string) => Promise<void>
   /** notify:share-changed：面板正打开该会话 → 静默刷新（其余情况由 ws-store 刷新会话列表） */
   refreshIfOpen: (sessionId: string) => void
@@ -83,6 +85,16 @@ export const useShareStore = create<ShareState>((set, get) => ({
     try {
       const view = await apiDelete<SharesView>(`/api/sessions/${sessionId}/shares/${userId}`)
       set({ view })
+    } finally {
+      set({ busy: false })
+    }
+  },
+
+  transferOwner: async (sessionId, userId) => {
+    set({ busy: true })
+    try {
+      await apiPost<{ session: unknown }>(`/api/sessions/${sessionId}/transfer`, { userId })
+      await get().load(sessionId)
     } finally {
       set({ busy: false })
     }

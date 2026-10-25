@@ -23,3 +23,20 @@ stage:
   layout: dock
   panel: console
 
+category: business
+catalog:
+  keywords:
+    - 市场增长
+    - 内容选题
+    - 投放实验
+    - 渠道分析
+    - 品牌物料
+  inputs:
+    - 产品与客群
+    - 渠道数据
+    - 预算与目标
+  outputs:
+    - 增长方案
+    - 内容日历
+    - 渠道优化清单
+  boundary: 面向企业获客，不承诺排名或转化收益；预算与发布由用户确认。

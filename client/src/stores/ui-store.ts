@@ -22,6 +22,7 @@
  * M56 扩展：设置页分组聚焦请求（`settingsFocus`，画布生成面板 → 设置·媒体生成；nonce 可重触发）。
  */
 import { create } from 'zustand'
+import { confirmDiscardChanges } from '../lib/unsaved-changes'
 
 export type MainTab = 'chat' | 'artifacts' | 'canvas' | 'database' | 'terminal'
 
@@ -206,6 +207,8 @@ interface UiState {
   rightPanelOpen: boolean
   /** 左栏显隐（宽屏；会话头部收起钮 / 左缘把手 / ⌘⇧B；与右栏对称） */
   leftPanelOpen: boolean
+  sessionDrawer: boolean
+  setSessionDrawer: (open: boolean) => void
   /** M79-C：左栏页签（会话 | 联系人；联系人入口仅多用户模式渲染） */
   leftTab: 'sessions' | 'contacts'
   /** M79-F：会话列表筛选 chip（团队 / 聊天；默认选中第一个「团队」，点选过滤 / 再点取消回全部；仅多用户模式渲染） */
@@ -225,13 +228,15 @@ interface UiState {
   /** 接力目标（消息交付件 chip 点击 → 跳交付件页并选中） */
   requestedArtifactPath?: string
   /** 消息定位请求（右侧接力视图点击 → 对话区滚动 + 闪光；nonce 保证重复点击可重触发） */
-  focusRequest?: { id: string; nonce: number }
+  focusRequest?: { id: string; seq?: number; nonce: number }
   /** M8：⌘K 命令面板 */
   commandOpen: boolean
   /** M8：上下文抽屉（底栏电池点击 / 命令面板） */
   contextOpen: boolean
   /** M8：内联编辑中的用户消息 id（编辑重发） */
   editingMessageId?: string
+  /** IM：引用回复目标（Composer 顶部引用条；发送后清除） */
+  replyTarget?: { sessionId: string; messageId: string; authorName?: string; excerpt: string; deleted?: boolean }
   /** M8：向 Composer 插入文本的请求（引用 / @文件 / 命令面板；nonce 保证重复内容可重触发） */
   composerInsert?: { text: string; nonce: number }
   /** M56：设置页分组聚焦请求（画布生成面板 → 设置·媒体生成；nonce 保证重复点击可重触发） */
@@ -243,10 +248,10 @@ interface UiState {
   /** M16：邀请成员对话框（成员视图底部 / CommandPalette 共用） */
   inviteOpen: boolean
   /** M21：请求打开建会话对话框并预选来源（快速组队 / 场景；nonce 保证重复选择可重触发） */
-  pendingCreate?: { kind: 'preset' | 'scene'; id: string; nonce: number }
+  pendingCreate?: { kind?: 'preset' | 'scene' | 'agent'; id?: string; draft?: string; nonce: number }
   setMainTab: (tab: MainTab) => void
   /** M26：切换应用视图（含 localStorage 持久化） */
-  setAppView: (view: AppView) => void
+  setAppView: (view: AppView) => boolean
   /** 切换右栏视图；默认展开右栏（`reveal: false` = 程序性切换不抢展开，用于自动跟随） */
   setRightView: (view: RightView, opts?: { reveal?: boolean }) => void
   setRightPanelOpen: (open: boolean) => void
@@ -283,12 +288,14 @@ interface UiState {
   requestArtifact: (path: string) => void
   consumeArtifactRequest: () => void
   /** 定位消息：切回对话页并闪光指定消息 */
-  focusMessage: (id: string) => void
+  focusMessage: (id: string, seq?: number) => void
   clearFocus: () => void
   setCommandOpen: (open: boolean) => void
   setContextOpen: (open: boolean) => void
   /** 开始/结束内联编辑（undefined 结束） */
   startEditMessage: (id?: string) => void
+  /** 进入引用回复（target 为空 = 取消） */
+  startReply: (target?: UiState['replyTarget']) => void
   /** 引用到输入框：切回对话页并排队插入 */
   insertToComposer: (text: string) => void
   consumeComposerInsert: () => void
@@ -303,8 +310,8 @@ interface UiState {
   closeTrace: () => void
   setHelpOpen: (open: boolean) => void
   setInviteOpen: (open: boolean) => void
-  /** M21：命令面板 → 建会话对话框（SessionList 消费后直接进入成员微调步） */
-  requestCreate: (kind: 'preset' | 'scene', id: string) => void
+  /** M21：命令面板 → 建会话对话框（SessionList 消费后直接进入成员微调步）；返回 false = 用户取消离开 */
+  requestCreate: (kind?: 'preset' | 'scene' | 'agent', id?: string, draft?: string) => boolean
   consumeCreate: () => void
   /** M54 续完善：摇卦台打开请求（全局宿主消费；null = 关闭）——弹窗不随消息行回收 / 面板卸载消失 */
   panToss: PanTossRequest | null
@@ -335,6 +342,8 @@ export const useUiStore = create<UiState>((set, get) => ({
   lastOf: initialRight.lastOf,
   rightPanelOpen: loadRightPanelOpen(),
   leftPanelOpen: loadLeftPanelOpen(),
+  sessionDrawer: false,
+  setSessionDrawer: (open) => set({ sessionDrawer: open }),
   leftTab: 'sessions',
   sessionFilter: 'team',
   quietMode: false,
@@ -357,12 +366,14 @@ export const useUiStore = create<UiState>((set, get) => ({
     else set({ mainTab: tab })
   },
   setAppView: (view) => {
+    if (view !== get().appView && !confirmDiscardChanges()) return false
     try {
       localStorage.setItem(APP_VIEW_KEY, view)
     } catch {
       // 持久化失败不影响切换
     }
     set({ appView: view })
+    return true
   },
   setRightView: (view, opts) => {
     const lastOf = { ...get().lastOf, [groupOf(view)]: view }
@@ -430,15 +441,16 @@ export const useUiStore = create<UiState>((set, get) => ({
     }),
   requestArtifact: (path) => set({ requestedArtifactPath: path, newArtifactCount: 0 }),
   consumeArtifactRequest: () => set({ requestedArtifactPath: undefined }),
-  focusMessage: (id) =>
+  focusMessage: (id, seq) =>
     set((s) => ({
       mainTab: 'chat',
-      focusRequest: { id, nonce: (s.focusRequest?.nonce ?? 0) + 1 },
+      focusRequest: { id, ...(seq !== undefined ? { seq } : {}), nonce: (s.focusRequest?.nonce ?? 0) + 1 },
     })),
   clearFocus: () => set({ focusRequest: undefined }),
   setCommandOpen: (open) => set({ commandOpen: open }),
   setContextOpen: (open) => set({ contextOpen: open }),
   startEditMessage: (id) => set({ editingMessageId: id }),
+  startReply: (target) => set({ replyTarget: target, ...(target ? { mainTab: 'chat' as const } : {}) }),
   insertToComposer: (text) =>
     set((s) => ({
       mainTab: 'chat',
@@ -453,8 +465,18 @@ export const useUiStore = create<UiState>((set, get) => ({
   closeTrace: () => set({ traceRunId: undefined }),
   setHelpOpen: (open) => set({ helpOpen: open }),
   setInviteOpen: (open) => set({ inviteOpen: open }),
-  requestCreate: (kind, id) =>
-    set((s) => ({ pendingCreate: { kind, id, nonce: (s.pendingCreate?.nonce ?? 0) + 1 } })),
+  requestCreate: (kind, id, draft) => {
+    // 与 setAppView 共用离开保护：用户取消放弃修改时不再切视图 / 排队创建
+    if (!get().setAppView('workspace')) return false
+    set((s) => ({
+      pendingCreate: { kind, id, draft, nonce: (s.pendingCreate?.nonce ?? 0) + 1 },
+      leftTab: 'sessions',
+      leftPanelOpen: true,
+      // 窄屏只有抽屉里的 SessionList 消费 pendingCreate：同时打开抽屉，否则组队台不会弹出（宽屏忽略此标记）
+      sessionDrawer: true,
+    }))
+    return true
+  },
   consumeCreate: () => set({ pendingCreate: undefined }),
   openPanToss: (req) => set({ panToss: req }),
   closePanToss: () => set({ panToss: null }),

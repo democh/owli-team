@@ -17,13 +17,14 @@ import type {
   Plan,
   RunEndReason,
   RunEvent,
+  RunExecutionState,
   Session,
   ToolCallRecord,
   TurnMode,
   TurnIntent,
   UsageSnapshot,
 } from '@multi-agent/shared'
-import { BLANK_SCENE_ID, baseAgentId, extractDeliveredPaths, resolveRelayMode, sanitizeModelText, soulIdOfMember } from '@multi-agent/shared'
+import { BLANK_SCENE_ID, RETIRED_SESSION_HINT, baseAgentId, extractDeliveredPaths, resolveRelayMode, retiredScenesOf, sanitizeModelText, soulIdOfMember } from '@multi-agent/shared'
 import type { AppConfig } from '../config.js'
 import type { ApprovalOutcome, ApprovalService } from '../approval.js'
 import type { PlanReviewService } from '../plan-review.js'
@@ -246,6 +247,8 @@ interface RunRecord {
   /** M24：per-agent 任务清单（修复 §29 波内并发互相覆盖的已知限制） */
   todosByAgent: Map<string, TodoItem[]>
   skillCache: Map<string, string>
+  /** 各成员在本 Run 已加载的技能；正文进后续系统提示，成员之间不共享激活态 */
+  loadedSkillsByAgent: Map<string, Set<string>>
   /** M28：本 Run 已激活的延迟工具（tool_search 命中即激活；Run 级生命周期，不跨 Run） */
   activatedTools: Set<string>
   /** M28：各成员回合级发现态（执行门与检索范围依据；回合开始刷新，Run 结束即弃） */
@@ -262,8 +265,8 @@ interface RunRecord {
   planSuggestNotified?: boolean
   /** M86：接力控制（manual = 成员 handoff 仅记录建议、不自动接棒；缺省 = auto） */
   relayMode?: 'auto' | 'manual'
-  /** M24：计划派发登记（agentId → 分配给他的步骤 id 序列） */
-  planDispatch: Map<string, string[]>
+  /** M24：计划派发登记（memberKey → 计划内步骤复合键序列） */
+  planDispatch: Map<string, Array<{ planId: string; stepId: string }>>
   /** M24：本 Run 关联的活跃计划（派发 / 步骤推进 / 收口扫描输入） */
   activePlanIds: Set<string>
   /** M24：已提交未决的计划（挂起等待期间暂存） */
@@ -372,9 +375,10 @@ export class Engine {
    * 发起运行：用户消息已落库后调用。同步返回 runId（用于订阅），执行在 microtask 启动。
    * M24：opts.mode = Composer 消息级范式（仅本 Run 首波）；缺省按会话「规划先行」→ plan，否则 execute。
    */
-  launch(sessionId: string, userMessageId: string, opts: { mode?: TurnMode } = {}): LaunchResult {
+  launch(sessionId: string, userMessageId: string, opts: { mode?: TurnMode; triggerUserId?: string } = {}): LaunchResult {
     const session = this.deps.sessions.getSession(sessionId)
     if (!session) throw new Error('会话不存在')
+    this.assertExecutable(session)
     if (this.activeRunOf(sessionId)) throw new Error('会话已有运行中的任务')
     this.assertUserCapacity(sessionId)
     const userMessage = this.deps.sessions
@@ -433,7 +437,7 @@ export class Engine {
       id: `run_${randomUUID().slice(0, 8)}`,
       sessionId,
       // M57 P2：触发者 = 发起本 Run 的用户消息作者（共享会话连接复核；兼容模式为 undefined）
-      triggerUserId: userMessage.userId,
+      triggerUserId: opts.triggerUserId ?? userMessage.userId,
       controller: new AbortController(),
       subscribers: new Set(),
       queue,
@@ -455,6 +459,7 @@ export class Engine {
       turnIndex: 0,
       todosByAgent: new Map(),
       skillCache: new Map(),
+      loadedSkillsByAgent: new Map(),
       activatedTools: new Set(),
       discoveryByAgent: new Map(),
       state: 'waiting',
@@ -480,6 +485,8 @@ export class Engine {
       queue,
       // M57：运行归因（会话属主；单用户兼容模式缺省）
       userId: this.deps.sessions.getSession(sessionId)?.ownerId,
+      triggerUserId: record.triggerUserId,
+      execution: this.executionSnapshot(record),
     })
 
     const queued = this.activeCount >= this.deps.cfg.asyncRunMax
@@ -501,11 +508,12 @@ export class Engine {
    * M24：稍后批准 —— 计划无挂起（用户停止后取消 / 历史提交）时的批准路径：新起执行 Run。
    * 队列 = 步骤负责人（按步骤序去重）；范式固定 execute（步骤自身的 review 覆盖）。
    */
-  launchPlanExecution(sessionId: string, planId: string): LaunchResult {
+  launchPlanExecution(sessionId: string, planId: string, opts: { triggerUserId?: string } = {}): LaunchResult {
     const { sessions, plans } = this.deps
     if (!plans) throw new Error('计划功能未启用')
     const session = sessions.getSession(sessionId)
     if (!session) throw new Error('会话不存在')
+    this.assertExecutable(session)
     if (this.activeRunOf(sessionId)) throw new Error('会话已有运行中的任务')
     this.assertUserCapacity(sessionId)
     const plan = plans.get(planId)
@@ -523,6 +531,7 @@ export class Engine {
     const record: RunRecord = {
       id: `run_${randomUUID().slice(0, 8)}`,
       sessionId,
+      triggerUserId: opts.triggerUserId,
       controller: new AbortController(),
       subscribers: new Set(),
       queue,
@@ -544,6 +553,7 @@ export class Engine {
       turnIndex: 0,
       todosByAgent: new Map(),
       skillCache: new Map(),
+      loadedSkillsByAgent: new Map(),
       activatedTools: new Set(),
       discoveryByAgent: new Map(),
       state: 'waiting',
@@ -567,6 +577,8 @@ export class Engine {
       state: 'waiting',
       queue,
       userId: this.deps.sessions.getSession(sessionId)?.ownerId,
+      triggerUserId: record.triggerUserId,
+      execution: this.executionSnapshot(record),
     })
     // M24：登记派发（planDispatch + plan→executing）先于首波：首个波次的成员即命中步骤
     this.registerPlanDispatch(record, approved)
@@ -600,6 +612,7 @@ export class Engine {
     const { sessions } = this.deps
     const session = sessions.getSession(sessionId)
     if (!session) throw new Error('会话不存在')
+    this.assertExecutable(session)
     if (!session.participantIds.includes(agentId)) throw new Error('目标不在会话中')
     const note = opts.note?.trim()
     const active = this.activeRunOf(sessionId)
@@ -664,6 +677,7 @@ export class Engine {
       turnIndex: 0,
       todosByAgent: new Map(),
       skillCache: new Map(),
+      loadedSkillsByAgent: new Map(),
       activatedTools: new Set(),
       discoveryByAgent: new Map(),
       state: 'waiting',
@@ -683,7 +697,15 @@ export class Engine {
       ])
     this.runs.set(record.id, record)
     this.sessionRuns.set(sessionId, record.id)
-    this.deps.runs.create({ id: record.id, sessionId, state: 'waiting', queue, userId: session.ownerId })
+    this.deps.runs.create({
+      id: record.id,
+      sessionId,
+      state: 'waiting',
+      queue,
+      userId: session.ownerId,
+      triggerUserId: record.triggerUserId,
+      execution: this.executionSnapshot(record),
+    })
     // 可审计的派发痕迹（下一棒的起点清晰可见；不占用 Agent 回合）
     const label = this.memberLabelOf(sessionId, agentId)
     const message = sessions.appendMessage({
@@ -815,6 +837,7 @@ export class Engine {
     if (!active) throw new Error('会话没有运行中的任务，无法插话')
     const session = this.deps.sessions.getSession(sessionId)
     if (!session) throw new Error('会话不存在')
+    this.assertExecutable(session)
     const message = this.deps.sessions.messageById(sessionId, userMessageId)
     if (!message || message.role !== 'user') throw new Error('用户消息不存在')
     const record = this.runs.get(active.runId)!
@@ -836,10 +859,19 @@ export class Engine {
     return { injected: true, position: record.pendingUserMessages.length, runId: record.id }
   }
 
+  /** 下线资产（历史兼容）：编制含下线成员的会话只可读，执行入口统一在此拒绝 */
+  private assertExecutable(session: Session): void {
+    const retired = retiredScenesOf(session.participantIds)
+    if (retired.length > 0) {
+      throw new Error(`该会话包含已下线角色（${retired.join('、')}）：${RETIRED_SESSION_HINT}`)
+    }
+  }
+
   /** 断点继续（M3）：以中断快照（队列 + 发言史 + 守卫状态）启动新 Run */
-  resume(sessionId: string, runId?: string): LaunchResult {
+  resume(sessionId: string, runId?: string, opts: { triggerUserId?: string } = {}): LaunchResult {
     const session = this.deps.sessions.getSession(sessionId)
     if (!session) throw new Error('会话不存在')
+    this.assertExecutable(session)
     if (this.activeRunOf(sessionId)) throw new Error('会话已有运行中的任务')
     this.assertUserCapacity(sessionId)
     const snapshot = runId ? this.deps.runs.get(runId) : this.deps.runs.latestInterrupted(sessionId)
@@ -848,10 +880,13 @@ export class Engine {
     if (snapshot.state !== 'interrupted') throw new Error('该运行不是中断状态，无需继续')
     const queue = snapshot.queue.filter((id) => session.participantIds.includes(id))
     if (queue.length === 0) throw new Error('中断运行没有待办队列，无法继续')
+    const execution = snapshot.execution?.version === 1 ? snapshot.execution : undefined
 
     const record: RunRecord = {
       id: `run_${randomUUID().slice(0, 8)}`,
       sessionId,
+      // 显式续跑操作者优先；系统 / 兼容入口回退到快照触发者，避免恢复后丢失权限归属。
+      triggerUserId: opts.triggerUserId ?? snapshot.triggerUserId,
       controller: new AbortController(),
       subscribers: new Set(),
       queue,
@@ -859,34 +894,57 @@ export class Engine {
       activeMembers: [],
       fallbackUsed: snapshot.fallbackUsed,
       routingPending: false,
-      handedToUser: false,
+      handedToUser: snapshot.handedToUser,
       handedTo: [],
       messageHumanMentions: new Map(),
-      pendingUserMessages: [],
+      pendingUserMessages: [...snapshot.pendingUserMessages],
       pendingHandoffs: new Map(),
       handoffNotes: new Map(),
-      waveSignatures: [],
-      waveTexts: [],
-      waveWriteCounts: [],
+      waveSignatures: [...(execution?.waveSignatures ?? [])],
+      waveTexts: [...(execution?.waveTexts ?? [])],
+      waveWriteCounts: [...(execution?.waveWriteCounts ?? [])],
       waveWrites: newWaveWriteBuffer(),
-      forceNextParallel: false,
-      turnIndex: 0,
+      forceNextParallel: execution?.forceNextParallel ?? false,
+      turnIndex: execution ? snapshot.turnIndex : 0,
       todosByAgent: new Map(),
       skillCache: new Map(),
+      loadedSkillsByAgent: new Map(
+        Object.entries(execution?.loadedSkills ?? {}).map(([member, names]) => [member, new Set(names)]),
+      ),
       activatedTools: new Set(),
       discoveryByAgent: new Map(),
       state: 'waiting',
-      mode: 'execute',
-      // M88：断点继续无新用户文本 —— 仅沿用会话策略（不重新推断）
-      intent: legacyIntentOf({ autonomy: session.autonomy, planFirst: session.planFirst }),
-      // M86：断点继续沿用会话接力策略（不因恢复而恢复自动接棒）
-      relayMode: resolveRelayMode(session),
-      planDispatch: new Map(),
-      activePlanIds: new Set(),
-      pendingPlanIds: new Set(),
-      synthesisAdded: false,
-      planSubmissions: 0,
-      planRefillStreak: 0,
+      mode: execution?.mode ?? 'execute',
+      intent: execution?.intent ?? legacyIntentOf({ autonomy: session.autonomy, planFirst: session.planFirst }),
+      relayMode: execution?.relayMode ?? resolveRelayMode(session),
+      planDispatch: new Map(
+        Object.entries(execution?.planDispatch ?? {}).map(([member, refs]) => [member, refs.map((ref) => ({ ...ref }))]),
+      ),
+      activePlanIds: new Set(execution?.activePlanIds ?? []),
+      pendingPlanIds: new Set(execution?.pendingPlanIds ?? []),
+      synthesisAdded: execution?.synthesisAdded ?? false,
+      planSubmissions: execution?.planSubmissions ?? 0,
+      planRefillStreak: execution?.planRefillStreak ?? 0,
+    }
+    // 恢复后重新核验计划归属、状态与成员；旧快照没有 execution 时仅保留既有队列降级恢复。
+    for (const planId of [...record.activePlanIds]) {
+      const plan = this.deps.plans?.get(planId)
+      if (!plan || plan.sessionId !== sessionId || !['approved', 'executing', 'blocked'].includes(plan.status)) {
+        record.activePlanIds.delete(planId)
+      }
+    }
+    for (const planId of [...record.pendingPlanIds]) {
+      const plan = this.deps.plans?.get(planId)
+      if (!plan || plan.sessionId !== sessionId || plan.status !== 'submitted') record.pendingPlanIds.delete(planId)
+    }
+    for (const [member, refs] of [...record.planDispatch]) {
+      if (!session.participantIds.includes(member)) {
+        record.planDispatch.delete(member)
+        continue
+      }
+      const valid = refs.filter((ref) => record.activePlanIds.has(ref.planId))
+      if (valid.length > 0) record.planDispatch.set(member, valid)
+      else record.planDispatch.delete(member)
     }
     // M87：恢复未消费的交接包（便条仅存内存；从该 Run 的 handoff 工具调用重建）
     record.handoffNotes = this.restoreHandoffNotes(sessionId, snapshot.id, queue)
@@ -902,7 +960,10 @@ export class Engine {
       state: 'waiting',
       queue,
       userId: this.deps.sessions.getSession(sessionId)?.ownerId,
+      triggerUserId: record.triggerUserId,
+      execution: this.executionSnapshot(record),
     })
+    this.deps.runs.update(record.id, { pendingUserMessages: [...record.pendingUserMessages] })
 
     const queued = this.activeCount >= this.deps.cfg.asyncRunMax
     if (queued) {
@@ -1070,6 +1131,7 @@ export class Engine {
     const { sessions } = this.deps
     const session = sessions.getSession(sessionId)
     if (!session) throw new Error('会话不存在')
+    this.assertExecutable(session)
     if (this.activeRunOf(sessionId)) throw new Error('会话已有运行中的任务')
     this.assertUserCapacity(sessionId)
     const message = sessions.messageById(sessionId, messageId)
@@ -1102,6 +1164,7 @@ export class Engine {
       turnIndex: 0,
       todosByAgent: new Map(),
       skillCache: new Map(),
+      loadedSkillsByAgent: new Map(),
       activatedTools: new Set(),
       discoveryByAgent: new Map(),
       state: 'running',
@@ -1135,6 +1198,7 @@ export class Engine {
     const { sessions } = this.deps
     const session = sessions.getSession(sessionId)
     if (!session) throw new Error('会话不存在')
+    this.assertExecutable(session)
     if (this.activeRunOf(sessionId)) throw new Error('会话已有运行中的任务')
     this.assertUserCapacity(sessionId)
     const message = sessions.messageById(sessionId, messageId)
@@ -1172,6 +1236,7 @@ export class Engine {
       turnIndex: 0,
       todosByAgent: new Map(),
       skillCache: new Map(),
+      loadedSkillsByAgent: new Map(),
       activatedTools: new Set(),
       discoveryByAgent: new Map(),
       state: 'running',
@@ -1217,10 +1282,33 @@ export class Engine {
     }
   }
 
+  private executionSnapshot(record: RunRecord): RunExecutionState {
+    return {
+      version: 1,
+      triggerUserId: record.triggerUserId,
+      mode: record.mode,
+      intent: record.intent,
+      relayMode: record.relayMode,
+      activePlanIds: [...record.activePlanIds],
+      pendingPlanIds: [...record.pendingPlanIds],
+      planDispatch: Object.fromEntries([...record.planDispatch].map(([member, refs]) => [member, refs.map((ref) => ({ ...ref }))])),
+      waveSignatures: [...record.waveSignatures],
+      waveTexts: [...record.waveTexts],
+      waveWriteCounts: [...record.waveWriteCounts],
+      forceNextParallel: record.forceNextParallel,
+      synthesisAdded: record.synthesisAdded,
+      planSubmissions: record.planSubmissions,
+      planRefillStreak: record.planRefillStreak,
+      loadedSkills: Object.fromEntries(
+        [...record.loadedSkillsByAgent].map(([member, names]) => [member, [...names]]),
+      ),
+    }
+  }
+
   private startRun(record: RunRecord): void {
     record.state = 'running'
     this.activeCount++
-    this.deps.runs.update(record.id, { state: 'running' })
+    this.deps.runs.update(record.id, { state: 'running', execution: this.executionSnapshot(record) })
     void this.runLoop(record)
       .catch((err) => {
         // 审核 H-2：runLoop 意外 reject 兜底 —— 正常路径内部已自收尾，这里只处理未捕获异常（finishRun 幂等防重复）
@@ -1319,6 +1407,7 @@ export class Engine {
         queue: [...record.queue],
         spoken: [...record.spoken],
         handedToUser: record.handedToUser,
+        execution: this.executionSnapshot(record),
         error: errorMessage ?? null,
         endedAt: nowIso(),
       }),
@@ -1449,7 +1538,7 @@ export class Engine {
     if (!session) throw new Error('会话不存在（可能已被删除）')
     let reason: RunEndReason = 'completed'
     let errorMessage: string | undefined
-    let waveIndex = 0
+    let waveIndex = record.turnIndex
 
     this.emit(record, {
       type: 'run:start',
@@ -1726,6 +1815,7 @@ export class Engine {
         spoken: [...record.spoken],
         fallbackUsed: record.fallbackUsed,
         handedToUser: record.handedToUser,
+        execution: this.executionSnapshot(record),
       })
     }
 
@@ -2371,7 +2461,7 @@ export class Engine {
         })),
       reviewTargets,
       handoffs: incomingHandoffs.map((h) => ({
-        from: prompts.get(h.from)?.name ?? h.from,
+        from: h.from === 'user' ? '用户' : this.memberLabelOf(record.sessionId, h.from),
         ...(h.expectedOutput ? { expectedOutput: h.expectedOutput } : {}),
         ...(h.artifacts.length > 0
           ? { artifacts: h.artifacts.map((p) => ({ path: p, ...handoffMeta.get(p) })) }
@@ -2409,6 +2499,7 @@ export class Engine {
       sessionId: record.sessionId,
       agentId,
       runId: record.id,
+      loadedSkills: [...(record.loadedSkillsByAgent.get(agentId) ?? [])],
       // M79-J（§8.8）：人类花名册（human_roster + 交还指令；无人类不注入）
       humans: this.humanRosterFor(record.sessionId),
       queue: [...record.queue],
@@ -2579,6 +2670,7 @@ export class Engine {
                 sessionId: record.sessionId,
                 agentId,
                 runId: record.id,
+                loadedSkills: [...(record.loadedSkillsByAgent.get(agentId) ?? [])],
                 // M79-J（§8.8）：人类花名册（human_roster + 交还指令；无人类不注入）
                 humans: this.humanRosterFor(record.sessionId),
                 queue: [...record.queue],
@@ -2610,7 +2702,7 @@ export class Engine {
           reasoning: stepReasoning || undefined,
           toolCalls: pendingCalls.map((c) => ({ id: c.id, name: c.name, arguments: c.arguments })),
         })
-        await this.executeToolCalls(record, message, pendingCalls, toolMessages, turn.signal, turn.reason)
+        await this.executeToolCalls(record, message, pendingCalls, toolMessages, availableTools, turn.signal, turn.reason)
         step++
       }
 
@@ -2744,11 +2836,12 @@ export class Engine {
     message: ChatMessage,
     calls: LlmToolCall[],
     toolMessages: LlmMessageInput[],
+    availableTools: AgentTool[],
     signal: AbortSignal,
     turnReason: () => 'stopped' | 'timeout' | undefined,
   ): Promise<void> {
     const { sessions } = this.deps
-    const runtime = this.buildToolRuntime(record, message)
+    const runtime = this.buildToolRuntime(record, message, availableTools)
 
     // 预建执行记录（模型调用顺序）→ 前端卡片即时可见
     const running: ChatMessage['toolCalls'] = message.toolCalls ?? []
@@ -2830,7 +2923,7 @@ export class Engine {
   }
 
   /** M5：按回合构建工具运行时（并行/串行共用；signal 由 execWithAbort 按工具注入） */
-  private buildToolRuntime(record: RunRecord, message: ChatMessage): ToolRuntime {
+  private buildToolRuntime(record: RunRecord, message: ChatMessage, availableTools: AgentTool[]): ToolRuntime {
     const { cfg, artifacts } = this.deps
     // M46：实时在场名单闭包（惰性 participants 数据源；同回合召集后即时反映）
     const liveParticipants = (): Array<{ id: string; name: string }> => this.liveRoster(record.sessionId)
@@ -2861,6 +2954,8 @@ export class Engine {
       plans: this.deps.plans,
       reviews: this.deps.reviews,
       planSteps: this.planStepsFor(record, memberId),
+      allowedTools: new Set(availableTools.map((tool) => tool.name)),
+      reviewMessageExists: (messageId) => Boolean(this.deps.sessions.messageById(record.sessionId, messageId)),
       submitPlan:
         this.deps.plans && this.deps.planReviews
           ? (input: PlanSubmitInput, signal?: AbortSignal) => this.submitPlan(record, message, input, signal)
@@ -2891,13 +2986,23 @@ export class Engine {
         this.requestApproval(record, message, action, detail, options, runtime.turnSignal),
       loadSkill: (name: string) => {
         const cached = record.skillCache.get(name)
-        if (cached !== undefined) return { ok: true, body: cached, cached: true }
+        if (cached !== undefined) {
+          const loaded = record.loadedSkillsByAgent.get(memberId) ?? new Set<string>()
+          loaded.add(name)
+          record.loadedSkillsByAgent.set(memberId, loaded)
+          this.deps.runs.update(record.id, { execution: this.executionSnapshot(record) })
+          return { ok: true, body: cached, cached: true }
+        }
         const skill = this.deps.skills.get(name)
         if (!skill) {
           // M28：未命中回灌 top-3 相近候选（词法排序），替代全量技能名（降低无效回灌 token）
           return { ok: false, error: `技能「${name}」不存在。${this.skillCandidates(name)}` }
         }
         record.skillCache.set(name, skill.body)
+        const loaded = record.loadedSkillsByAgent.get(memberId) ?? new Set<string>()
+        loaded.add(name)
+        record.loadedSkillsByAgent.set(memberId, loaded)
+        this.deps.runs.update(record.id, { execution: this.executionSnapshot(record) })
         return { ok: true, body: skill.body }
       },
       // M28：工具按需发现（tool_search → 检索激活；命中工具下一子轮即时进入工具清单）
@@ -3065,8 +3170,13 @@ export class Engine {
     this.publishStatus(record, message.memberKey ?? message.agentId!, 'thinking', 'tool')
     // M7：回合信号写入 runtime（审批挂起时随 stop 取消）
     runtime.turnSignal = signal
+    // 执行授权独立于 schema 展示：模型伪造已注册但本回合未授权的工具时，在审批与副作用前拒绝。
+    const authorizationDenial =
+      this.deps.tools.get(call.name) && runtime.allowedTools && !runtime.allowedTools.has(call.name)
+        ? { ok: false, summary: `工具 ${call.name} 未获本回合授权，请从当前可用工具清单中选择` }
+        : null
     // M7：高危工具强制审批（APPROVAL_MODE=risky|all）→ 未通过不执行，回灌可修正反馈
-    const gate = this.approvalGate(message, call, runtime)
+    const gate = authorizationDenial ? null : this.approvalGate(message, call, runtime)
     if (gate) {
       const denied = await this.approvalGateWait(record, message, call, entry, gate, signal)
       if (denied) return denied
@@ -3074,7 +3184,7 @@ export class Engine {
     const started = Date.now()
     let result: ToolResult
     // M28：延迟工具执行门 —— 「发现启用 + tier=deferred + 未激活」直接拒绝并引导先检索（不执行副作用）
-    const denial = this.discoveryGate(record, message, call)
+    const denial = authorizationDenial ?? this.discoveryGate(record, message, call)
     if (denial) {
       result = denial
     } else {
@@ -3121,7 +3231,7 @@ export class Engine {
     })
     // M61-D3/D5：成功写动作 → 波内写跟踪（提取失败静默返回空集，绝不影响主流程）
     if (result.ok && message.agentId) {
-      recordWrite(record.waveWrites, message.agentId, extractWritePaths(call.name, entry.args))
+      recordWrite(record.waveWrites, message.memberKey ?? message.agentId, extractWritePaths(call.name, entry.args))
     }
     // M25：remember 成功 → 嵌入排队（worker 异步消费，失败静默不影响工具结果）
     if (call.name === 'remember' && result.ok) this.trace(record, 'memory:embed', { queued: true })
@@ -3314,7 +3424,7 @@ export class Engine {
     } finally {
       if (record.state === 'awaiting_approval') {
         record.state = 'running'
-        this.deps.runs.update(record.id, { state: 'running' })
+        this.deps.runs.update(record.id, { state: 'running', execution: this.executionSnapshot(record) })
       }
     }
   }
@@ -3372,7 +3482,7 @@ export class Engine {
     record.pendingPlanIds.add(plan.id)
     planReviews.create(plan)
     record.state = 'awaiting_plan'
-    this.deps.runs.update(record.id, { state: 'awaiting_plan' })
+    this.deps.runs.update(record.id, { state: 'awaiting_plan', execution: this.executionSnapshot(record) })
     this.emit(record, { type: 'plan:submitted', plan })
     this.deps.notify.publish({
       type: 'notify:plan-submitted',
@@ -3399,7 +3509,7 @@ export class Engine {
       record.pendingPlanIds.delete(plan.id)
       if (record.state === 'awaiting_plan') {
         record.state = 'running'
-        this.deps.runs.update(record.id, { state: 'running' })
+        this.deps.runs.update(record.id, { state: 'running', execution: this.executionSnapshot(record) })
       }
     }
   }
@@ -3443,39 +3553,38 @@ export class Engine {
     }> = []
     for (const planId of record.activePlanIds) {
       const plan = plans.get(planId)
-      if (!plan || (plan.status !== 'executing' && plan.status !== 'approved')) continue
+      if (!plan || !['executing', 'approved', 'blocked'].includes(plan.status)) continue
       const isAuthor = plan.agentId === agentId
-      for (const step of plan.steps) {
-        if (step.status === 'done' || step.status === 'skipped') continue
-        const owner = step.ownerAgentId ?? plan.agentId
-        if (owner !== agentId && !isAuthor) continue
-        out.push({
-          planId: plan.id,
-          stepId: step.id,
-          content: step.content,
-          ownerAgentId: owner,
-          mode: step.mode,
-          acceptance: step.acceptance,
-          expectedOutput: step.expectedOutput,
-        })
-      }
+      const actionable =
+        plan.steps.find((step) => step.status !== 'done' && step.status !== 'skipped') ??
+        (plan.status === 'blocked' ? plan.steps[plan.steps.length - 1] : undefined)
+      if (!actionable) continue
+      const owner = actionable.ownerAgentId ?? plan.agentId
+      if (owner !== agentId && !isAuthor) continue
+      out.push({
+        planId: plan.id,
+        stepId: actionable.id,
+        content: actionable.content,
+        ownerAgentId: owner,
+        mode: actionable.mode,
+        acceptance: actionable.acceptance,
+        expectedOutput: actionable.expectedOutput,
+      })
     }
     return out
   }
 
-  /** M24：评审目标构造 —— 评审型步骤 → 其所属计划（plan:<id> 寻址；同一计划去重） */
+  /** M24：评审目标使用计划 / 步骤复合键，避免多计划同名步骤串联。 */
   private reviewTargetsFor(
-    steps: Array<{ planId: string; mode?: 'execute' | 'review' }>,
+    steps: Array<{ planId: string; stepId: string; content: string; mode?: 'execute' | 'review' }>,
   ): Array<{ target: string; content?: string }> {
-    const seen = new Set<string>()
     const out: Array<{ target: string; content?: string }> = []
     for (const step of steps) {
-      if (step.mode !== 'review' || seen.has(step.planId)) continue
-      seen.add(step.planId)
+      if (step.mode !== 'review') continue
       const plan = this.deps.plans?.get(step.planId)
       out.push({
-        target: `plan:${step.planId}`,
-        content: plan ? `${plan.title}｜核对全部步骤产出与验收` : undefined,
+        target: `step:${step.planId}/${step.stepId}`,
+        content: plan ? `${plan.title}｜${step.content}` : step.content,
       })
     }
     return out
@@ -3497,10 +3606,10 @@ export class Engine {
     if (!plans || record.planDispatch.size === 0) return
     const touched = new Set<string>()
     for (const member of members) {
-      for (const stepId of record.planDispatch.get(member) ?? []) {
-        const hit = plans.findByStepId(record.sessionId, stepId)
+      for (const ref of record.planDispatch.get(member) ?? []) {
+        const hit = plans.findByStepId(record.sessionId, ref.stepId, ref.planId)
         if (!hit || hit.step.status !== 'pending') continue
-        if (plans.setStepStatus(hit.plan.id, stepId, 'in_progress')) touched.add(hit.plan.id)
+        if (plans.setStepStatus(ref.planId, ref.stepId, 'in_progress')) touched.add(ref.planId)
       }
     }
     for (const planId of touched) {
@@ -3521,9 +3630,10 @@ export class Engine {
       }
       if (plan.status !== 'approved') continue
       this.registerPlanDispatch(record, plan)
-      // 步骤负责人按步骤序排在队首（与既有队列合并去重；先执行计划步骤，再回到常规接力）
+      // 计划内部保留 A→B→A 的重复负责人；与既有队列合并时仅移除重复占位，不提前合并计划步骤。
       const owners = this.planOwnerQueue(plan)
-      record.queue = [...owners, ...record.queue.filter((id) => !owners.includes(id))]
+      const ownerSet = new Set(owners)
+      record.queue = [...owners, ...record.queue.filter((agentId) => !ownerSet.has(agentId))]
       // 批准意味着继续执行：清除「已交还用户」标记（避免收尾误发 awaiting-user 通知）
       record.handedToUser = false
       this.trace(record, 'plan:dispatched', { planId: plan.id, owners }, waveIndex)
@@ -3534,10 +3644,13 @@ export class Engine {
   private registerPlanDispatch(record: RunRecord, plan: Plan): void {
     const { plans } = this.deps
     if (!plans) return
-    for (const step of plan.steps) {
+    const step = plan.steps.find((item) => item.status !== 'done' && item.status !== 'skipped')
+    if (step) {
       const owner = step.ownerAgentId ?? plan.agentId
       const list = record.planDispatch.get(owner) ?? []
-      if (!list.includes(step.id)) list.push(step.id)
+      if (!list.some((ref) => ref.planId === plan.id && ref.stepId === step.id)) {
+        list.push({ planId: plan.id, stepId: step.id })
+      }
       record.planDispatch.set(owner, list)
     }
     record.activePlanIds.add(plan.id)
@@ -3546,15 +3659,11 @@ export class Engine {
     if (executing) this.emitPlanUpdated(record, executing)
   }
 
-  /** M24：计划执行队列（步骤负责人按步骤序去重；已完成 / 跳过步骤剔除） */
+  /** M24：计划执行队列保留步骤顺序；同一负责人前后再次出现时不去重、不提前合并。 */
   private planOwnerQueue(plan: Plan): string[] {
-    const out: string[] = []
-    for (const step of plan.steps) {
-      if (step.status === 'done' || step.status === 'skipped') continue
-      const owner = step.ownerAgentId ?? plan.agentId
-      if (!out.includes(owner)) out.push(owner)
-    }
-    return out
+    return plan.steps
+      .filter((step) => step.status !== 'done' && step.status !== 'skipped')
+      .map((step) => step.ownerAgentId ?? plan.agentId)
   }
 
   /** M24：收口波 —— 计划全步完成（plan=done）→ 追加作者收口回合（每 Run 一次，作者已在队列则跳过） */
@@ -3597,12 +3706,11 @@ export class Engine {
     const owners: string[] = []
     for (const planId of record.activePlanIds) {
       const plan = plans.get(planId)
-      if (!plan || (plan.status !== 'executing' && plan.status !== 'approved')) continue
-      for (const step of plan.steps) {
-        if (step.status === 'done' || step.status === 'skipped') continue
-        const owner = step.ownerAgentId ?? plan.agentId
-        if (!owners.includes(owner)) owners.push(owner)
-      }
+      if (!plan || !['executing', 'approved', 'blocked'].includes(plan.status)) continue
+      const step =
+        plan.steps.find((item) => item.status !== 'done' && item.status !== 'skipped') ??
+        (plan.status === 'blocked' ? plan.steps[plan.steps.length - 1] : undefined)
+      if (step) owners.push(step.ownerAgentId ?? plan.agentId)
     }
     if (owners.length === 0) return
     if (record.planRefillStreak >= MAX_PLAN_REFILL) return
@@ -3691,7 +3799,7 @@ export class Engine {
         .filter((p): p is string => Boolean(p))
       const artifacts = (declared.length > 0 ? declared : (message.artifacts ?? [])).slice(0, 8)
       list.push({
-        from: message.agentId ?? 'unknown',
+        from: message.memberKey ?? message.agentId ?? 'unknown',
         targets: [...result.handoff.targets],
         reason: result.handoff.reason,
         expectedOutput: result.handoff.expected_output,
@@ -3806,6 +3914,7 @@ export class Engine {
         sessionId: record.sessionId,
         path: relPath,
         content: read.content,
+        hash: read.hash,
         size: read.size,
         authorAgentId: message.agentId,
         messageId: message.id,
@@ -3993,6 +4102,7 @@ export class Engine {
         sessionId: record.sessionId,
         agentId,
         runId: record.id,
+        loadedSkills: [...(record.loadedSkillsByAgent.get(agentId) ?? [])],
         // M79-J（§8.8）：人类花名册（human_roster + 交还指令；无人类不注入）
         humans: this.humanRosterFor(record.sessionId),
         queue: [],
@@ -4162,6 +4272,7 @@ export class Engine {
         sessionId: record.sessionId,
         agentId,
         runId: record.id,
+        loadedSkills: [...(record.loadedSkillsByAgent.get(agentId) ?? [])],
         // M79-J（§8.8）：人类花名册（human_roster + 交还指令；无人类不注入）
         humans: this.humanRosterFor(record.sessionId),
         queue: [],

@@ -2,7 +2,7 @@
  * 审批卡（M8）：挂起卡渲染 / 批准 / 拒绝 / 自定义反馈（fetch mock 校验请求体）。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { ApprovalRequest } from '@multi-agent/shared'
 import { ApprovalPanel } from '../src/components/chat/ApprovalPanel'
@@ -40,6 +40,43 @@ afterEach(() => {
 })
 
 describe('ApprovalPanel 挂起卡', () => {
+  it('其他模态层或输入框中使用快捷键，不触发审批', () => {
+    render(
+      <>
+        <ApprovalPanel />
+        <div role="dialog" aria-label="账号">
+          <input aria-label="昵称" />
+        </div>
+      </>,
+    )
+    fireEvent.keyDown(window, { key: 'Enter', ctrlKey: true })
+    fireEvent.keyDown(screen.getByLabelText('昵称'), { key: 'Backspace', ctrlKey: true })
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('普通输入框、输入法组合及长按重复事件不触发审批', () => {
+    render(
+      <>
+        <ApprovalPanel />
+        <textarea aria-label="消息草稿" />
+      </>,
+    )
+    fireEvent.keyDown(screen.getByLabelText('消息草稿'), { key: 'Enter', ctrlKey: true })
+    fireEvent.keyDown(window, { key: 'Enter', ctrlKey: true, isComposing: true })
+    fireEvent.keyDown(window, { key: 'Backspace', ctrlKey: true, repeat: true })
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('无其他交互层时保留审批快捷键', async () => {
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify({ approval: makeApproval({ status: 'approved' }) })),
+    )
+    render(<ApprovalPanel />)
+    fireEvent.keyDown(window, { key: 'Enter', ctrlKey: true })
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(screen.queryByText('模型请求审批')).toBeNull())
+  })
+
   it('渲染动作、命令原文与选项；非当前会话的审批不展示', () => {
     useRunStore.setState({
       approvals: [makeApproval(), makeApproval({ id: 'ap2', sessionId: 'other' })],
@@ -63,7 +100,11 @@ describe('ApprovalPanel 挂起卡', () => {
     fetchMock.mockResolvedValue(
       new Response(
         JSON.stringify({
-          approval: makeApproval({ status: 'approved', decision: 'approve', decidedAt: new Date().toISOString() }),
+          approval: makeApproval({
+            status: 'approved',
+            decision: 'approve',
+            decidedAt: new Date().toISOString(),
+          }),
         }),
         { status: 200, headers: { 'Content-Type': 'application/json' } },
       ),
@@ -87,7 +128,11 @@ describe('ApprovalPanel 挂起卡', () => {
     fetchMock.mockResolvedValue(
       new Response(
         JSON.stringify({
-          approval: makeApproval({ status: 'rejected', decision: 'reject', decidedAt: new Date().toISOString() }),
+          approval: makeApproval({
+            status: 'rejected',
+            decision: 'reject',
+            decidedAt: new Date().toISOString(),
+          }),
         }),
         { status: 200, headers: { 'Content-Type': 'application/json' } },
       ),

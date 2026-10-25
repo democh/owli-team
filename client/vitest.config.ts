@@ -12,6 +12,9 @@ export default defineConfig({
     globals: true,
     include: ['tests/**/*.test.ts', 'tests/**/*.test.tsx'],
     setupFiles: ['tests/setup.ts'],
+    // 对话框 / 消息流用例包含多次真实渲染，满载并行时 5s 默认值会产生假超时。
+    testTimeout: 15_000,
+    hookTimeout: 15_000,
     coverage: {
       provider: 'v8',
       reporter: ['text-summary', 'html'],

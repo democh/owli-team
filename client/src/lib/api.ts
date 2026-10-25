@@ -19,40 +19,77 @@ export function setUnauthorizedHandler(handler: (() => void) | undefined): void 
   unauthorizedHandler = handler
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(path, {
-    headers: { 'Content-Type': 'application/json' },
-    ...init,
-  })
-  if (!res.ok) {
-    let message = `请求失败（HTTP ${res.status}）`
-    let refs: string[] | undefined
-    try {
-      const data = (await res.json()) as { error?: string; refs?: string[] }
-      if (data?.error) message = data.error
-      if (Array.isArray(data?.refs)) refs = data.refs
-    } catch {
-      // 非 JSON 响应保留默认文案
-    }
-    // M57：401 → 通知全局回调（登录失效）；公开接口（登录失败等）由页面自行处理，回调内部按 phase 判空
-    if (res.status === 401) unauthorizedHandler?.()
-    throw new ApiError(message, res.status, refs)
-  }
-  return (await res.json()) as T
+export interface RequestOptions {
+  signal?: AbortSignal
+  /** 0 表示调用方自行控制时限；长任务可显式覆盖。 */
+  timeoutMs?: number
 }
 
-export const apiGet = <T>(path: string): Promise<T> => request<T>(path)
+async function request<T>(path: string, init?: RequestInit, options: RequestOptions = {}): Promise<T> {
+  const controller = new AbortController()
+  const abort = (): void => controller.abort(options.signal?.reason)
+  if (options.signal?.aborted) abort()
+  else options.signal?.addEventListener('abort', abort, { once: true })
+  const timeoutMs = options.timeoutMs ?? (init?.method && init.method !== 'GET' ? 180_000 : 60_000)
+  let timedOut = false
+  const timer =
+    timeoutMs > 0
+      ? setTimeout(() => {
+          timedOut = true
+          controller.abort()
+        }, timeoutMs)
+      : undefined
+  try {
+    const res = await fetch(path, {
+      headers: { 'Content-Type': 'application/json' },
+      ...init,
+      signal: controller.signal,
+    })
+    if (!res.ok) {
+      let message = `请求失败（HTTP ${res.status}）`
+      let refs: string[] | undefined
+      try {
+        const data = (await res.json()) as { error?: string; refs?: string[] }
+        if (data?.error) message = data.error
+        if (Array.isArray(data?.refs)) refs = data.refs
+      } catch {
+        // 非 JSON 响应保留默认文案
+      }
+      // M57：401 → 通知全局回调（登录失效）；公开接口（登录失败等）由页面自行处理，回调内部按 phase 判空
+      if (res.status === 401) unauthorizedHandler?.()
+      throw new ApiError(message, res.status, refs)
+    }
+    return (await res.json()) as T
+  } catch (err) {
+    if (timedOut) {
+      throw new ApiError(
+        init?.method && init.method !== 'GET'
+          ? '请求超时，操作可能已执行，请核对状态后再重试'
+          : '请求超时，请稍后重试',
+        0,
+      )
+    }
+    throw err
+  } finally {
+    clearTimeout(timer)
+    options.signal?.removeEventListener('abort', abort)
+  }
+}
 
-export const apiPost = <T>(path: string, body?: unknown): Promise<T> =>
-  request<T>(path, { method: 'POST', body: body === undefined ? undefined : JSON.stringify(body) })
+export const apiGet = <T>(path: string, options?: RequestOptions): Promise<T> =>
+  request<T>(path, undefined, options)
 
-export const apiPatch = <T>(path: string, body?: unknown): Promise<T> =>
-  request<T>(path, { method: 'PATCH', body: body === undefined ? undefined : JSON.stringify(body) })
+export const apiPost = <T>(path: string, body?: unknown, options?: RequestOptions): Promise<T> =>
+  request<T>(path, { method: 'POST', body: body === undefined ? undefined : JSON.stringify(body) }, options)
 
-export const apiPut = <T>(path: string, body?: unknown): Promise<T> =>
-  request<T>(path, { method: 'PUT', body: body === undefined ? undefined : JSON.stringify(body) })
+export const apiPatch = <T>(path: string, body?: unknown, options?: RequestOptions): Promise<T> =>
+  request<T>(path, { method: 'PATCH', body: body === undefined ? undefined : JSON.stringify(body) }, options)
 
-export const apiDelete = <T>(path: string): Promise<T> => request<T>(path, { method: 'DELETE' })
+export const apiPut = <T>(path: string, body?: unknown, options?: RequestOptions): Promise<T> =>
+  request<T>(path, { method: 'PUT', body: body === undefined ? undefined : JSON.stringify(body) }, options)
+
+export const apiDelete = <T>(path: string, options?: RequestOptions): Promise<T> =>
+  request<T>(path, { method: 'DELETE' }, options)
 
 /**
  * M33：原始二进制上传（附件通道）。

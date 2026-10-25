@@ -4,9 +4,9 @@
  * 背景：M35 新增会话级定时任务三件套（schedule_task / list_schedules / manage_schedule，
  * tier=deferred，经 tool_search 检索激活）。工具行为本身由 m35-schedule-tools.test.ts 守护；
  * 本文件守护「角色侧」四件事：
- * ① 白名单可达性（8 个时间敏感角色：行政 / 运营 / SRE / 合规 / 内容 / 客户成功 / 情报 / 生活管家，
+ * ① 白名单可达性（时间敏感角色：行政 / 运营 / SRE / 合规 / 内容 / 情报 / 生活管家，
  *    "存在但不可达"为历史高发缺陷——v13 handoff 零绑定事故）；
- * ② 白名单边界（能力不扩散：仅这 8 个角色持有，未绑定角色连 tool_search 都无法发现——deferred
+ * ② 白名单边界（能力不扩散：仅绑定角色持有，未绑定角色连 tool_search 都无法发现——deferred
  *    可发现范围 = 白名单过滤后的工具集）；
  * ③ 引导在场（角色正文 / 全局协议 / 场景协议三处引导 deferred 工具，对齐 v16 ssh_exec 先例）；
  * ④ 运行时绑定与范式收敛（forAgent 真实解析白名单无拼写丢失；plan 只读集合只含 list_schedules）。
@@ -27,7 +27,6 @@ const BOUND_ROLES: Array<[string, string]> = [
   ['sre', 'sre/sre'],
   ['compliance', 'finance/compliance'],
   ['content', 'marketing/content'],
-  ['success', 'sales/success'],
   ['scout', 'research/scout'],
   ['life-admin', 'personal/life-admin'],
   // M69：时间敏感角色增补（习惯提醒 / 证照到期提醒）
@@ -43,8 +42,8 @@ function realLibrary(): PromptLibrary {
   return new PromptLibrary({ agentsDir: cfg.agentsDir, promptsDir: cfg.promptsDir, onWarn: () => {} })
 }
 
-describe('M35：定时任务白名单可达性（10 个时间敏感角色）', () => {
-  it('10 角色全部持有 schedule_task / list_schedules / manage_schedule', () => {
+describe('M35：定时任务白名单可达性（9 个时间敏感角色）', () => {
+  it('9 角色全部持有 schedule_task / list_schedules / manage_schedule', () => {
     const lib = realLibrary()
     for (const [id] of BOUND_ROLES) {
       const agent = lib.get(id)
@@ -55,7 +54,7 @@ describe('M35：定时任务白名单可达性（10 个时间敏感角色）', (
     }
   })
 
-  it('原白名单不回归：8 角色的协作基线（handoff / remember / load_skill）仍在', () => {
+  it('原白名单不回归：9 角色的协作基线（handoff / remember / load_skill）仍在', () => {
     const lib = realLibrary()
     for (const [id] of BOUND_ROLES) {
       const tools = lib.get(id)?.tools ?? []
@@ -68,7 +67,7 @@ describe('M35：定时任务白名单可达性（10 个时间敏感角色）', (
 })
 
 describe('M35：白名单边界（能力不扩散）', () => {
-  it('仅这 10 个角色持有：持有者集合精确匹配（未绑定角色无法经 tool_search 发现）', () => {
+  it('仅这 9 个角色持有：持有者集合精确匹配（未绑定角色无法经 tool_search 发现）', () => {
     const lib = realLibrary()
     // M50：空场景通用助手不纳入能力边界约束（单助手场景持全套工具，含定时任务三件套）
     const holders = lib
@@ -109,7 +108,7 @@ describe('M35：渐进披露契约（deferred 加载层级与只读边界）', (
 })
 
 describe('M35：引导在场（角色正文 / 全局协议 / 场景协议）', () => {
-  it('10 角色正文含定时工具引导（先 tool_search 检索「定时」激活）', () => {
+  it('9 角色正文含定时工具引导（先 tool_search 检索「定时」激活）', () => {
     const cfg = loadConfig()
     for (const [id, dir] of BOUND_ROLES) {
       const text = fs.readFileSync(path.join(cfg.agentsDir, dir, 'AGENT.md'), 'utf8')
@@ -144,7 +143,7 @@ describe('M35：引导在场（角色正文 / 全局协议 / 场景协议）', (
 })
 
 describe('M35：运行时绑定（工具名到工具对象的真实解析）与范式收敛', () => {
-  it('forAgent(execute) 完整解析 8 角色白名单：全部工具真实绑定（无拼写错误静默丢失）', () => {
+  it('forAgent(execute) 完整解析 9 角色白名单：全部工具真实绑定（无拼写错误静默丢失）', () => {
     const cfg = loadConfig()
     const lib = realLibrary()
     const registry = createToolRegistry(cfg)

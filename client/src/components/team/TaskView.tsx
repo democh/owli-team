@@ -167,7 +167,7 @@ function PlanBoardCard({ plan, members }: { plan: Plan; members: AgentDefinition
         {plan.steps.map((s: PlanStep, i) => {
           const ownerId = s.ownerAgentId ?? plan.agentId
           const owner = members.find((m) => m.id === ownerId)
-          const stepReviews = reviews.filter((r) => r.stepId === s.id)
+          const stepReviews = reviews.filter((r) => r.planId === plan.id && r.stepId === s.id)
           const review = stepReviews[stepReviews.length - 1]
           return (
             <div key={s.id} className="flex items-start gap-1.5 rounded-md px-1 py-0.5">
@@ -294,10 +294,10 @@ function MemberPlanCard({ member, memberId, entries }: { member?: AgentDefinitio
       </div>
       <div className="mt-1 space-y-0.5">
         {entries.map(({ plan, step }) => {
-          const stepReviews = reviews.filter((r) => r.stepId === step.id)
+          const stepReviews = reviews.filter((r) => r.planId === plan.id && r.stepId === step.id)
           const review = stepReviews[stepReviews.length - 1]
           return (
-            <div key={step.id} className="flex items-start gap-1.5">
+            <div key={`${plan.id}:${step.id}`} className="flex items-start gap-1.5">
               <span className="mt-0.5">{STEP_META[step.status].icon}</span>
               <div className="min-w-0 flex-1">
                 <p className={cn('text-[11.5px] leading-4', step.status === 'done' && 'text-muted-foreground')}>{step.content}</p>

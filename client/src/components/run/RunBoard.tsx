@@ -167,7 +167,12 @@ function StepRow({
   const meta = STEP_META[step.status]
   const ownerId = step.ownerAgentId ?? plan.agentId
   const owner = members.find((m) => m.id === ownerId)
-  const failed = reviews.find((r) => r.verdict === 'fail' && (r.stepId === step.id || r.target === `step:${step.id}`))
+  const failed = reviews.find(
+    (r) =>
+      r.planId === plan.id &&
+      r.verdict === 'fail' &&
+      (r.stepId === step.id || r.target === `step:${step.id}` || r.target === `step:${plan.id}/${step.id}`),
+  )
   return (
     <div className="rounded-md border bg-card px-2 py-1.5">
       <div className="flex items-start gap-1.5">
@@ -354,8 +359,7 @@ export function RunBoard(): React.JSX.Element {
   const failedReviews = focusPlan
     ? reviews.filter(
         (r) =>
-          r.verdict === 'fail' &&
-          (r.planId === focusPlan.id || (r.stepId ? focusPlan.steps.some((s) => s.id === r.stepId) : false)),
+          r.verdict === 'fail' && r.planId === focusPlan.id,
       ).length
     : 0
   const decisions = livePlans.filter((p) => p.status === 'submitted').length + pendingApprovals + failedReviews

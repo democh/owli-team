@@ -192,7 +192,7 @@ describe('M79-A：inbox-store', () => {
 
     // 缺口：cursor=1 收到 seq=5 → 触发 REST 同步
     fetchMock.mockImplementation((url: string) => {
-      if (String(url).startsWith('/api/inbox?')) return Promise.resolve(jsonResponse({ items: [], cursor: 5, unreadCount: 9 }))
+      if (String(url).startsWith('/api/inbox?')) return Promise.resolve(jsonResponse({ items: [{ id: 'ib_5', seq: 5, type: 'mention', title: '会话', createdAt: '' }], cursor: 5, unreadCount: 9 }))
       return Promise.resolve(jsonResponse({ ok: true }))
     })
     store.ingest({ id: 'ib_5', seq: 5, type: 'mention', title: '会话', createdAt: new Date().toISOString() })
@@ -477,7 +477,8 @@ describe('M79-A：ws-store 接入', () => {
     expect(useSessionStore.getState().byId.has('m_d2')).toBe(false)
   })
 
-  it('markRead：无连接时 REST 兜底上报当前会话最大 seq', async () => {
+  it('markRead：REST 上报视口水位，确认前不清空未读', async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ lastReadSeq: 1 }))
     useSessionStore.setState({
       currentId: 's1',
       order: ['m1', 'm2'],
@@ -487,12 +488,12 @@ describe('M79-A：ws-store 接入', () => {
       ]),
     } as never)
     useWsStore.setState({ unread: { s1: 2 } })
-    useWsStore.getState().markRead('s1')
-    expect(useWsStore.getState().unread['s1']).toBe(0)
+    useWsStore.getState().markRead('s1', 1)
+    expect(useWsStore.getState().unread['s1']).toBe(2)
     await vi.waitFor(() => {
       const posted = fetchMock.mock.calls.find(([u, i]) => String(u) === '/api/sessions/s1/read' && (i as RequestInit)?.method === 'POST')
       expect(posted).toBeTruthy()
-      expect(JSON.parse((posted![1] as RequestInit).body as string)).toEqual({ seq: 4 })
+      expect(JSON.parse((posted![1] as RequestInit).body as string)).toEqual({ seq: 1 })
     })
   })
 

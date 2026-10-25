@@ -19,3 +19,20 @@ agenda:
 stage:
   layout: dock
   panel: coach
+category: life
+catalog:
+  keywords:
+    - 情感关系
+    - 沟通练习
+    - 相亲准备
+    - 关系调解
+    - 关系复盘
+  inputs:
+    - 关系情境
+    - 沟通片段
+    - 双方目标与边界
+  outputs:
+    - 沟通练习
+    - 立场梳理
+    - 相处建议
+  boundary: 不诊断、不操控他人；暴力或危机信号优先寻求现实安全支持。

@@ -21,7 +21,15 @@
  */
 import { create } from 'zustand'
 import { sanitizeModelText } from '@multi-agent/shared'
-import type { UserAvatar, ChatMessage, MemberReadState, RunSnapshot, Session, SessionSummary } from '@multi-agent/shared'
+import type {
+  UserAvatar,
+  ChatMessage,
+  MemberReadState,
+  RunSnapshot,
+  Session,
+  SessionPrefs,
+  SessionSummary,
+} from '@multi-agent/shared'
 import { apiDelete, apiGet, apiPatch, apiPost } from '../lib/api'
 
 export interface SessionDetailResponse {
@@ -58,6 +66,10 @@ export interface HumanProfile {
 export interface SessionState {
   sessions: SessionSummary[]
   currentId?: string
+  /** 每次选择递增，隔离 A → B → A 与同会话重试的迟到响应。 */
+  selectionVersion: number
+  messageLoadError: string | null
+  earlierLoadError: string | null
   /** M8：消息 Map（O(1) 更新与项级订阅） */
   byId: Map<string, ChatMessage>
   /** M8：消息 id 顺序（仅结构变化时替换引用） */
@@ -78,10 +90,14 @@ export interface SessionState {
   totalCount: number
   /** 消息分页：更早一页加载中（顶部 spinner / 防重入） */
   loadingEarlier: boolean
+  /** IM：当前消息窗口是「搜索命中的历史上下文」而非最新页（需要「回到最新」） */
+  historyMode: boolean
   /** 当前会话摘要（引用稳定：仅非易变字段变化才替换；useCurrentSession 直读） */
   current?: SessionSummary
   /** 消息流结构指纹（role~runId~turnIndex 序列 join；仅结构变化时替换） */
   structureKey: string
+  /** 图谱专用变更版本：消息增删、角色 / 分身、状态、提及、交付件变化时推进；纯流式正文与 reasoning 不推进 */
+  graphRevision: number
   /** 流式中消息计数（写入时增量维护，替代渲染层全量扫描） */
   streamingCount: number
   /** 非流式消息写时钟（接力 / 战绩面板冻结口径的刷新信号） */
@@ -101,11 +117,15 @@ export interface SessionState {
   selectSession: (id?: string) => Promise<void>
   /** 消息分页：加载更早一页并前插（滚动锚定由 ChatArea 负责） */
   loadEarlier: () => Promise<void>
-  refreshMessages: () => Promise<void>
+  /** IM：直接加载包含指定 seq 的历史页（搜索命中直达，避免逐页回翻） */
+  loadAtMessage: (seq: number) => Promise<void>
+  refreshMessages: (consistent?: boolean) => Promise<void>
   renameSession: (id: string, title: string) => Promise<void>
   removeSession: (id: string) => Promise<void>
   /** M79-D：隐藏会话（仅本人列表；DM「删除」语义——新消息自动复现） */
   hideSession: (id: string) => Promise<void>
+  /** IM：会话个人偏好（置顶 / 免打扰；乐观更新，失败回滚） */
+  setSessionPrefs: (id: string, patch: Partial<SessionPrefs>) => Promise<void>
   /** M79-W：跨会话消息到达——即时更新列表行预览（排序 / 权威未读由 loadSessions 对账） */
   noteIncoming: (sessionId: string, message: ChatMessage) => void
   upsertMessage: (message: ChatMessage) => void
@@ -152,10 +172,11 @@ function withCleanContent(message: ChatMessage): ChatMessage {
 
 function toStores(
   messages: ChatMessage[],
-): Pick<SessionState, 'byId' | 'order' | 'structureKey' | 'streamingCount' | 'sessionStats'> & { completedTick: number } {
+): Pick<SessionState, 'byId' | 'order' | 'structureKey' | 'streamingCount' | 'sessionStats' | 'graphRevision'> & { completedTick: number } {
   const byId = new Map<string, ChatMessage>()
   const order: string[] = []
   const tokens: string[] = []
+  const graphs: string[] = []
   const sessionStats = new Map<string, { speaks: number; artifacts: number }>()
   let streamingCount = 0
   for (const m of messages) {
@@ -163,6 +184,7 @@ function toStores(
     byId.set(clean.id, clean)
     order.push(clean.id)
     tokens.push(structTokenOf(clean))
+    graphs.push(graphTokenOf(clean))
     if (clean.status === 'streaming') streamingCount++
     if (clean.role === 'agent' && clean.agentId) {
       const key = clean.memberKey ?? clean.agentId
@@ -173,7 +195,8 @@ function toStores(
     }
   }
   structTokens = tokens
-  return { byId, order, structureKey: tokens.join('|'), streamingCount, sessionStats, completedTick: 0 }
+  graphTokens = graphs
+  return { byId, order, structureKey: tokens.join('|'), streamingCount, sessionStats, completedTick: 0, graphRevision: 1 }
 }
 
 /** 消息结构指纹单元（与 ChatArea 历史口径一致：role~runId~turnIndex） */
@@ -181,8 +204,18 @@ function structTokenOf(m: ChatMessage): string {
   return `${m.role}~${m.runId ?? ''}~${m.turnIndex ?? -1}`
 }
 
+/** 图谱可见结构单元（排除 content / reasoning：纯流式 delta 不重建图谱） */
+function graphTokenOf(m: ChatMessage): string {
+  return JSON.stringify([
+    m.role, m.agentId ?? '', m.memberKey ?? '', m.status, m.mentions,
+    m.toolCalls?.length ?? 0, m.artifacts ?? [], m.mode ?? '', m.scheduleId ?? '', m.userId ?? '',
+  ])
+}
+
 /** 与 order 平行的结构 token 序列（增量维护；removeMessage / 整体重载时重建） */
 let structTokens: string[] = []
+/** 与 order 平行的图谱 token 序列（图谱专用，不含流式正文 delta） */
+let graphTokens: string[] = []
 
 /** 成员战绩增量调整（无变化保持 Map 引用，订阅方不重渲染） */
 function statBump(
@@ -223,6 +256,19 @@ function pickCurrent(
   return found
 }
 
+/** 左栏与数字快捷键共用同一筛选口径；默认排除归档，置顶优先、组内保持服务端 updated_at 顺序。 */
+export function filterSessions(
+  sessions: SessionSummary[],
+  filter: 'all' | 'team' | 'chat',
+  opts: { archived?: boolean } = {},
+): SessionSummary[] {
+  const archived = !!opts.archived
+  const base = sessions
+    .filter((session) => !!session.prefs?.archived === archived)
+    .filter((session) => filter === 'all' || (session.kind === 'direct' || session.kind === 'group') === (filter === 'chat'))
+  return [...base].sort((a, b) => Number(!!b.prefs?.pinned) - Number(!!a.prefs?.pinned))
+}
+
 /** 当前会话（引用稳定投影）——替代散落的 `s.sessions.find(x => x.id === s.currentId)` 订阅 */
 export function useCurrentSession(): SessionSummary | undefined {
   return useSessionStore((s) => s.current)
@@ -230,6 +276,9 @@ export function useCurrentSession(): SessionSummary | undefined {
 
 export const useSessionStore = create<SessionState>((set, get) => ({
   sessions: [],
+  selectionVersion: 0,
+  messageLoadError: null,
+  earlierLoadError: null,
   byId: new Map(),
   order: [],
   latestRun: null,
@@ -242,8 +291,10 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   hasMore: false,
   totalCount: 0,
   loadingEarlier: false,
+  historyMode: false,
   current: undefined,
   structureKey: '',
+  graphRevision: 0,
   streamingCount: 0,
   completedTick: 0,
   sessionStats: new Map(),
@@ -330,11 +381,16 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   },
 
   selectSession: async (id) => {
+    const version = get().selectionVersion + 1
     // M55：切换会话后旧缓冲失去意义（消息将整体重拉），随视图一并清空
     rawStreams.clear()
     structTokens = []
     set((s) => ({
       currentId: id,
+      selectionVersion: version,
+      messageLoadError: null,
+      earlierLoadError: null,
+      loadingMessages: !!id,
       current: pickCurrent(s.sessions, id, undefined),
       byId: new Map(),
       order: [],
@@ -345,7 +401,9 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       hasMore: false,
       totalCount: 0,
       loadingEarlier: false,
+      historyMode: false,
       structureKey: '',
+      graphRevision: 0,
       streamingCount: 0,
       completedTick: 0,
       sessionStats: new Map(),
@@ -355,7 +413,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     try {
       // 消息分页：首载只取最近一页（服务端无分页能力时回退全量，hasMore 缺省 false）
       const res = await apiGet<SessionDetailResponse>(`/api/sessions/${id}?limit=${MESSAGE_PAGE_SIZE}`)
-      if (get().currentId !== id) return // 切换竞态守卫
+      if (get().currentId !== id || get().selectionVersion !== version) return
       const stores = toStores(res.messages)
       set({
         ...stores,
@@ -368,8 +426,13 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         hasMore: res.hasMore ?? false,
         totalCount: res.totalCount ?? res.messages.length,
       })
+    } catch (err) {
+      if (get().currentId === id && get().selectionVersion === version) {
+        set({ messageLoadError: err instanceof Error ? err.message : '会话加载失败' })
+        throw err
+      }
     } finally {
-      if (get().currentId === id) set({ loadingMessages: false })
+      if (get().currentId === id && get().selectionVersion === version) set({ loadingMessages: false })
     }
   },
 
@@ -380,14 +443,14 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     const oldest = s.order.length > 0 ? s.byId.get(s.order[0]!) : undefined
     const before = oldest?.seq
     if (before === undefined) return
-    set({ loadingEarlier: true })
+    set({ loadingEarlier: true, earlierLoadError: null })
     try {
       const res = await apiGet<SessionDetailResponse>(
         `/api/sessions/${id}?limit=${MESSAGE_PAGE_SIZE}&before=${before}`,
       )
-      if (get().currentId !== id) return // 切换竞态守卫
+      if (get().currentId !== id || get().selectionVersion !== s.selectionVersion) return
       const priorTokens = structTokens // toStores 会把 structTokens 重置为页内序列——先留档现有序列
-      const page = toStores(res.messages)
+      const page = toStores(res.messages.filter((message) => !get().byId.has(message.id)))
       const pageTokens = structTokens
       set((cur) => {
         structTokens = [...pageTokens, ...priorTokens]
@@ -396,31 +459,59 @@ export const useSessionStore = create<SessionState>((set, get) => ({
           order: [...page.order, ...cur.order],
           structureKey: structTokens.join('|'),
           streamingCount: cur.streamingCount + page.streamingCount,
-          hasMore: res.hasMore ?? false,
+          hasMore: page.order.length > 0 && (res.hasMore ?? false),
           totalCount: res.totalCount ?? cur.totalCount,
           loadingEarlier: false,
           completedTick: cur.completedTick + 1,
         }
       })
     } catch (err) {
-      set({ loadingEarlier: false })
-      throw err
+      if (get().currentId === id && get().selectionVersion === s.selectionVersion) {
+        set({ loadingEarlier: false, earlierLoadError: err instanceof Error ? err.message : '历史消息加载失败' })
+        throw err
+      }
     }
   },
 
-  refreshMessages: async () => {
+  loadAtMessage: async (seq) => {
+    const id = get().currentId
+    if (!id || !Number.isSafeInteger(seq) || seq <= 0) return
+    const res = await apiGet<SessionDetailResponse>(`/api/sessions/${id}?limit=${MESSAGE_PAGE_SIZE}&before=${seq + 1}`)
+    if (get().currentId !== id) return
+    const stores = toStores(res.messages)
+    set({
+      ...stores,
+      sessionStats: res.memberStats ? new Map(Object.entries(res.memberStats)) : stores.sessionStats,
+      latestRun: res.latestRun ?? null,
+      humanNames: res.humanNames ?? {},
+      humanProfiles: res.humanProfiles ?? {},
+      memberReads: res.memberReads ?? [],
+      hasMore: res.hasMore ?? false,
+      totalCount: res.totalCount ?? res.messages.length,
+      historyMode: true,
+      loadingEarlier: false,
+    })
+  },
+
+  refreshMessages: async (consistent = false) => {
+    const before = get().byId
     const id = get().currentId
     if (!id) return
     // 全量重拉（不带分页参数）：补偿场景需要权威全量；加载后 hasMore 归零
     const res = await apiGet<SessionDetailResponse>(`/api/sessions/${id}`)
     if (get().currentId !== id) return
+    // 补偿请求期间的新帧优先；不把迟到快照覆盖到较新的消息或删除结果上。
+    if (consistent && get().byId !== before) throw new Error('消息正在更新，稍后重新对账')
     set({
       ...toStores(res.messages),
+      graphRevision: get().graphRevision + 1,
       latestRun: res.latestRun ?? null,
       humanNames: res.humanNames ?? {},
       humanProfiles: res.humanProfiles ?? {},
+      memberReads: res.memberReads ?? [],
       hasMore: false,
       totalCount: res.messages.length,
+      historyMode: false,
     })
   },
 
@@ -446,12 +537,42 @@ export const useSessionStore = create<SessionState>((set, get) => ({
               byId: new Map(),
               order: [],
               structureKey: '',
+              graphRevision: 0,
               streamingCount: 0,
               sessionStats: new Map(),
             }
           : {}),
       }
     })
+  },
+
+  setSessionPrefs: async (id, patch) => {
+    const prev = get().sessions.find((x) => x.id === id)?.prefs
+    const defaults: SessionPrefs = { pinned: false, muted: false, archived: false, markedUnread: false }
+    const apply = (prefs: SessionPrefs): void =>
+      set((s) => ({
+        sessions: s.sessions.map((x) =>
+          x.id === id
+            ? {
+                ...x,
+                prefs: {
+                  pinned: prefs.pinned ?? x.prefs?.pinned ?? false,
+                  muted: prefs.muted ?? x.prefs?.muted ?? false,
+                  archived: prefs.archived ?? x.prefs?.archived ?? false,
+                  markedUnread: prefs.markedUnread ?? x.prefs?.markedUnread ?? false,
+                },
+              }
+            : x,
+        ),
+      }))
+    apply({ ...defaults, ...prev, ...patch })
+    try {
+      const res = await apiPatch<{ prefs: SessionPrefs }>(`/api/sessions/${id}/prefs`, patch)
+      apply(res.prefs)
+    } catch (err) {
+      apply(prev ?? defaults)
+      throw err
+    }
   },
 
   /** M79-D：隐藏会话（仅本人列表；DM「删除」语义——新消息自动复现） */
@@ -471,7 +592,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
                 role: message.role,
                 ...(message.agentId ? { agentId: message.agentId } : {}),
                 ...(message.memberKey ? { memberKey: message.memberKey } : {}),
-                content: message.content,
+                content: message.recalledAt ? '消息已撤回' : message.content,
                 createdAt: message.createdAt,
                 ...(message.userId ? { userId: message.userId } : {}),
               },
@@ -485,6 +606,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   upsertMessage: (message) =>
     set((s) => {
       if (message.sessionId !== s.currentId) return s // 跨会话流式事件守卫
+      // IM：历史窗口只更新已加载消息（编辑 / 撤回 / 回应），新消息等「回到最新」再拉，避免出现虚假相邻
+      if (s.historyMode && !s.byId.has(message.id)) return s
       const clean = withCleanContent(message)
       // M55：生成开始（turn:start 复用消息 id，如续写 / 重生成）时重置流式原始缓冲
       if (clean.role === 'agent' && clean.status === 'streaming') rawStreams.set(clean.id, clean.content)
@@ -492,11 +615,21 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       const byId = new Map(s.byId)
       const merged = existing ? { ...existing, ...clean } : clean
       byId.set(clean.id, merged)
+      // IM：撤回帧到达时，把同窗口内引用它的消息快照标为「原消息已撤回」。
+      if (merged.recalledAt) {
+        for (const refId of s.order) {
+          const ref = byId.get(refId)
+          if (ref?.replyTo?.messageId === merged.id && !ref.replyTo.recalled)
+            byId.set(refId, { ...ref, replyTo: { ...ref.replyTo, recalled: true, deleted: false } })
+        }
+      }
       // ---- 增量派生维护 ----
       let structureKey = s.structureKey
       let streamingCount = s.streamingCount
       let sessionStats = s.sessionStats
+      let graphRevision = s.graphRevision
       const token = structTokenOf(merged)
+      const graphToken = graphTokenOf(merged)
       const memberKey = merged.role === 'agent' && merged.agentId ? (merged.memberKey ?? merged.agentId) : undefined
       if (existing) {
         const idx = s.order.indexOf(message.id)
@@ -504,6 +637,11 @@ export const useSessionStore = create<SessionState>((set, get) => ({
           structTokens = [...structTokens]
           structTokens[idx] = token
           structureKey = structTokens.join('|')
+        }
+        if (idx >= 0 && graphTokens[idx] !== graphToken) {
+          graphTokens = [...graphTokens]
+          graphTokens[idx] = graphToken
+          graphRevision++
         }
         const wasStreaming = existing.status === 'streaming'
         const isStreaming = merged.status === 'streaming'
@@ -515,11 +653,13 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         }
         if (existing.status === 'streaming' && merged.status !== 'streaming') rawStreams.delete(merged.id)
         if (merged.status !== 'streaming') {
-          return { byId, structureKey, streamingCount, sessionStats, completedTick: s.completedTick + 1 }
+          return { byId, structureKey, streamingCount, sessionStats, graphRevision, completedTick: s.completedTick + 1 }
         }
-        return { byId, structureKey, streamingCount, sessionStats }
+        return { byId, structureKey, streamingCount, sessionStats, graphRevision }
       }
       structTokens.push(token)
+      graphTokens.push(graphToken)
+      graphRevision++
       structureKey = structureKey ? `${structureKey}|${token}` : token
       if (merged.status === 'streaming') streamingCount++
       if (memberKey) sessionStats = statBump(sessionStats, memberKey, 1, merged.artifacts?.length ?? 0)
@@ -530,10 +670,11 @@ export const useSessionStore = create<SessionState>((set, get) => ({
           structureKey,
           streamingCount,
           sessionStats,
+          graphRevision,
           completedTick: s.completedTick + 1,
         }
       }
-      return { byId, order: [...s.order, message.id], structureKey, streamingCount, sessionStats }
+      return { byId, order: [...s.order, message.id], structureKey, streamingCount, sessionStats, graphRevision }
     }),
 
   applyReadReceipt: (sessionId, userId, lastReadSeq) =>
@@ -560,12 +701,19 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       let structureKey = s.structureKey
       let streamingCount = s.streamingCount
       let sessionStats = s.sessionStats
+      let graphRevision = s.graphRevision
       const token = structTokenOf(merged)
+      const graphToken = graphTokenOf(merged)
       const idx = s.order.indexOf(id)
       if (idx >= 0 && structTokens[idx] !== token) {
         structTokens = [...structTokens]
         structTokens[idx] = token
         structureKey = structTokens.join('|')
+      }
+      if (idx >= 0 && graphTokens[idx] !== graphToken) {
+        graphTokens = [...graphTokens]
+        graphTokens[idx] = graphToken
+        graphRevision++
       }
       const wasStreaming = existing.status === 'streaming'
       const isStreaming = merged.status === 'streaming'
@@ -577,9 +725,9 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         sessionStats = statBump(sessionStats, memberKey, 0, dArtifacts)
       }
       if (merged.status !== 'streaming') {
-        return { byId, structureKey, streamingCount, sessionStats, completedTick: s.completedTick + 1 }
+        return { byId, structureKey, streamingCount, sessionStats, graphRevision, completedTick: s.completedTick + 1 }
       }
-      return { byId, structureKey, streamingCount, sessionStats }
+      return { byId, structureKey, streamingCount, sessionStats, graphRevision }
     }),
 
   appendDelta: (id, delta) =>
@@ -613,10 +761,18 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       const removed = s.byId.get(id)!
       const byId = new Map(s.byId)
       byId.delete(id)
+      // 引用快照投影态：同窗口内引用它的消息立即变为「原消息已删除」。
+      for (const refId of s.order) {
+        const ref = byId.get(refId)
+        if (ref?.replyTo?.messageId === id && !ref.replyTo.deleted)
+          byId.set(refId, { ...ref, replyTo: { ...ref.replyTo, deleted: true } })
+      }
       const idx = s.order.indexOf(id)
       if (idx >= 0) {
         structTokens = [...structTokens]
         structTokens.splice(idx, 1)
+        graphTokens = [...graphTokens]
+        graphTokens.splice(idx, 1)
       }
       let streamingCount = s.streamingCount
       let sessionStats = s.sessionStats
@@ -630,6 +786,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         structureKey: structTokens.join('|'),
         streamingCount,
         sessionStats,
+        graphRevision: s.graphRevision + 1,
         completedTick: s.completedTick + 1,
       }
     }),

@@ -69,11 +69,14 @@ export class ArtifactVersionStore {
     sessionId: string
     path: string
     content?: string
+    /** 原始文件字节摘要；正文因二进制或上限未落库时也必须提供。 */
+    hash?: string
     size: number
     authorAgentId?: string
     messageId?: string
   }): ArtifactVersion | undefined {
-    const hash = contentHash(input.content ?? String(input.size))
+    const hash = input.hash ?? (input.content !== undefined ? contentHash(input.content) : undefined)
+    if (!hash) throw new Error('交付件版本缺少原始内容摘要')
     const latest = this.latest(input.sessionId, input.path)
     if (latest && latest.hash === hash) return undefined
     const version = (latest?.version ?? 0) + 1

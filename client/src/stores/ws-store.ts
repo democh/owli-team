@@ -21,9 +21,10 @@ import type {
   ReviewRecord,
   ScheduledTask,
   Session,
+  SessionPrefs,
 } from '@multi-agent/shared'
 import { ASSETS_TOPIC, MCP_TOPIC } from '@multi-agent/shared'
-import { apiGet, apiPost } from '../lib/api'
+import { ApiError, apiGet, apiPost } from '../lib/api'
 import { NotifySocket, type WsStatus } from '../lib/ws'
 import { useInboxStore } from './inbox-store'
 import { useAuthStore } from './auth-store'
@@ -40,6 +41,7 @@ import { useMcpStore } from './mcp-store'
 import { useMediaStore } from './media-store'
 import { usePlanStore } from './plan-store'
 import { useRunStore } from './run-store'
+import { useOutboxStore } from './outbox-store'
 import { useScheduleStore } from './schedule-store'
 import { useSessionStore } from './session-store'
 import { useSpaceStore } from './space-store'
@@ -52,11 +54,15 @@ interface WsState {
   unread: Record<string, number>
   /** M79-G：userId → 在线（缺省 = 未知；可见域 = 好友 ∪ 同会话成员——成员弹窗 / @ 候选点） */
   presenceMap: Record<string, boolean>
+  /** IM：sessionId → 正在输入的成员（临时态；6s 无新帧自动消失） */
+  typing: Record<string, Array<{ userId: string; name?: string }>>
   init: () => void
   /** M8：断线提示条的「重连」按钮 */
   reconnect: () => void
   ensureSubscribed: (sessionId: string) => void
-  markRead: (sessionId: string) => void
+  /** IM：上报正在输入（连接未开 / 非当前会话时静默） */
+  sendTyping: (sessionId: string) => void
+  markRead: (sessionId: string, visibleSeq: number) => void
 }
 
 let socket: NotifySocket | undefined
@@ -98,6 +104,44 @@ function ensureAllSubscribed(): void {
 function sessionTitle(sessionId: string): string {
   const s = useSessionStore.getState().sessions.find((x) => x.id === sessionId)
   return s?.title ?? '会话'
+}
+
+/** IM：记录正在输入（同一用户 6s 内无新帧自动消失）。 */
+function noteTyping(sessionId: string, userId: string, name?: string): void {
+  const key = `${sessionId}:${userId}`
+  const timer = typingTimers.get(key)
+  if (timer) clearTimeout(timer)
+  typingTimers.set(
+    key,
+    setTimeout(() => {
+      typingTimers.delete(key)
+      useWsStore.setState((s) => ({
+        typing: { ...s.typing, [sessionId]: (s.typing[sessionId] ?? []).filter((x) => x.userId !== userId) },
+      }))
+    }, 6000),
+  )
+  useWsStore.setState((s) => {
+    const list = (s.typing[sessionId] ?? []).filter((x) => x.userId !== userId)
+    return { typing: { ...s.typing, [sessionId]: [...list, { userId, ...(name ? { name } : {}) }] } }
+  })
+}
+
+/** IM：用户已发消息 / 离开时立即清除其输入态。 */
+function clearTyping(sessionId: string, userId: string): void {
+  const key = `${sessionId}:${userId}`
+  const timer = typingTimers.get(key)
+  if (timer) clearTimeout(timer)
+  typingTimers.delete(key)
+  useWsStore.setState((s) => {
+    const list = s.typing[sessionId] ?? []
+    if (!list.some((x) => x.userId === userId)) return s
+    return { typing: { ...s.typing, [sessionId]: list.filter((x) => x.userId !== userId) } }
+  })
+}
+
+/** IM：免打扰仅抑制普通消息提示，不丢未读、不影响邀请 / 提及等收件箱事件。 */
+function sessionMuted(sessionId: string): boolean {
+  return !!useSessionStore.getState().sessions.find((x) => x.id === sessionId)?.prefs?.muted
 }
 
 function totalUnread(unread: Record<string, number>): number {
@@ -142,6 +186,11 @@ function syncBadge(unread: Record<string, number>): void {
 
 /** 每会话已上报的已读 seq（防重复上报；仅推进时发送） */
 const reportedSeq = new Map<string, number>()
+const pendingReads = new Map<string, number>()
+const reading = new Set<string>()
+let readTimer: ReturnType<typeof setTimeout> | undefined
+/** IM：typing 过期定时器（`sessionId:userId`） */
+const typingTimers = new Map<string, ReturnType<typeof setTimeout>>()
 
 /** 服务端快照 → 本地徽章（会话列表每次刷新后调用；缺 unreadCount 字段的条目不动：兼容模式零影响） */
 function syncFromSessions(): void {
@@ -162,26 +211,84 @@ function syncFromSessions(): void {
   }
 }
 
-/** 当前会话消息最大 seq（已读上报依据；仅当前会话有内存消息） */
-function maxSeqOf(sessionId: string): number {
-  const st = useSessionStore.getState()
-  if (st.currentId !== sessionId) return 0
-  let max = 0
-  for (const id of st.order) {
-    const seq = st.byId.get(id)?.seq ?? 0
-    if (seq > max) max = seq
+/** 已读只接受视口提供的水位；REST 确认后才记成功，网络失败保留待重试。 */
+function flushReads(): void {
+  readTimer = undefined
+  const userId = useAuthStore.getState().user?.id ?? ''
+  for (const [key, seq] of pendingReads) {
+    const [owner, sessionId] = JSON.parse(key) as [string, string]
+    if (owner !== userId) { pendingReads.delete(key); continue }
+    if (reading.has(key)) continue
+    reading.add(key)
+    void apiPost<{ lastReadSeq: number }>(`/api/sessions/${sessionId}/read`, { seq })
+      .then((res) => {
+        if ((useAuthStore.getState().user?.id ?? '') !== owner) return
+        if (!Number.isSafeInteger(res.lastReadSeq)) throw new Error('已读确认无效')
+        reportedSeq.set(key, Math.max(reportedSeq.get(key) ?? 0, res.lastReadSeq))
+        if ((pendingReads.get(key) ?? 0) <= seq) pendingReads.delete(key)
+        // 读到本地最新一条即可清除该会话徽章；未读总数仍以服务端对账为权威。
+        const state = useSessionStore.getState()
+        if (state.currentId === sessionId) {
+          const latest = state.order.reduce((max, id) => Math.max(max, state.byId.get(id)?.seq ?? 0), 0)
+          if (res.lastReadSeq >= latest) {
+            const next = { ...useWsStore.getState().unread, [sessionId]: 0 }
+            useWsStore.setState({ unread: next })
+            syncBadge(next)
+          }
+        }
+        scheduleSessionsResync()
+      })
+      .catch((err: unknown) => {
+        // 会话已删除 / 无权访问等确定性失败丢弃；网络与 5xx 保留待重试。
+        if (err instanceof ApiError && err.status >= 400 && err.status < 500) pendingReads.delete(key)
+      })
+      .finally(() => {
+        reading.delete(key)
+        const pending = pendingReads.get(key) ?? 0
+        if (pending > seq && !readTimer) readTimer = setTimeout(flushReads, 50)
+        else if (pendingReads.size && !readTimer) readTimer = setTimeout(flushReads, 5000)
+      })
   }
-  return max
 }
 
-/** 已读上报：WS 在线走 `read` 帧（多端广播）；断线走 REST 兜底（幂等，单调推进） */
-function reportRead(sessionId: string): void {
-  const seq = maxSeqOf(sessionId)
-  if (seq <= 0) return
-  if ((reportedSeq.get(sessionId) ?? 0) >= seq) return
-  reportedSeq.set(sessionId, seq)
-  if (socket && useWsStore.getState().status === 'open') socket.read(sessionId, seq)
-  else void apiPost(`/api/sessions/${sessionId}/read`, { seq }).catch(() => undefined)
+let notifyEpoch: string | undefined
+let reconcileTimer: ReturnType<typeof setTimeout> | undefined
+let reconciling = false
+let reconcileAgain = false
+let reconcileFailures = 0
+
+/** 列表并非消息快照：恢复时必须补齐当前正文、编辑、删除以及成员已读。 */
+function requestReconcile(delay = 100): void {
+  reconcileAgain = true
+  if (reconcileTimer || reconciling) return
+  reconcileTimer = setTimeout(() => {
+    reconcileTimer = undefined
+    reconciling = true
+    reconcileAgain = false
+    void Promise.all([
+      useInboxStore.getState().sync(),
+      useSessionStore.getState().loadSessions(),
+      useSessionStore.getState().refreshMessages(true),
+    ]).then(() => { reconcileFailures = 0 }).catch(() => {
+      // 流式期间快照会持续被新帧超越；有限次重试后交给下一次重连/缺口事件。
+      reconcileFailures += 1
+      reconcileAgain = reconcileFailures < 3
+    }).finally(() => {
+      reconciling = false
+      if (reconcileAgain) requestReconcile(3000)
+    })
+  }, delay)
+}
+
+function acceptEpoch(epoch?: string): void {
+  if (!epoch || epoch === notifyEpoch) return
+  const changed = notifyEpoch !== undefined
+  notifyEpoch = epoch
+  if (changed) {
+    cursors.clear()
+    requestReconcile()
+    socket?.subscribe([...subscribed])
+  }
 }
 
 /** 收件箱条目 toast 文案（跨会话个人事件的即时提示；克制口径） */
@@ -230,8 +337,11 @@ function systemNotify(title: string, body: string): void {
 export function handleNotify(env: NotifyEnvelope): void {
   // M79-A：用户主题帧（`u:` 前缀；收件箱 / 已读 / presence / 好友）不走会话游标去重（seq=0）；
   // 幂等由 inbox item.id / 状态覆盖语义保证
-  if (!env.sessionId.startsWith('u:')) {
+  // 临时帧（typing）不占 seq、不参与去重 / 缺口判断
+  if (!env.sessionId.startsWith('u:') && !env.ephemeral) {
+    acceptEpoch(env.epoch)
     const last = cursors.get(env.sessionId) ?? 0
+    if (env.seq > last + 1) requestReconcile()
     if (env.seq <= last) return // 去重：WS 补发 / 轮询 / 重放交叉
     cursors.set(env.sessionId, env.seq)
   }
@@ -390,24 +500,30 @@ export function handleNotify(env: NotifyEnvelope): void {
       //   （不再区分 human / agent；agent 消息不弹 toast，靠未读徽标与列表预览感知）
       const msg = env.payload.message as ChatMessage | undefined
       if (!msg?.id) break
+      useOutboxStore.getState().acknowledge(msg)
+      if (msg.userId) clearTyping(env.sessionId, msg.userId)
       if (sameSession) {
         sessions.upsertMessage(msg)
         // M79-X：同会话也同步列表行预览（气泡即时 + 列表预览即时的统一口径）
         useSessionStore.getState().noteIncoming(env.sessionId, msg)
+        // 撤回会减少服务端未读，需对账（普通消息的未读由消息级计数处理）
+        if (msg.recalledAt) scheduleSessionsResync()
         break
       }
       const myUserId = useAuthStore.getState().user?.id
       const ownHuman = msg.role === 'user' && !!msg.userId && msg.userId === myUserId
       // 自己的消息（同账号其他标签页补播）：更新预览但不计未读不提示
       useSessionStore.getState().noteIncoming(env.sessionId, msg)
-      if (!ownHuman) {
+      // 已撤回消息不产生未读与提示（仍更新预览为「消息已撤回」）；同时对齐权威未读。
+      if (msg.recalledAt) scheduleSessionsResync()
+      if (!ownHuman && !msg.recalledAt) {
         const next = { ...useWsStore.getState().unread }
         next[env.sessionId] = (next[env.sessionId] ?? 0) + 1
         useWsStore.setState({ unread: next })
         syncBadge(next)
         scheduleSessionsResync()
       }
-      if (msg.role === 'user' && !ownHuman) {
+      if (msg.role === 'user' && !ownHuman && !msg.recalledAt && !sessionMuted(env.sessionId)) {
         const preview = msg.content.replace(/\s+/g, ' ').slice(0, 40)
         toast(`${sessionTitle(env.sessionId)}：${preview}`)
         if (!visible) systemNotify('Owli Team', `${sessionTitle(env.sessionId)}：${preview}`)
@@ -482,7 +598,9 @@ export function handleNotify(env: NotifyEnvelope): void {
     case 'notify:message-deleted': {
       const messageId = String(env.payload.messageId ?? '')
       if (!messageId) break
-      if (sameSession) sessions.removeMessage(messageId)
+      // 用户主题帧（scope=self）携带真实 sessionId；会话主题帧沿用 env.sessionId
+      const target = String(env.payload.sessionId ?? env.sessionId)
+      if (useSessionStore.getState().currentId === target) sessions.removeMessage(messageId)
       scheduleSessionsResync()
       break
     }
@@ -643,10 +761,39 @@ export function handleNotify(env: NotifyEnvelope): void {
         void useSessionStore.getState().loadSessions()
       }
       const text = toastForInbox(item)
-      // P4：生活空间晚间静默（仍入箱并刷新列表；不弹 toast / 系统通知）
+      // P4：生活空间晚间静默（仍入箱并刷新列表；不弹 toast / 系统通知）。
+      // IM：会话免打扰只静默普通消息；@提及 / 邀请 / 待回复仍提醒（可行动事件不吞）。
       if (text && !inboxPushSilenced(item)) {
         toast(text)
         if (!visible) systemNotify('Owli Team', text)
+      }
+      break
+    }
+
+    // IM：正在输入（临时帧；同一用户 6s 无新帧自动清除；本人多端不回显）
+    case 'notify:typing': {
+      const userId = String(env.payload.userId ?? '')
+      const myId = useAuthStore.getState().user?.id
+      if (!userId || userId === myId) break
+      const name = typeof env.payload.name === 'string' ? env.payload.name : undefined
+      noteTyping(env.sessionId, userId, name)
+      break
+    }
+
+    // IM：会话个人偏好（置顶 / 免打扰）多端同步（用户主题帧）
+    case 'notify:session-prefs': {
+      const sessionId = String(env.payload.sessionId ?? '')
+      const prefs = env.payload.prefs as SessionPrefs | undefined
+      if (!sessionId || !prefs) break
+      useSessionStore.setState((s) => ({
+        sessions: s.sessions.map((x) => (x.id === sessionId ? { ...x, prefs } : x)),
+      }))
+      // 标记未读：至少展示 1 条未读（读到最新后由服务端解除并回帧）
+      if (prefs.markedUnread) {
+        const next = { ...useWsStore.getState().unread }
+        next[sessionId] = Math.max(1, next[sessionId] ?? 0)
+        useWsStore.setState({ unread: next })
+        syncBadge(next)
       }
       break
     }
@@ -719,6 +866,8 @@ function startPolling(): void {
     if (document.visibilityState === 'hidden') return
     void apiGet<NotifyListResponse>(pollUrlOf(cursors))
       .then((res) => {
+        acceptEpoch(res.epoch)
+        if (res.truncated) requestReconcile()
         for (const env of res.notifications) handleNotify(env)
       })
       .catch(() => undefined)
@@ -735,10 +884,11 @@ function stopPolling(): void {
   }
 }
 
-export const useWsStore = create<WsState>((set, get) => ({
+export const useWsStore = create<WsState>((set) => ({
   status: 'connecting',
   unread: {},
   presenceMap: {},
+  typing: {},
 
   init: () => {
     if (socket) return
@@ -760,19 +910,17 @@ export const useWsStore = create<WsState>((set, get) => ({
         if (everConnected) {
           // M79-AB：断线窗口的**用户主题帧**（收件箱：邀请 / 提及 / 等待提醒——无游标可补）在
           // 服务重启 / 网络抖动期间会丢失——重连成功后 REST 权威补偿（收件箱快照 + 会话列表）。
-          void useInboxStore.getState().sync()
-          void useSessionStore.getState().loadSessions()
+          requestReconcile()
+          if (pendingReads.size && !readTimer) readTimer = setTimeout(flushReads, 100)
         }
         everConnected = true
       },
       onNotify: handleNotify,
+      onEpoch: acceptEpoch,
       getCursors: () => Object.fromEntries(cursors),
       getSubscriptions: () => [...subscribed],
       // M79-A：服务端要求补齐（背压断开前通知）→ REST 快照双保险（重连补发仍会覆盖）
-      onResync: () => {
-        void useInboxStore.getState().sync()
-        void useSessionStore.getState().loadSessions()
-      },
+      onResync: () => requestReconcile(),
       // M79-A：连接级策略事件（同账号连接数超限被顶替 / 会话权限变更）
       onPolicyError: (code, message) => {
         if (code === 'conn_evicted') {
@@ -800,12 +948,7 @@ export const useWsStore = create<WsState>((set, get) => ({
         // M79-W：列表变化（新共享 / 新会话）自动纳入订阅——不再依赖用户点击
         ensureAllSubscribed()
       }
-      const cur = state.currentId
-      if (!cur) return
-      // 仅「消息集合变化」触发（流式增量不触发）；顺序引用变化 = 追加 / 删除 / 重载
-      if (state.order === prev.order) return
-      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return
-      reportRead(cur)
+      // 已读由 ChatArea 的真实视口驱动，加载、预取和后台收消息不代表阅读。
     })
     // M26：固定订阅资产变更保留主题（控制台写盘后的多标签同步；降级轮询天然覆盖）
     subscribed.add(ASSETS_TOPIC)
@@ -821,9 +964,10 @@ export const useWsStore = create<WsState>((set, get) => ({
     }
     document.addEventListener('visibilitychange', () => {
       syncBadge(useWsStore.getState().unread)
-      // M79-A：回到前台 → 补报当前会话已读（后台期间抵达的消息）
-      const cur = useSessionStore.getState().currentId
-      if (document.visibilityState === 'visible' && cur) reportRead(cur)
+      if (document.visibilityState === 'visible') {
+        requestReconcile()
+        if (pendingReads.size && !readTimer) readTimer = setTimeout(flushReads, 100)
+      }
     })
   },
 
@@ -838,13 +982,17 @@ export const useWsStore = create<WsState>((set, get) => ({
 
   reconnect: () => socket?.reconnect(),
 
-  markRead: (sessionId) => {
-    if ((get().unread[sessionId] ?? 0) !== 0) {
-      const next = { ...get().unread, [sessionId]: 0 }
-      set({ unread: next })
-      syncBadge(next)
-    }
-    // M79-A：已读上报（服务端权威；多端同步由 notify:read-state 广播；单调推进防回退）
-    reportRead(sessionId)
+  sendTyping: (sessionId) => {
+    if (!socket || useWsStore.getState().status !== 'open') return
+    socket.typing(sessionId)
+  },
+
+  markRead: (sessionId, visibleSeq) => {
+    if (document.visibilityState !== 'visible' || useSessionStore.getState().currentId !== sessionId) return
+    if (!Number.isSafeInteger(visibleSeq) || visibleSeq <= 0) return
+    const key = JSON.stringify([useAuthStore.getState().user?.id ?? '', sessionId])
+    if ((reportedSeq.get(key) ?? 0) >= visibleSeq) return
+    pendingReads.set(key, Math.max(pendingReads.get(key) ?? 0, visibleSeq))
+    if (!readTimer) readTimer = setTimeout(flushReads, 300)
   },
 }))

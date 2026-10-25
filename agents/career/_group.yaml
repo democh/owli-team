@@ -20,3 +20,20 @@ agenda:
 stage:
   layout: dock
   panel: coach
+category: life
+catalog:
+  keywords:
+    - 职业发展
+    - 职业定位与路径
+    - 打磨简历
+    - 模拟一轮面试
+    - 评估与谈 offer
+  inputs:
+    - 真实经历
+    - 目标岗位
+    - 薪酬与 offer 条件
+  outputs:
+    - 职业路线
+    - 简历建议
+    - 面试与谈薪准备
+  boundary: 不编造经历，不保证录用；薪酬比较不延伸为个人理财规划。

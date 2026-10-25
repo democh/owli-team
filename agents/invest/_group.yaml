@@ -22,3 +22,20 @@ stage:
   layout: dock
   panel: versus
 
+category: investment
+catalog:
+  keywords:
+    - 投资研究
+    - 个股研报
+    - 技术面快评
+    - 策略回测
+    - 多空对弈
+  inputs:
+    - 标的与研究问题
+    - 周期与数据
+    - 风险约束
+  outputs:
+    - 投研报告
+    - 策略验证
+    - 风险与观察清单
+  boundary: 投资研究参考，不构成投资建议；不保证收益、不代客交易。

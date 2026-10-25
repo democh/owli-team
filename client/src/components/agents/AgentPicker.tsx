@@ -8,10 +8,13 @@ import * as React from 'react'
 import * as ReactDOM from 'react-dom'
 import { Check, Plus, Search, X } from 'lucide-react'
 import type { AgentDefinition } from '@multi-agent/shared'
-import { baseAgentId, memberKeyOf } from '@multi-agent/shared'
+import { baseAgentId, memberKeyOf, CATALOG_CATEGORIES, catalogCategory } from '@multi-agent/shared'
 import { useAgentStore } from '../../stores/agent-store'
 import { resolveIcon } from '../../lib/avatar-icons'
 import { soulIdOf } from '../../lib/members'
+import { buildCatalog, searchCatalog } from '../../lib/catalog'
+import { CatalogDetail } from './CatalogDetail'
+import { Button } from '../ui/button'
 import { cn } from '../../lib/utils'
 import { Input } from '../ui/input'
 import { AgentAvatar } from './AgentAvatar'
@@ -22,6 +25,9 @@ import { SoulPicker } from './SoulPicker'
 const MAX_INSTANCES = 4
 
 export interface AgentPickerProps {
+  initialGroup?: string
+  recommendedIds?: string[]
+  onDetail?: (id: string) => void
   /** 已选成员键（受控；创建 = 编制预览，邀请 = 拟邀请名单） */
   value: string[]
   onChange: (keys: string[]) => void
@@ -161,11 +167,22 @@ export function AgentPicker({
   disabledIds,
   fill = false,
   className,
+  initialGroup,
+  recommendedIds,
+  onDetail,
 }: AgentPickerProps): React.JSX.Element {
   const agents = useAgentStore((s) => s.agents)
   const groups = useAgentStore((s) => s.groups)
-  const [tab, setTab] = React.useState<string>('all')
+  const presets = useAgentStore((s) => s.presets)
+  const [tab, setTab] = React.useState<string>(initialGroup ?? (recommendedIds?.length ? 'recommended' : 'all'))
+  const [category, setCategory] = React.useState('all')
+  const [sceneQuery, setSceneQuery] = React.useState('')
   const [query, setQuery] = React.useState('')
+  const [detail, setDetail] = React.useState<string>()
+  const detailOpener = React.useRef<HTMLElement | null>(null)
+  const catalog = React.useMemo(() => buildCatalog(agents, groups, presets), [agents, groups, presets])
+  const byKey = React.useMemo(() => new Map(catalog.map((e) => [e.key, e])), [catalog])
+  const groupById = React.useMemo(() => new Map(groups.map((g) => [g.id, g])), [groups])
 
   const blocked = React.useMemo(() => new Set(disabledIds ?? []), [disabledIds])
   const soulEnabled = souls !== undefined && onSoulChange !== undefined
@@ -177,22 +194,10 @@ export function AgentPicker({
     [memberKeys, value],
   )
 
-  const q = query.trim().toLowerCase()
-  const list = React.useMemo(
-    () =>
-      agents.filter((a) => {
-        if (tab !== 'all' && a.group !== tab) return false
-        if (!q) return true
-        return (
-          a.name.toLowerCase().includes(q) ||
-          a.role.toLowerCase().includes(q) ||
-          a.id.toLowerCase().includes(q) ||
-          a.description.toLowerCase().includes(q) ||
-          a.capabilities.some((c) => c.toLowerCase().includes(q))
-        )
-      }),
-    [agents, tab, q],
-  )
+  const list = React.useMemo(() => searchCatalog(catalog, query, category, 'agent')
+    .filter((e) => tab === 'all' || (tab === 'recommended' ? recommendedIds?.includes(e.id) : e.agent?.group === tab))
+    .map((e) => e.agent!), [catalog, query, category, tab, recommendedIds])
+  const sceneList = groups.filter((g) => (category === 'all' || catalogCategory(g.category) === category) && (g.id === tab || g.name.includes(sceneQuery) || g.id.includes(sceneQuery)))
 
   /** 卡片点击：已选（含分身）→ 整体移除；未选 → 追加经典成员 */
   const toggle = (agent: AgentDefinition): void => {
@@ -201,25 +206,16 @@ export function AgentPicker({
     onChange(picked ? value.filter((key) => baseAgentId(key) !== agent.id) : [...value, agent.id])
   }
 
-  const tabCls = (on: boolean): string =>
-    cn(
-      'shrink-0 rounded-full px-2 py-0.5 text-[11.5px] transition-colors',
-      on ? 'bg-primary/10 font-medium text-primary' : 'text-muted-foreground hover:bg-accent/70 hover:text-foreground',
-    )
+  const detailEntry = detail ? byKey.get(detail) : undefined
+  if (detailEntry) return <div className="min-h-0 overflow-auto p-3"><Button autoFocus variant="outline" onClick={() => { setDetail(undefined); requestAnimationFrame(() => detailOpener.current?.focus()) }}>返回角色池</Button><h3 className="my-3 font-semibold">{detailEntry.name}</h3><CatalogDetail key={detailEntry.key} entry={detailEntry} entries={catalog} onNavigate={setDetail} onUse={(source) => { if (source.kind === 'agent' && !blocked.has(source.id) && !value.some((key) => baseAgentId(key) === source.id)) onChange([...value, source.id]); setDetail(undefined) }} /></div>
 
   return (
     <div className={cn('flex min-h-0 flex-col gap-2', className)}>
-      <div className="flex items-center gap-0.5 overflow-x-auto pb-0.5">
-        <button type="button" className={tabCls(tab === 'all')} onClick={() => setTab('all')}>
-          全部
-        </button>
-        {groups.map((g) => (
-          <button key={g.id} type="button" className={tabCls(tab === g.id)} onClick={() => setTab(g.id)}>
-            {g.name}
-            <span className="ml-0.5 text-[10px] opacity-70">{agents.filter((a) => a.group === g.id).length}</span>
-          </button>
-        ))}
+      <div className="grid grid-cols-2 gap-2 text-[13px]">
+        <select aria-label="角色分类" value={category} onChange={(e) => { setCategory(e.target.value); setTab('all') }} className="min-w-0 rounded border bg-card p-2"><option value="all">全部分类</option>{Object.entries(CATALOG_CATEGORIES).map(([id, name]) => <option key={id} value={id}>{name}</option>)}</select>
+        <select aria-label="选择角色场景" value={tab} onChange={(e) => setTab(e.target.value)} className="min-w-0 rounded border bg-card p-2"><option value="all">全部角色</option>{!!recommendedIds?.length && <option value="recommended">推荐成员</option>}{sceneList.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}</select>
       </div>
+      <Input aria-label="搜索场景选项" value={sceneQuery} onChange={(e) => setSceneQuery(e.target.value)} placeholder="查找场景…" className="h-8 text-[13px]" />
 
       <div className="relative">
         <Search className="absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
@@ -256,7 +252,7 @@ export function AgentPicker({
           const presentKeys = (memberKeys ?? []).filter((key) => baseAgentId(key) === a.id)
           const on = pickedKeys.length > 0
           const absent = presentKeys.length > 0
-          const group = groups.find((g) => g.id === a.group)
+          const group = groupById.get(a.group)
           const usedSoulIds = new Set<string>()
           for (const key of keys) {
             const soulId = soulIdOf(a, key, souls)
@@ -270,9 +266,10 @@ export function AgentPicker({
               role="button"
               tabIndex={0}
               aria-pressed={on}
+              aria-disabled={off}
               onClick={() => toggle(a)}
               onKeyDown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ') {
+                if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) {
                   e.preventDefault()
                   toggle(a)
                 }
@@ -295,7 +292,7 @@ export function AgentPicker({
                     <span className="truncate text-[12px] font-semibold">{a.name}</span>
                     {group && <GroupBadge group={group} showName={false} className="shrink-0 p-0.5" />}
                   </div>
-                  <div className="truncate text-[10.5px] text-muted-foreground">{a.role}</div>
+                  <div className="truncate text-[13px] text-muted-foreground">{a.role}</div>
                 </div>
                 {off ? (
                   <span className="shrink-0 rounded bg-muted px-1 py-0.5 text-[9.5px] text-muted-foreground">已在场</span>
@@ -310,6 +307,9 @@ export function AgentPicker({
                   </span>
                 )}
               </div>
+              <p className="mt-2 line-clamp-2 text-[13px] leading-5 text-muted-foreground">{a.description}</p>
+              <p className="mt-1 text-[13px] text-muted-foreground">{a.capabilities.slice(0, 3).join(' · ')}</p>
+              <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-[13px]"><span>{byKey.get(`agent:${a.id}`)?.isDefault ? '默认成员' : '扩展专家'}</span><button type="button" aria-label="查看角色详情" title={`查看 ${a.name} 的职责、能力与交接对象`} className="rounded px-2 py-1 text-primary hover:bg-accent focus-visible:ring-2" onClick={(e) => { e.stopPropagation(); if (onDetail) onDetail(a.id); else { detailOpener.current = e.currentTarget; setDetail(`agent:${a.id}`) } }}>详情</button></div>
               {(on || absent) && !off && (
                 <div className="mt-1.5 flex flex-wrap items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
                   {classicKey && soulEnabled && (

@@ -32,14 +32,18 @@ import { MockProvider } from '../llm/mock.js'
 import type { ChatRequest, LlmProvider } from '../llm/provider.js'
 import { MemoryService } from '../memory/service.js'
 import { Engine, type NotifyPort } from '../orchestration/engine.js'
+import { PlanReviewService } from '../plan-review.js'
+import { ArtifactIndex } from '../store/artifact-index.js'
 import { ArtifactStore } from '../store/artifacts.js'
 import { ArtifactVersionStore } from '../store/artifact-versions.js'
 import { openDatabase } from '../store/db.js'
 import { MemoryStore } from '../store/memory.js'
 import { EmbeddingCacheStore, EmbedQueueStore, MemoryVectorStore } from '../store/memory-vectors.js'
 import { ToolMetricsStore } from '../store/metrics.js'
+import { PlanStore } from '../store/plans.js'
 import { ProjectStore } from '../store/projects.js'
 import { PromptLibrary } from '../store/prompts.js'
+import { ReviewStore } from '../store/reviews.js'
 import { RunEventStore } from '../store/run-events.js'
 import { RunStore } from '../store/runs.js'
 import { SessionStore } from '../store/sessions.js'
@@ -48,6 +52,7 @@ import { SummaryStore } from '../store/summaries.js'
 import { TaskStore } from '../store/tasks.js'
 import { UsageStore } from '../store/usage.js'
 import { createToolRegistry } from '../tools/builtin.js'
+import { ToolDiscoveryService } from '../tools/discovery.js'
 import { WorkspaceService } from '../workspace.js'
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..')
@@ -143,6 +148,9 @@ async function buildTaskEnv(rootDir: string, maxTurns: number, provider: LlmProv
   const projects = new ProjectStore(db, cfg.allowedRoots)
   const workspace = new WorkspaceService({ cfg, sessions, projects })
   const artifacts = new ArtifactStore(cfg.workspaceDir, (sid) => workspace.resolveDir(sid))
+  const index = new ArtifactIndex(db, artifacts, {
+    changedArtifacts: (sid) => (workspace.isGitMode(sid) ? workspace.changedArtifacts(sid) : Promise.resolve(null)),
+  })
   const versions = new ArtifactVersionStore(db)
   const embedQueue = new EmbedQueueStore(db)
   const memory = new MemoryStore(db, embedQueue)
@@ -152,6 +160,9 @@ async function buildTaskEnv(rootDir: string, maxTurns: number, provider: LlmProv
   const usage = new UsageStore(db, cfg.llmPricing)
   const metrics = new ToolMetricsStore(db)
   const events = new RunEventStore(db)
+  const plans = new PlanStore(db)
+  const reviews = new ReviewStore(db)
+  const planReviews = new PlanReviewService({ plans, timeoutMs: cfg.planReviewTimeoutMs })
   const tools = createToolRegistry(cfg)
   const notify: NotifyPort = { publish: (input) => input }
   const compressor = new Compressor({ cfg, provider, sessions, summaries, memory, usage })
@@ -171,18 +182,24 @@ async function buildTaskEnv(rootDir: string, maxTurns: number, provider: LlmProv
     skills,
     sessions,
     artifacts,
+    index,
     memory,
     memories,
     summaries,
     compressor,
+    plans,
   })
-  const approvals = new ApprovalService({ timeoutMs: cfg.approvalTimeoutMs })
+  const toolSearch = new ToolDiscoveryService({
+    embedder: { embed: async (texts) => (await embeddings.embed(texts)).vecs },
+  })
+  const approvals = new ApprovalService({ timeoutMs: cfg.approvalTimeoutMs, db })
   const engine = new Engine({
     cfg,
     prompts,
     skills,
     sessions,
     artifacts,
+    index,
     memory,
     memories,
     context,
@@ -194,8 +211,13 @@ async function buildTaskEnv(rootDir: string, maxTurns: number, provider: LlmProv
     usage,
     metrics,
     approvals,
+    plans,
+    reviews,
+    planReviews,
     versions,
     events,
+    toolSearch,
+    isGitMode: (sessionId) => workspace.isGitMode(sessionId),
   })
   return {
     cfg,

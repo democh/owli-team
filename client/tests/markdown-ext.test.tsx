@@ -304,7 +304,7 @@ describe('Markdown chart 图表块', () => {
     const dialog = screen.getByRole('dialog')
     expect(dialog).toBeInTheDocument()
     await waitFor(() => expect(vi.mocked(createChart)).toHaveBeenCalledTimes(2))
-    fireEvent.keyDown(window, { key: 'Escape' })
+    await user.keyboard('{Escape}')
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
   })
 
@@ -333,7 +333,7 @@ describe('Markdown 图片灯箱与表格包裹', () => {
     await user.click(btn!)
     expect(screen.getByRole('dialog')).toBeInTheDocument()
     expect(screen.getByRole('dialog').querySelector('img.md-img-zoom')).not.toBeNull()
-    fireEvent.keyDown(window, { key: 'Escape' })
+    await user.keyboard('{Escape}')
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
   })
 

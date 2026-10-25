@@ -32,6 +32,7 @@ function PendingCard({
   const [busy, setBusy] = React.useState<string>()
   const [customOpen, setCustomOpen] = React.useState(false)
   const [feedback, setFeedback] = React.useState('')
+  const cardRef = React.useRef<HTMLDivElement>(null)
 
   const agent = approval.agentId ? agents.find((a) => a.id === approval.agentId) : undefined
 
@@ -59,7 +60,14 @@ function PendingCard({
   React.useEffect(() => {
     if (!hotkey || readOnly) return
     const onKey = (e: KeyboardEvent): void => {
-      if (!(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey) return
+      if (!(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey || e.isComposing || e.repeat || e.defaultPrevented) return
+      const card = cardRef.current
+      if (!card || card.closest('[hidden], [inert], [aria-hidden="true"]')) return
+      // 模态层优先；其他输入框里的编辑快捷键不应成为审批决定。
+      const dialogs = document.querySelectorAll('[role="dialog"], [role="alertdialog"]')
+      if ([...dialogs].some((dialog) => !dialog.closest('[hidden], [aria-hidden="true"]') && !dialog.contains(card))) return
+      const target = e.target instanceof Element ? e.target : document.activeElement
+      if (target?.closest('input, textarea, [contenteditable="true"], [role="textbox"]') && !card.contains(target)) return
       if (e.key === 'Enter') {
         e.preventDefault()
         e.stopPropagation()
@@ -75,7 +83,7 @@ function PendingCard({
   }, [hotkey, customOpen, readOnly])
 
   return (
-    <div className="mx-4 mb-2 overflow-hidden rounded-xl border border-amber-300/70 bg-amber-50/80 shadow-soft">
+    <div ref={cardRef} className="mx-4 mb-2 overflow-hidden rounded-xl border border-amber-300/70 bg-amber-50/80 shadow-soft">
       <div className="flex items-center gap-2 border-b border-amber-200/70 px-3 py-2 text-[12px]">
         <ShieldAlert className="size-4 shrink-0 text-amber-600" />
         <span className="font-semibold text-amber-900">模型请求审批</span>
@@ -186,7 +194,7 @@ export function ApprovalPanel(): React.JSX.Element | null {
   // 无挂起项 → 整体不渲染（已决条不常驻；零占位）
   if (pending.length === 0) return null
   return (
-    <div className="shrink-0 pt-2">
+    <div className="max-h-[45vh] shrink-0 overflow-y-auto overscroll-contain pt-2">
       {pending.map((a, i) => (
         <PendingCard key={a.id} approval={a} hotkey={i === 0} readOnly={readOnly} />
       ))}

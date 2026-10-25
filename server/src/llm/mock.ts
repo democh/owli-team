@@ -151,18 +151,6 @@ const SCRIPTS: Record<string, RoleScript> = {
     `变现阶段判定：互动健康，${topicName(ctx)}可以开广告线；报价按对标证据给了区间。`,
     `商单核验三关与知识付费红线在 \`${ctx.artifactPath}\`；合同与税务口径转对应场景复核。`,
   ],
-  'rights-advisor': (ctx) => [
-    `${topicName(ctx)}时效先看：未过期，但离临界只剩约两个月，动作要快。`,
-    `四路对比（成本 / 周期 / 成功率区间）与证据清单在 \`${ctx.artifactPath}\`；律师线判定条件已标。`,
-  ],
-  'labor-advisor': (ctx) => [
-    `${topicName(ctx)}补偿测算给了：基数按前 12 个月平均应发，年份满半年进一；公式可复算。`,
-    `证据优先级与签字红线（自愿离职声明）在 \`${ctx.artifactPath}\`；谈判彩排随时可以约。`,
-  ],
-  'contract-checker': (ctx) => [
-    `${topicName(ctx)}合同逐条过完：高风险 2 条（单方违约金、押金全扣）、缺失条款 3 条。`,
-    `每条风险都是「定位 + 场景 + 改法」三件套，签约前五项检查单在 \`${ctx.artifactPath}\`。`,
-  ],
   'lit-reviewer': (ctx) => [
     `${topicName(ctx)}的缺口找到了：连续三篇综述都在提同一个空白，支撑够了。`,
     `文献矩阵、主题线综述与 RQ 收窄稿在 \`${ctx.artifactPath}\`；引用一条条都能回溯。`,
@@ -192,22 +180,6 @@ const SCRIPTS: Record<string, RoleScript> = {
     `中间方案写了各自的让与得，沟通约定在 \`${ctx.artifactPath}\`；底线那条建议深度沟通。`,
   ],
   // M69：跑团工坊 / 塔罗研习 / 模拟法庭 / 商业沙盘 / 哲学茶室
-  'gm-host': (ctx) => [
-    `开团前安全工具先对齐：Lines and Veils 加喊停机制，没有例外。`,
-    `${topicName(ctx)}第一幕钩子给了一个「必须选」的开局；本场判定全部走 dice_roll，骰式与种子在 \`${ctx.artifactPath}\`。`,
-  ],
-  'scenario-writer': (ctx) => [
-    `${topicName(ctx)}剧本按三幕五节点搭好，线索网络每条必经线索都有两条路径。`,
-    `转折埋了两处伏笔，威胁触发前都有征兆——全文与秘密信息表在 \`${ctx.artifactPath}\`。`,
-  ],
-  'npc-player': (ctx) => [
-    `${topicName(ctx)}NPC 档案三件套齐了：目的、手段、破绽；口吻示例各三句。`,
-    `信息表（知道 / 不知道 / 隐瞒）与出场退场设计在 \`${ctx.artifactPath}\`；单次对话信息释放不超过两条。`,
-  ],
-  'rule-keeper': (ctx) => [
-    `规则集声明先立住：判定三要素（骰式 / DC / 失败后果）缺一不判。`,
-    `${topicName(ctx)}速查表与口径变更记录在 \`${ctx.artifactPath}\`；争议先走规则、场后再议优化。`,
-  ],
   'tarot-reader': (ctx) => [
     `牌面先报：${topicName(ctx)}三张阵已抽，牌序与正逆位都出自 tarot_draw，种子随卡。`,
     `四步解读（逐牌→关系→主题→参考区间）与边界声明在 \`${ctx.artifactPath}\`；逆位都配了转正建议。`,
@@ -252,14 +224,6 @@ const SCRIPTS: Record<string, RoleScript> = {
   'local-curator': (ctx) => [
     `${topicName(ctx)}在地体验筛了 8 个候选，每条都有来源分级；榜单热门标了商业化提示。`,
     `主题单元（含时长三档与备用项）、避坑与礼仪清单在 \`${ctx.artifactPath}\`。`,
-  ],
-  'insurance-planner': (ctx) => [
-    `${topicName(ctx)}四类保障缺口都测算了：寿险 / 重疾 / 医疗 / 意外，公式与假设齐备。`,
-    `配置顺序（先大人后孩子）与两档预算方案在 \`${ctx.artifactPath}\`；条款要点含免责与等待期。`,
-  ],
-  'big-ticket-advisor': (ctx) => [
-    `${topicName(ctx)}全周期成本算全了：购入 + 持有 + 退出，分期换算过真实年化。`,
-    `应急金检查、72 小时冷静期与放弃信号清单在 \`${ctx.artifactPath}\`；不替用户拍板。`,
   ],
   'valuation-modeler': (ctx) => [
     `${topicName(ctx)}三法估值都跑了：可比公司 / 可比交易 / DCF，投前投后口径分开标。`,
@@ -441,43 +405,6 @@ const SCRIPTS: Record<string, RoleScript> = {
     `规范三件套齐了：logo 安全区 / 字体层级 / 图片风格板；落地页与物料模板已按规范改稿。`,
     `完整规范在 \`${ctx.artifactPath}\`，后续物料统一按该文件评审。`,
   ],
-  sales: (ctx) => [
-    `销售这边本周主攻「试用未转化」的 23 家客户，话术聚焦 ROI 对比与快速上手。`,
-    '',
-    '::: mail 试用转化跟进（客户群发稿）',
-    '',
-    '收件人: 试用客户（23 家）',
-    '主题: 两周试用报告与专属优惠',
-    '',
-    '您好，感谢试用！这是贵司的两周使用报告：核心流程已跑通 3 个，团队活跃 5 人。',
-    '针对正式版我准备了一份专属方案（首年 8 折 + 迁移支持），本周三 / 四下午方便约 20 分钟对齐吗？',
-    '',
-    '—— 陆征',
-    ':::',
-    '',
-    `跟进清单与异议话术库在 \`${ctx.artifactPath}\`。`,
-  ],
-  success: (ctx) => [
-    `客户成功视角：4 家客户健康分告警（登录频次 -40%），已按流失风险排定干预顺序。`,
-    `干预动作：高触达回访 2 家、增购引导 1 家、培训补救 1 家，全部排进本周。`,
-    `健康分看板与回访记录在 \`${ctx.artifactPath}\`。`,
-  ],
-  support: (ctx) => [
-    `近 30 天工单我做了聚类：Top3 是登录权限 / 数据导入 / 发票开具，已合并成三条标准回复。`,
-    '',
-    '::: mail 工单回复模板：数据导入失败',
-    '',
-    '收件人: 客户',
-    '主题: 关于数据导入失败的回复',
-    '',
-    '您好，导入失败通常是文件编码或列名不一致导致。',
-    '请将文件另存为 UTF-8 编码后重试；如仍失败，把文件发给我们，2 小时内为您处理。',
-    '',
-    '—— 夏禾',
-    ':::',
-    '',
-    `完整客服手册（含升级路径与 SLA）在 \`${ctx.artifactPath}\`。`,
-  ],
   finance: (ctx) => [
     `财务口径先对齐：以下数据截至本期末，不含未开票收入，按权责发生制归集。`,
     '',
@@ -638,31 +565,6 @@ const SCRIPTS: Record<string, RoleScript> = {
     `预算两档（舒适 / 极简）都有数字与假设；证件与预订按倒排时间表推进（签证先办，酒店可退优先）。`,
     `行程表、打包清单与应急信息在 \`${ctx.artifactPath}\`。`,
   ],
-  wealth: (ctx) => [
-    `先盘点再动手：${topicName(ctx)}三档支出（必要 / 弹性 / 冲动）拆完，月度结余率稳定在 32%。`,
-    `目标储蓄按倒推法定每月金额；配置给的是比例与再平衡纪律，不给具体标的。`,
-    `预算表、保险检视清单与下一步动作在 \`${ctx.artifactPath}\`（不构成投资建议）。`,
-  ],
-  chef: (ctx) => [
-    `${topicName(ctx)}的菜单排了一周 21 餐：工作日晚餐 ≤ 25 分钟，周末留一顿「慢慢做」的。`,
-    `每餐标了耗时与难度；备菜放周日 90 分钟（洗切分装），工作日回锅即食。`,
-    `菜单、菜谱要点与分区采购清单在 \`${ctx.artifactPath}\`，按清单照买即可。`,
-  ],
-  home: (ctx) => [
-    `${topicName(ctx)}按「区域 → 痛点 → 四步整理」推进：先从每日停留最久的区域动手，一轮 2 小时见效。`,
-    `容器与工具清单带数量与预算；家务轮值表按周分工，维持规则就一条：物品回家位。`,
-    `家居方案与选购要点在 \`${ctx.artifactPath}\`。`,
-  ],
-  parenting: (ctx) => [
-    `${topicName(ctx)}本期只聚焦一个行为问题：先记录 3 天基线（频率 / 触发场景），再上「提前预告 + 有限选择」两步做法。`,
-    `做法给的是照着说的话术，不是讲道理；每周 2 个亲子活动（含时长与材料）已排好。`,
-    `观察记录与调整规则在 \`${ctx.artifactPath}\`；涉及发育或情绪异常的，建议同步咨询专业人士。`,
-  ],
-  pet: (ctx) => [
-    `${topicName(ctx)}先建档：品种、年龄、体重、过敏史；喂养按体重 2.5%–3% 算分量，分两餐定时。`,
-    `健康排期排到年底（疫苗 / 驱虫 / 体检各有日期）；训练用正向强化，一次 5 分钟不贪多。`,
-    `照护单、应急清单与看护交接单在 \`${ctx.artifactPath}\`。`,
-  ],
   coach: (ctx) => [
     `这次聊${topicName(ctx)}，我把「事实 / 想法 / 感受」分开放——先分清哪些是发生的、哪些是脑补的。`,
     `可选路径摆了两条，各自的代价写明白；没有标准答案，选哪条都行。`,
@@ -707,11 +609,6 @@ const SCRIPTS: Record<string, RoleScript> = {
     `${topicName(ctx)}的术语表先统一（12 个高频词中英对照），全文前后一致才算过。`,
     `逐条对照里标了 2 处文化风险（梗译过去会变味、颜色有禁忌含义），都已给替换建议。`,
     `本地化方案与字数 / 断行提示在 \`${ctx.artifactPath}\`，质控记录一并留痕。`,
-  ],
-  bd: (ctx) => [
-    `${topicName(ctx)}的候选方按「资源重合度 × 触达效率 × 优先级」筛出 3 家；合作模式给了分成 / 联名 / 置换三种，各有测算。`,
-    `让步阶梯排了三级、底线写死在文档里（不口头让）；收益测算给了保守 / 中性两版，假设都有出处。`,
-    `合作方案与推进看板在 \`${ctx.artifactPath}\`；送审按「业务 → 法务 → 财务」走。`,
   ],
   hr: (ctx) => [
     `${topicName(ctx)}的流程先画清楚：步骤 / 责任人 / 时限一列到底，中间不留「看情况」。`,
@@ -870,21 +767,6 @@ const SCRIPTS: Record<string, RoleScript> = {
     `评估在 \`${ctx.artifactPath}\`；参考口径非决策结论，签约前请核对书面条款。`,
   ],
   // M51-D：置业安家（串行决策链：选房 → 贷款 → 装修）
-  'home-finder': (ctx) => [
-    `需求先过四问：预算多少、几个人住、通勤去哪儿、最不能忍什么；${topicName(ctx)}的一票否决项与偏好项已分开列清。`,
-    `候选按维度打分（地段 / 户型 / 价格 / 通勤 / 配套 / 楼龄），权重与确认口径一致；推荐排序与「排序会变的条件」都已写明。`,
-    `对比矩阵与看房清单在 \`${ctx.artifactPath}\`；数据注明来源与时效，决策前请复核最新行情。`,
-  ],
-  'mortgage-advisor': (ctx) => [
-    `贷款测算启动：按${topicName(ctx)}的预算排出 2-3 档方案，等额本息与等额本金各自列明假设（利率 / 年限 / 浮动方式）。`,
-    `月供 / 总利息 / 收入比并列可比；税费清单逐项列出，压力测试（利率上浮 / 收入波动）已标注警戒项。`,
-    `方案与税费在 \`${ctx.artifactPath}\`；测算为模拟参考（以银行审批为准）。`,
-  ],
-  'reno-designer': (ctx) => [
-    `装修先框预算再谈风格：硬装 / 软装 / 家电 / 预留金四档分配（含 10-15% 缓冲），${topicName(ctx)}的总盘子已立住。`,
-    `好住优先：收纳 / 动线 / 照明排在设计之前；施工排期分六阶段带里程碑，验收清单写成「怎么验」。`,
-    `预算总表与排期在 \`${ctx.artifactPath}\`；预算为估算区间（以实际报价为准）。`,
-  ],
   // M65-A：家装设计工作室（需求 → 规划 → 可视化逐棒；先布局后出图）
   'interior-designer': (ctx) => [
     `需求四问先过（画像 / 习惯 / 收纳 / 预算档）：${topicName(ctx)}的三级分类已划清——必须满足 / 尽量满足 / 可以放弃各自成列。`,
@@ -913,21 +795,6 @@ const SCRIPTS: Record<string, RoleScript> = {
     `堪舆点评在 \`${ctx.artifactPath}\`；文化研习参考定位（不承诺吉凶必应），涉结构拆改需现场核实。`,
   ],
   // M51-D：家庭照护（串行陪跑：方案 → 陪诊 → 康养）
-  'care-planner': (ctx) => [
-    `照护需求先按四类拆（起居 / 餐饮 / 用药提醒 / 出行），${topicName(ctx)}的「现在需要」与「提前准备」已分开；轮值表落到「谁 + 周几 + 做什么 + 怎么交接」。`,
-    `照护者休息安排已排入方案（喘息时段）；关注信号清单按「出现以下情况请及时就医」表述——非医疗诊断，异常症状直接建议就医。`,
-    `照护方案在 \`${ctx.artifactPath}\`；涉及医疗请遵医嘱，紧急情况请拨打急救电话。`,
-  ],
-  'care-escort': (ctx) => [
-    `陪诊准备就绪：资料 / 证件清单按提供的范围整理，问题清单按优先级排好；${topicName(ctx)}的就诊路线与时间已标注。`,
-    `就诊记录只记录不解读（医生说明原样整理）；复诊提醒写到「日期 + 科室 + 需带资料」三要素齐全。`,
-    `准备清单与记录在 \`${ctx.artifactPath}\`；医嘱请以医生说法为准。`,
-  ],
-  'elder-advisor': (ctx) => [
-    `适老化改造先排安全（防跌倒 / 防误用），清单按「先做 / 可做 / 加分」分级；${topicName(ctx)}的活动安排按能力匹配强度，附暂停信号。`,
-    `情绪陪伴要点与照护者相处建议已给（倾听 / 不否定 / 少说教）；康养信息只引权威来源并标注时效。`,
-    `改造清单与活动安排在 \`${ctx.artifactPath}\`；本建议为非医疗诊断的生活协助，健康状况请咨询医生。`,
-  ],
   // M51-E：传统数术（先盘后论：排盘 → 解读；表述克制）
   bazi: (ctx) => [
     `四柱排盘先行：${topicName(ctx)}的生辰参数已过真太阳时校正，四柱与十神结构出来再谈旺衰——先盘后论，每条判断都指到柱位。`,
@@ -1047,7 +914,7 @@ const MEETING_ROUNDS: Record<string, { title: string; agenda: Array<[string, str
     agenda: [
       ['growth', '增长复盘：渠道与内容'],
       ['finance', '财务盘点：回款与成本'],
-      ['sales', '客户与回款：重点跟进'],
+      ['ops', '运营交付：协作阻塞与执行风险'],
       ['chief', '经营简报：优先级与下周动作'],
     ],
   },
@@ -1184,7 +1051,7 @@ const OFFER_FIELDS_BLOCKS: Record<string, string[]> = {
 // M69：场景玩法容器触发块（roll / cards / sim——E2E 与 eval 的确定性演示通道）
 const ROLL_TRIGGER = '骰子走查'
 const ROLL_BLOCKS: Record<string, string[]> = {
-  'gm-host': [
+  general: [
     '',
     '::: roll 攀爬检定',
     '骰式：d20+3 | 种子：482910',
@@ -1494,7 +1361,7 @@ const REVISION_NOTE = '\n\n## 修订记录\n- 依据用户意见修订：补充�
  */
 const PIPE_TRIGGER = '管道走查'
 const PIPE_BLOCKS: Record<string, string[]> = {
-  sales: [
+  growth: [
     '',
     '::: pipeline 客户管道（本周）',
     '- 云启科技 | 意向 | ¥12.8万 | 周五前发对比方案',
@@ -1583,9 +1450,10 @@ const MOOD_BLOCKS: Record<string, string[]> = {
   coach: ['', '::: mood 今日情绪签到', '选一个最接近今天状态的档位，我据此调整今天的建议。', ':::', ''],
 }
 
-const WEALTH_TRIGGER = '理财走查'
-const WEALTH_BLOCKS: Record<string, string[]> = {
-  wealth: [
+/** 历史 Markdown 卡片的确定性回归数据，不提供个人理财角色或工作流。 */
+const LEDGER_TRIGGER = '历史流水走查'
+const LEDGER_BLOCKS: Record<string, string[]> = {
+  general: [
     '',
     '::: goals 目标进度',
     '- 应急金 | 2.4 | 6',
@@ -2262,33 +2130,6 @@ export function artifactFor(
           ['红线与承接', ['商单三关：品类自洽 → 宣传合规 → 合同要点', '知识付费三不：不承诺收益 / 不虚构案例 / 不做焦虑营销']],
         ]),
       }
-    case 'rights-advisor':
-      return {
-        path: `docs/维权方案-${t}.md`,
-        content: doc(`${t}维权方案`, [
-          ['时效状态', [`${t}相关时效：未过期，临界预警已标`, '时效紧迫提示置于文档最前']],
-          ['路径对比', ['协商 / 投诉 / 仲裁 / 诉讼四路：成本 / 周期 / 成功率区间', '推荐路径与切换条件（协商破裂后的下一步）']],
-          ['证据与律师线', ['证据清单三列：怎么取 / 怎么存 / 合法边界', '律师线判定条件可执行（金额 / 刑事风险 / 时效临界）']],
-        ]),
-      }
-    case 'labor-advisor':
-      return {
-        path: `docs/劳动争议-${t}.md`,
-        content: doc(`${t}劳动争议`, [
-          ['情形判定', [`解除类型与适用口径：N / N+1 / 2N（${t}场景）`, '基数口径：前 12 个月平均应发（含奖金）']],
-          ['测算', ['补偿金额公式 + 年份进位规则（满半年进一）', '加班费按倍数另算，calc 可复算']],
-          ['证据与风险', ['证据优先级：合同 > 流水 > 考勤 > 聊天记录', '签字红线：自愿离职声明在谈妥前不签']],
-        ]),
-      }
-    case 'contract-checker':
-      return {
-        path: `docs/合同审查-${t}.md`,
-        content: doc(`${t}合同审查`, [
-          ['风险条款', [`${t}相关合同高风险 2 条（单方违约金 / 押金全扣）`, '每条三件套：原文定位 + 风险场景 + 修改建议']],
-          ['缺失条款', ['退款 / 维修 / 转租 / 争议管辖对照标准库', '缺失项逐条列出并给补充建议']],
-          ['签约检查', ['主体核对：证照 / 收款账户一致性', '空白处理与口头承诺入纸检查单']],
-        ]),
-      }
     case 'lit-reviewer':
       return {
         path: `docs/文献综述-${t}.md`,
@@ -2350,42 +2191,6 @@ export function artifactFor(
           ['诉求对照', [`${t}相关双方诉求四行对照（事实 / 感受 / 需要 / 请求）`, '信息源标注：A 方 / B 方 / 双方确认']],
           ['分歧分类', ['偏好之争：可协商项与中间方案（含让与得）', '底线之争：诚实标注，给深度沟通路径']],
           ['沟通约定', ['吵架边界与复谈机制（触发条件 + 重谈时间）', '安全筛查记录在册']],
-        ]),
-      }
-    case 'gm-host':
-      return {
-        path: `docs/战报-${t}.md`,
-        content: doc(`${t}战报`, [
-          ['场次摘要', [`${t}开团安全工具（Lines and Veils）存档`, '本场节奏与玩家高光记录']],
-          ['关键判定', ['骰式 + 种子逐条可复现（dice_roll 口径）', '失败推进：代价 / 变数 / 新信息']],
-          ['悬念与续章', ['未解悬念清单 + 线索进展', '下回开场钩子已备']],
-        ]),
-      }
-    case 'scenario-writer':
-      return {
-        path: `docs/剧本-${t}.md`,
-        content: doc(`${t}剧本`, [
-          ['一句话真相', [`${t}剧本的核心真相与伏笔索引（≥2 处铺垫）`]],
-          ['线索网络', ['每条必经线索 ≥2 条获取路径（人 / 地 / 物三态）', '危险触发前均有可感知征兆']],
-          ['NPC 与节奏', ['NPC 卡三件套 + 信息表（与玩家版分离）', '节奏表按 4 小时/5-7 节点估算']],
-        ]),
-      }
-    case 'npc-player':
-      return {
-        path: `docs/NPC设定-${t}.md`,
-        content: doc(`${t}NPC设定`, [
-          ['档案三件套', [`${t}相关 NPC 的目的 / 手段 / 破绽逐项`, '口吻示例各三句定基调']],
-          ['信息控制', ['信息表：知道 / 不知道 / 会隐瞒', '单次对话释放关键信息 ≤2 条']],
-          ['出场设计', ['出场：一个动作 + 一句抓人的话', '退场：去向可追踪的线索']],
-        ]),
-      }
-    case 'rule-keeper':
-      return {
-        path: `docs/规则裁决-${t}.md`,
-        content: doc(`${t}规则裁决`, [
-          ['规则集声明', [`${t}所用规则集与房规版本`, '判定三要素：骰式 / DC / 失败后果']],
-          ['速查表', ['常见行动 × 难度 × 修正（含成功率说明）', '口径变更记录标注生效节点']],
-          ['争议记录', ['争议点 / 裁决 / 依据逐条留痕', '先走规则、后议优化的处理口径']],
         ]),
       }
     case 'tarot-reader':
@@ -2485,24 +2290,6 @@ export function artifactFor(
           ['候选清单', [`${t}相关候选 6–10 个（含来源分级）`, '榜单热门标商业化提示，疑似推广标待复核']],
           ['主题单元', ['半天 ×4 主题单元：路线 / 时长三档 / 消费预估', '每单元配雨天与休市备用项']],
           ['避坑与礼仪', ['照骗 / 强制购物识别要点', '目的地专属礼仪与拍照伦理']],
-        ]),
-      }
-    case 'insurance-planner':
-      return {
-        path: `docs/保障规划-${t}.md`,
-        content: doc(`${t}保障规划`, [
-          ['缺口测算', [`${t}相关四类缺口：身故 / 重疾 / 医疗 / 意外`, '公式与假设显式，calc 可复算']],
-          ['配置方案', ['顺序：先保障后理财、先大人后孩子', '两档预算（基础 / 充足）对照']],
-          ['条款与台账', ['健康告知 / 等待期 / 免责 / 免赔额逐项', '已有保单台账与空档重复提示']],
-        ]),
-      }
-    case 'big-ticket-advisor':
-      return {
-        path: `docs/大额决策-${t}.md`,
-        content: doc(`${t}大额决策`, [
-          ['全周期成本', [`${t}相关 3–5 年总成本：购入 + 持有 + 退出`, '分期换算真实年化（IRR 口径）']],
-          ['方案对照', ['两档方案 + 买 vs 租对照表', '机会成本对照（假设显式）']],
-          ['压力与流程', ['应急金检查（≥≥6 个月支出）与收入波动情景', '买前五问 + 72 小时冷静期 + 放弃信号清单']],
         ]),
       }
     case 'valuation-modeler':
@@ -2916,42 +2703,6 @@ export function artifactFor(
           ['物料评审', ['落地页与物料模板已按规范改稿', '后续物料统一按本文件评审']],
         ]),
       }
-    case 'sales':
-      return {
-        path: `docs/销售话术-${t}.md`,
-        content: doc(`${t}销售话术`, [
-          [
-            '客户分层与优先级',
-            ['试用未转化 23 家为主攻（ROI 对比 + 快速上手）', '回款风险客户 3 家列入本周跟进'],
-          ],
-          [
-            '话术要点',
-            ['开场：两周使用报告先行', '中段：专属方案（首年 8 折 + 迁移支持）', '收口：约 20 分钟对齐窗口'],
-          ],
-          ['异议处理库', ['价格异议 → ROI 测算表；上手顾虑 → 迁移支持清单']],
-        ]),
-      }
-    case 'success':
-      return {
-        path: `docs/客户成功-${t}.md`,
-        content: doc(`${t}客户成功`, [
-          ['健康分告警', ['4 家客户登录频次 -40%，按流失风险排序']],
-          [
-            '干预动作与排期',
-            ['高触达回访 2 家 / 增购引导 1 家 / 培训补救 1 家', '全部排进本周，逐日跟踪复访'],
-          ],
-          ['增购机会', ['2 家客户席位使用率 > 85%，拟定增购方案']],
-        ]),
-      }
-    case 'support':
-      return {
-        path: `docs/客服手册-${t}.md`,
-        content: doc(`${t}客服手册`, [
-          ['工单聚类 Top3', ['登录权限 / 数据导入 / 发票开具，已合并为标准回复']],
-          ['标准回复模板', ['数据导入失败：编码或列名 → 另存 UTF-8 重试 → 2 小时兜底']],
-          ['升级路径与 SLA', ['一线 30 分钟响应；P0 升级研发 2 小时处理', 'SLA 达标率周报跟踪']],
-        ]),
-      }
     case 'finance':
       return {
         path: `docs/财务测算-${t}.md`,
@@ -2991,6 +2742,9 @@ export function artifactFor(
         path: `docs/运营SOP-${t}.md`,
         content: doc(`${t}运营SOP`, [
           ['关键动作', ['本月 3 项：例会数据化 / 复盘闭环 / 周报模板化', '砍掉冗余审批 2 个节点']],
+          ['运营交付', ['本周交付 3 项，待验收 1 项；验收责任人与日期逐项确认']],
+          ['协作阻塞', ['数据口径待财务确认，齐安跟进并于周四复核；不擅自扩大资源承诺']],
+          ['下周执行风险', ['关键依赖延迟时先调整低优先级排期；责任人与缓释动作同步到周报']],
           ['周节奏', ['周一例会看数据 / 周三复盘迭代 / 周五输出周报']],
           ['责任人矩阵', ['每项动作明确责任人 / 协作人 / 验收标准']],
         ]),
@@ -3354,59 +3108,6 @@ export function artifactFor(
           ],
         ]),
       }
-    case 'wealth':
-      return {
-        path: `docs/理财方案-${t}.md`,
-        content: doc(`${t}理财方案`, [
-          ['现状盘点与三档支出', ['必要 / 弹性 / 冲动 三档拆分；月度结余率 32%']],
-          ['预算表与储蓄计划', ['月度预算表含数字；目标储蓄按倒推法定每月金额']],
-          ['资产配置建议', ['比例与再平衡纪律（频率 / 触发条件）；不给具体标的']],
-          ['保险检视与下一步', ['险种缺口清单；下一步动作 3 项（不构成投资建议）']],
-        ]),
-      }
-    case 'chef':
-      return {
-        path: `docs/每周菜单-${t}.md`,
-        content: doc(`${t}每周菜单`, [
-          ['本周菜单', ['一周 21 餐排定：工作日 ≤ 25 分钟，周末一顿「慢慢做」']],
-          ['耗时与难度', ['每餐标注耗时 / 难度（★–★★★）；新手菜占七成']],
-          ['备菜与采购', ['备菜：周日 90 分钟洗切分装（清单化）', '采购：按生鲜 / 干货 / 调味分区，带用量']],
-          ['库存与复用', ['复用逻辑：一菜两吃（烤鸡 → 鸡丝凉面）；库存盘点周三 / 周日各一次']],
-        ]),
-      }
-    case 'home':
-      return {
-        path: `docs/家居方案-${t}.md`,
-        content: doc(`${t}家居方案`, [
-          ['区域与痛点', ['按区域盘点：高频区先动手（每日停留最久），痛点逐条对应解法']],
-          ['四步整理方案', ['清空 → 分类 → 定位 → 归位；一轮 2 小时，不求一次到位']],
-          ['容器与工具清单', ['按「量出来再买」原则，数量与预算逐项列明（预算 ¥480 内）']],
-          ['维持机制', ['家务轮值表按周分工；维持规则：物品回家位（每周 10 分钟巡检）']],
-        ]),
-      }
-    case 'parenting':
-      return {
-        path: `docs/育儿方案-${t}.md`,
-        content: doc(`${t}育儿方案`, [
-          ['现状与目标', ['本期聚焦单一行为问题；先记录 3 天基线（频率 / 触发 / 事后）']],
-          ['具体做法', ['「提前预告 + 有限选择」两步话术，照着说即可（含兜底句）']],
-          ['每周亲子活动', ['每周 2 个活动（含时长与材料）；目标与聚焦问题呼应']],
-          ['观察与对齐', ['观察记录 3 列（场景 / 做法 / 结果）；与照护人对齐要点一页纸']],
-        ]),
-      }
-    case 'pet':
-      return {
-        path: `docs/宠物照护-${t}.md`,
-        content: doc(`${t}宠物照护`, [
-          ['宠物档案', ['品种 / 年龄 / 体重 / 过敏史 / 习性备注']],
-          ['喂养计划', ['分量按体重 2.5%–3% 计算，分两餐定时；换粮 7 天过渡法']],
-          ['健康排期表', ['疫苗 / 驱虫 / 体检排到年底，各有日期与提醒']],
-          [
-            '训练与应急',
-            ['训练：正向强化 5 分钟 / 次，步骤化', '应急清单含 24h 医院联系方式栏位；看护交接单备好'],
-          ],
-        ]),
-      }
     case 'coach':
       return {
         path: `docs/陪谈纪要-${t}.md`,
@@ -3526,16 +3227,6 @@ export function artifactFor(
           ['术语表', ['高频词 12 条中英对照；全文统一']],
           ['逐条对照', ['原文 → 译文 → 说明 三列；含 2 处文化风险与替换建议']],
           ['质控与适配', ['字数 / 断行提示（界面约束）；质控记录（谁校 / 何时）']],
-        ]),
-      }
-    case 'bd':
-      return {
-        path: `docs/合作方案-${t}.md`,
-        content: doc(`${t}合作方案`, [
-          ['合作目标与候选', ['按「资源重合度 × 触达 × 优先级」筛出 3 家候选']],
-          ['模式与收益测算', ['分成 / 联名 / 置换三模式；测算给保守 + 中性两版（含假设）']],
-          ['谈判要点', ['让步阶梯三级（底线不口头让）；对方可能的异议与回应']],
-          ['推进与风险', ['联合动作计划与看板；退出条款与风险点', '送审路径：业务 → 法务 → 财务']],
         ]),
       }
     case 'hr':
@@ -3848,42 +3539,6 @@ export function artifactFor(
           ['模拟声明', ['参考口径（非法律 / 职业决策）；签约前核对书面条款']],
         ]),
       }
-    case 'home-finder':
-      return {
-        path: `docs/选房对比-${t}.md`,
-        content: doc(`${t}选房对比`, [
-          [
-            '需求清单',
-            ['预算（总价 / 首付 / 月供承受）/ 居住画像 / 硬约束（地段 / 学区 / 通勤）与偏好；一票否决项单列'],
-          ],
-          ['对比矩阵', ['维度（地段 / 户型 / 价格 / 通勤 / 配套 / 楼龄）× 权重 × 评分依据；候选逐一打分']],
-          ['推荐排序与理由', ['排序可一句话说清；附「什么情况下排序会变」']],
-          ['看房清单', ['逐项核对表（采光 / 噪音 / 物业 / 车位 / 楼龄 / 邻避设施）；可打印使用']],
-          ['砍价策略', ['挂牌价与成交参考（来源与时效标注）；议价空间判断与谈判要点']],
-        ]),
-      }
-    case 'mortgage-advisor':
-      return {
-        path: `docs/贷款方案-${t}.md`,
-        content: doc(`${t}贷款方案`, [
-          ['首付与月供测算', ['2-3 档方案（保守 / 均衡 / 进取）对比；列明假设（利率 / 年限 / 浮动方式）']],
-          ['还款方式对比', ['等额本息 vs 等额本金：月供 / 总利息 / 月供收入比']],
-          ['税费清单', ['契税 / 增值税 / 个税 / 中介费逐项估算（口径按当地政策并标注来源）']],
-          ['压力测试', ['利率上浮 / 收入波动两情景；应急金检查项（不低于 6 个月家庭开支）']],
-          ['模拟声明', ['测算为模拟参考（以银行审批为准）；不构成投资建议']],
-        ]),
-      }
-    case 'reno-designer':
-      return {
-        path: `docs/装修方案-${t}.md`,
-        content: doc(`${t}装修方案`, [
-          ['风格定位', ['偏好与生活场景对齐；收纳 / 动线 / 照明优先于颜值']],
-          ['分项预算', ['硬装 / 软装 / 家电 / 预留金四档；预留 10-15% 缓冲（附超支点标注）']],
-          ['施工排期', ['六阶段（拆改 → 水电 → 泥木 → 油漆 → 安装 → 软装）+ 里程碑与工期（含误差缓冲）']],
-          ['验收清单', ['分阶段验收要点（水电隐蔽 / 防水 / 墙面 / 五金）；「怎么验」可打勾']],
-          ['模拟声明', ['预算为估算区间（以实际报价为准）']],
-        ]),
-      }
     // M65-A：家装设计工作室（逐棒交付：设计 → 规划 → 出图）
     case 'interior-designer':
       return {
@@ -3937,42 +3592,6 @@ export function artifactFor(
           ['四维评述', ['外局 / 坐向格局（门主灶）/ 动线光气水 / 流年参考——每维「盘面依据 → 白话解读 → 参考区间」']],
           ['改善参考', ['布局 / 采光通风 / 色彩材质 / 陈设四类；依据盘面 + 可执行动作；涉结构「需现场核实」']],
           ['声明', ['文化研习与参考（不承诺吉凶必应）；未现场测量附方向性声明']],
-        ]),
-      }
-    case 'care-planner':
-      return {
-        path: `docs/照护方案-${t}.md`,
-        content: doc(`${t}照护方案`, [
-          [
-            '照护需求清单',
-            ['起居 / 餐饮 / 用药提醒 / 出行 / 情绪；「现在需要」与「提前准备」分开（用户自述）'],
-          ],
-          ['排班与分工', ['轮值表：谁 + 周几 + 做什么 + 怎么交接；照护者喘息时段']],
-          ['资源协调', ['社区服务 / 养老机构 / 辅助器具 / 长护险（来源与时效标注）']],
-          ['关注信号与就医提示', ['「出现以下情况请及时就医」清单；非诊断，不含病名推断与用药建议']],
-          ['非医疗声明', ['本方案为非医疗诊断的照护事务协助；紧急情况请拨打急救电话']],
-        ]),
-      }
-    case 'care-escort':
-      return {
-        path: `docs/陪诊记录-${t}.md`,
-        content: doc(`${t}陪诊记录`, [
-          ['就医准备清单', ['资料 / 证件 / 时间与路线；按用户提供范围为限']],
-          ['问题清单', ['想问医生的（症状描述 / 变化过程 / 用药反应）；按优先级排序']],
-          ['就诊记录', ['医生说明原样记录（不加工解读）；医嘱以医生说法为准']],
-          ['后续待办与复诊提醒', ['检查 / 取药 / 复诊：日期 + 科室 + 需带资料']],
-          ['非医疗声明', ['就诊记录仅为过程整理（非医疗建议）']],
-        ]),
-      }
-    case 'elder-advisor':
-      return {
-        path: `docs/康养建议-${t}.md`,
-        content: doc(`${t}康养建议`, [
-          ['适老化改造清单', ['防跌倒 / 防误用优先；按「先做 / 可做 / 加分」分级（附预算量级）']],
-          ['康养活动安排', ['按活动能力匹配强度与频率；附暂停信号（不适即停并咨询医生）']],
-          ['情绪陪伴要点', ['倾听 / 不否定 / 少说教；照护者与老人相处建议']],
-          ['权威来源', ['康养 / 政策信息只引权威机构资料（来源与时效标注）']],
-          ['非医疗声明', ['本建议为非医疗诊断的生活协助；健康状况请咨询医生']],
         ]),
       }
     // M51-E：传统数术（先盘后论；交付契约逐字对齐 AGENT.md）
@@ -4167,9 +3786,6 @@ const DISPLAY_NAMES: Record<string, string> = {
   'script-writer': '先声',
   'growth-editor': '借风',
   monetizer: '点金',
-  'rights-advisor': '持正',
-  'labor-advisor': '守薪',
-  'contract-checker': '审微',
   'lit-reviewer': '索隐',
   methodologist: '定矩',
   'paper-editor': '琢稿',
@@ -4178,10 +3794,6 @@ const DISPLAY_NAMES: Record<string, string> = {
   'date-coach': '初见',
   mediator: '居间',
   // M69：跑团工坊 / 塔罗研习 / 模拟法庭 / 商业沙盘 / 哲学茶室
-  'gm-host': '开卷',
-  'scenario-writer': '构幕',
-  'npc-player': '入戏',
-  'rule-keeper': '执规',
   'tarot-reader': '观照',
   'symbol-narrator': '释象',
   'tarot-historian': '考源',
@@ -4194,8 +3806,6 @@ const DISPLAY_NAMES: Record<string, string> = {
   // M69：既有场景补强（travel / wealth / funding / bi / sre / personal / ops）
   'visa-advisor': '通境',
   'local-curator': '寻巷',
-  'insurance-planner': '保宁',
-  'big-ticket-advisor': '慎衡',
   'valuation-modeler': '衡价',
   'metric-governor': '正尺',
   'chaos-officer': '试雷',
@@ -4225,9 +3835,6 @@ const DISPLAY_NAMES: Record<string, string> = {
   content: '林悦',
   seo: '韩枫',
   brand: '云舒',
-  sales: '陆征',
-  success: '安然',
-  support: '夏禾',
   finance: '周正',
   tax: '郑清',
   legal: '卢明',
@@ -4250,11 +3857,6 @@ const DISPLAY_NAMES: Record<string, string> = {
   language: '洛语',
   reading: '舒卷',
   travel: '牧野',
-  wealth: '钱程',
-  chef: '唐味',
-  home: '温居',
-  pet: '柯萌',
-  parenting: '苗雨',
   coach: '于清',
   'life-admin': '常乐',
   security: '沈盾',
@@ -4270,7 +3872,6 @@ const DISPLAY_NAMES: Record<string, string> = {
   video: '娄映',
   influencer: '米娅',
   localizer: '梁语',
-  bd: '秦拓',
   hr: '许澄',
   trainer: '段言',
   compliance: '钟律',
@@ -4309,12 +3910,6 @@ const DISPLAY_NAMES: Record<string, string> = {
   'interview-coach': '问达',
   'comp-advisor': '薪言',
   // M51-D：置业安家 / 家庭照护
-  'home-finder': '择邻',
-  'mortgage-advisor': '家树',
-  'reno-designer': '筑居',
-  'care-planner': '顾宁',
-  'care-escort': '陪安',
-  'elder-advisor': '颐和',
   // M51-E：传统数术 / 星象占星
   bazi: '观复',
   ziwei: '星垣',
@@ -4709,7 +4304,7 @@ export class MockProvider implements LlmProvider {
       ...(!isNudge && userText.includes(TRACK_TRIGGER) ? (TRACK_BLOCKS[baseId] ?? []) : []),
       ...(!isNudge && userText.includes(QUIZ_TRIGGER) ? (QUIZ_BLOCKS[baseId] ?? []) : []),
       ...(!isNudge && userText.includes(MOOD_TRIGGER) ? (MOOD_BLOCKS[baseId] ?? []) : []),
-      ...(!isNudge && userText.includes(WEALTH_TRIGGER) ? (WEALTH_BLOCKS[baseId] ?? []) : []),
+      ...(!isNudge && userText.includes(LEDGER_TRIGGER) ? (LEDGER_BLOCKS[baseId] ?? []) : []),
       ...(!isNudge && userText.includes(TRIP_TRIGGER) ? (TRIP_BLOCKS[baseId] ?? []) : []),
       ...(!isNudge && userText.includes(ECOM_TRIGGER) ? (ECOM_BLOCKS[baseId] ?? []) : []),
       ...(!isNudge && userText.includes(CASE_TRIGGER) ? (CASE_BLOCKS[baseId] ?? []) : []),
@@ -4816,9 +4411,6 @@ export class MockProvider implements LlmProvider {
       'script-writer': ['growth-editor', 'account-strategist'],
       'growth-editor': ['monetizer', 'account-strategist'],
       monetizer: ['growth-editor', 'account-strategist'],
-      'rights-advisor': ['labor-advisor', 'contract-checker'],
-      'labor-advisor': ['rights-advisor', 'contract-checker'],
-      'contract-checker': ['rights-advisor', 'labor-advisor'],
       'lit-reviewer': ['methodologist', 'paper-editor'],
       methodologist: ['paper-editor', 'lit-reviewer'],
       'paper-editor': ['submit-advisor', 'lit-reviewer'],
@@ -4827,10 +4419,6 @@ export class MockProvider implements LlmProvider {
       'date-coach': ['rel-coach', 'mediator'],
       mediator: ['rel-coach'],
       // M69：跑团工坊 / 塔罗研习 / 模拟法庭 / 商业沙盘 / 哲学茶室
-      'gm-host': ['npc-player', 'rule-keeper'],
-      'scenario-writer': ['gm-host', 'npc-player'],
-      'npc-player': ['gm-host', 'rule-keeper'],
-      'rule-keeper': ['gm-host'],
       'tarot-reader': ['symbol-narrator', 'tarot-historian'],
       'symbol-narrator': ['tarot-reader'],
       'tarot-historian': ['tarot-reader'],
@@ -4843,8 +4431,6 @@ export class MockProvider implements LlmProvider {
       // M69：既有场景补强
       'visa-advisor': ['travel', 'local-curator'],
       'local-curator': ['travel', 'visa-advisor'],
-      'insurance-planner': ['wealth', 'big-ticket-advisor'],
-      'big-ticket-advisor': ['wealth', 'insurance-planner'],
       'valuation-modeler': ['fundraiser', 'ir'],
       'metric-governor': ['bi'],
       'chaos-officer': ['sre', 'devops'],
@@ -4867,19 +4453,16 @@ export class MockProvider implements LlmProvider {
       analyst: ['verifier'],
       verifier: ['lead'],
       // M21：OPC 业务场景（与 AGENT.md handoff 保持一致）
-      chief: ['strategist', 'growth', 'sales', 'finance'],
+      chief: ['strategist', 'growth', 'finance'],
       strategist: ['pricing', 'chief'],
-      pricing: ['finance', 'growth', 'sales'],
+      pricing: ['finance', 'growth'],
       growth: ['content', 'seo', 'brand'],
       content: ['seo', 'growth', 'brand'],
       seo: ['content', 'growth', 'brand'],
       brand: ['content', 'growth', 'seo'],
-      sales: ['success', 'support', 'legal'],
-      success: ['support', 'sales'],
-      support: ['success', 'sales'],
       finance: ['tax', 'legal', 'pricing'],
       tax: ['finance', 'legal'],
-      legal: ['sales', 'finance', 'ops'],
+      legal: ['finance', 'ops'],
       ops: ['assistant', 'recruiter', 'supply'],
       assistant: ['ops', 'recruiter'],
       recruiter: ['ops', 'legal'],
@@ -4893,19 +4476,14 @@ export class MockProvider implements LlmProvider {
       'psycho-educator': ['emotion-companion', 'mindfulness-guide'],
       // v14：全域扩展（生活 6 场景 + 职能角色；与 AGENT.md handoff 保持一致）
       fitness: ['nutrition', 'wellness'],
-      nutrition: ['fitness', 'chef'],
+      nutrition: ['fitness'],
       wellness: ['fitness', 'coach'],
       tutor: ['reading', 'language'],
       language: ['tutor', 'reading'],
       reading: ['tutor', 'language'],
-      travel: ['life-admin', 'wealth'],
-      wealth: ['life-admin', 'travel'],
-      chef: ['nutrition', 'home'],
-      home: ['chef', 'life-admin'],
-      pet: ['life-admin', 'home'],
-      parenting: ['life-admin', 'coach'],
+      travel: ['life-admin'],
       coach: ['life-admin', 'wellness'],
-      'life-admin': ['travel', 'wealth', 'assistant'],
+      'life-admin': ['travel', 'assistant'],
       security: ['backend', 'frontend', 'devops'],
       'tech-writer': ['pm', 'architect', 'backend'],
       'ai-engineer': ['architect', 'backend', 'qa'],
@@ -4917,9 +4495,8 @@ export class MockProvider implements LlmProvider {
       pr: ['content', 'brand', 'chief'],
       social: ['content', 'video', 'brand'],
       video: ['content', 'social', 'brand'],
-      influencer: ['growth', 'sales', 'content'],
+      influencer: ['growth', 'content'],
       localizer: ['content', 'seo', 'brand'],
-      bd: ['sales', 'legal', 'chief'],
       hr: ['recruiter', 'finance', 'ops'],
       trainer: ['ops', 'hr', 'pm'],
       compliance: ['legal', 'finance', 'ops'],
@@ -4956,12 +4533,6 @@ export class MockProvider implements LlmProvider {
       'interview-coach': ['comp-advisor', 'career-advisor'],
       'comp-advisor': ['negotiator', 'career-advisor'],
       // M51-D：置业安家 / 家庭照护（与 AGENT.md handoff 保持一致）
-      'home-finder': ['mortgage-advisor', 'reno-designer'],
-      'mortgage-advisor': ['wealth', 'legal'],
-      'reno-designer': ['home-finder', 'mortgage-advisor'],
-      'care-planner': ['care-escort', 'elder-advisor'],
-      'care-escort': ['care-planner'],
-      'elder-advisor': ['care-planner'],
       // M51-E：传统数术 / 星象占星（与 AGENT.md handoff 保持一致）
       bazi: ['ziwei'],
       ziwei: ['bazi'],
@@ -4975,9 +4546,9 @@ export class MockProvider implements LlmProvider {
       synastry: ['natal'],
       horary: ['natal'],
       // M65-A：家装设计工作室（与 AGENT.md handoff 保持一致）
-      'interior-designer': ['space-planner', 'reno-designer'],
+      'interior-designer': ['space-planner'],
       'space-planner': ['visualizer', 'interior-designer'],
-      visualizer: ['space-planner', 'reno-designer'],
+      visualizer: ['space-planner', 'interior-designer'],
       // M66-A：堪舆阳宅（与 AGENT.md handoff 保持一致）
       'plan-surveyor': ['yangzhai-master', 'space-planner'],
       'yangzhai-master': ['plan-surveyor', 'interior-designer'],

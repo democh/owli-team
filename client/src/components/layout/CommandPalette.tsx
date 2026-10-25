@@ -52,7 +52,8 @@ import type { AgentDefinition } from '@multi-agent/shared'
 import { baseAgentId, DEFAULT_SPACE_ID } from '@multi-agent/shared'
 import { toast } from 'sonner'
 import { resolveIcon } from '../../lib/avatar-icons'
-import { attachActiveRunFor, useRunStore } from '../../stores/run-store'
+import { useRunStore } from '../../stores/run-store'
+import { openConversation, openContacts } from '../../lib/navigation'
 import { useAgentStore } from '../../stores/agent-store'
 // import { useCanvasStore, type CanvasActionKind } from '../../stores/canvas-store' // 临时隐藏画布入口
 import { useSessionStore, useCurrentSession } from '../../stores/session-store'
@@ -60,7 +61,6 @@ import { useSpaceStore } from '../../stores/space-store'
 import { useLiveDockStore } from '../../stores/live-dock-store'
 import { useAuthStore } from '../../stores/auth-store'
 import { useUiStore } from '../../stores/ui-store'
-import { useWsStore } from '../../stores/ws-store'
 import { AgentAvatar } from '../agents/AgentAvatar'
 
 const ITEM_CLS =
@@ -93,12 +93,7 @@ export function CommandPalette(): React.JSX.Element {
 
   const openSession = (id: string): void => {
     setOpen(false)
-    void (async () => {
-      await useSessionStore.getState().selectSession(id)
-      useWsStore.getState().ensureSubscribed(id)
-      useWsStore.getState().markRead(id)
-      await attachActiveRunFor(id)
-    })()
+    void openConversation(id)
   }
 
   const createNewSession = (): void => {
@@ -133,8 +128,7 @@ export function CommandPalette(): React.JSX.Element {
   /** M26：视图类命令统一先切回工作台（控制台视图下选择主区 / 右栏 Tab 时避免「无反应」） */
   const runInWorkspace = (fn: () => void): void =>
     run(() => {
-      useUiStore.getState().setAppView('workspace')
-      fn()
+      if (useUiStore.getState().setAppView('workspace')) fn()
     })
 
   /** M31：画布动作（切到画布 Tab 后由 CanvasView 消费执行；无会话时引导）
@@ -205,10 +199,7 @@ export function CommandPalette(): React.JSX.Element {
               value="contacts 打开联系人 好友"
               className={ITEM_CLS}
               onSelect={() =>
-                run(() => {
-                  useUiStore.getState().setLeftPanelOpen(true)
-                  useUiStore.getState().setLeftTab('contacts')
-                })
+                run(() => { openContacts() })
               }
             >
               <Users className="size-3.5 shrink-0 text-muted-foreground" />
@@ -219,9 +210,7 @@ export function CommandPalette(): React.JSX.Element {
               className={ITEM_CLS}
               onSelect={() =>
                 run(() => {
-                  useUiStore.getState().setLeftPanelOpen(true)
-                  useUiStore.getState().setLeftTab('contacts')
-                  useUiStore.getState().requestGroupCreate()
+                  if (openContacts()) useUiStore.getState().requestGroupCreate()
                 })
               }
             >

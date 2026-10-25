@@ -25,9 +25,10 @@ const cache = new Map<string, string>()
 
 /** 目录签名：角色与场景关键字段的稳定拼接（内容级热更新判定） */
 function signatureOf(agents: AgentDefinition[], groups: AgentGroup[]): string {
-  const agentPart = agents.map((a) => `${a.id}|${a.name}|${a.role}|${a.description}|${a.group}`).join(';')
-  const groupPart = groups.map((g) => `${g.id}|${g.name}|${g.objective}|${g.chain.join(',')}`).join(';')
-  return `${agentPart}#${groupPart}`
+  return JSON.stringify([
+    agents.map((a) => [a.id, a.name, a.role, a.description, a.group]),
+    groups.map((g) => [g.id, g.name, g.objective, g.chain]),
+  ])
 }
 
 /** 单行折叠 + 截断（防换行破坏列表结构 / 控制体积） */
@@ -59,7 +60,8 @@ export function buildRosterCatalogBlock(
   const agents = prompts.list().filter((a) => a.group !== BLANK_SCENE_ID)
   const groups = prompts.groups().filter((g) => g.id !== BLANK_SCENE_ID)
   const present = [...new Set(presentIds)]
-  const key = `${signatureOf(agents, groups)}#${[...present].sort().join(',')}`
+  const nameOf = (id: string): string => labels?.[id] ?? prompts.get(id)?.name ?? id
+  const key = JSON.stringify([signatureOf(agents, groups), present.map((id) => [id, nameOf(id)])])
   const hit = cache.get(key)
   if (hit !== undefined) {
     // LRU 触碰（重插队尾）
@@ -68,14 +70,11 @@ export function buildRosterCatalogBlock(
     return hit
   }
 
-  const presentSet = new Set(present)
-  void presentSet
   // M77：在场判定与可召集过滤按基础角色（分身在场 = 该角色已在场，不重复列入目录）
   const presentBases = new Set(present.map((id) => baseAgentId(id)))
   const missing = agents.filter((a) => !presentBases.has(a.id))
   let block = ''
   if (missing.length > 0) {
-    const nameOf = (id: string): string => labels?.[id] ?? prompts.get(id)?.name ?? id
     const shown = present.slice(0, PRESENT_MAX).map((id) => `${nameOf(id)}(${id})`)
     const presentLine =
       present.length > PRESENT_MAX ? `${shown.join('、')}…（共 ${present.length} 位）` : shown.join('、')

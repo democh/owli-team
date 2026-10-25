@@ -13,6 +13,7 @@ import { CheckCircle2, Cpu, Loader2, Pencil, Play, Plus, Trash2 } from 'lucide-r
 import { toast } from 'sonner'
 import type { ConnectionDefinition, ConnectionStatus } from '@multi-agent/shared'
 import { cn } from '../../lib/utils'
+import { useUnsavedChanges } from '../../lib/unsaved-changes'
 import { useConnectionsStore } from '../../stores/connections-store'
 import { Button } from '../ui/button'
 import { Input } from '../ui/input'
@@ -86,13 +87,22 @@ function ProviderForm({
   initial,
   onDone,
   onCancel,
+  onDirtyChange,
 }: {
   initial?: ConnectionDefinition
   onDone: () => void
   onCancel: () => void
+  onDirtyChange: (dirty: boolean) => void
 }): React.JSX.Element {
   const [form, setForm] = React.useState<ProviderForm>(() => (initial ? formOf(initial) : EMPTY_FORM))
   const [saving, setSaving] = React.useState(false)
+  const baseline = React.useRef(JSON.stringify(form)).current
+  const dirty = JSON.stringify(form) !== baseline
+  const confirmDiscard = useUnsavedChanges(dirty)
+  React.useLayoutEffect(() => {
+    onDirtyChange(dirty)
+    return () => onDirtyChange(false)
+  }, [dirty, onDirtyChange])
   const patch = (p: Partial<ProviderForm>): void => setForm((f) => ({ ...f, ...p }))
 
   const applyPreset = (preset: (typeof PRESETS)[number]): void => {
@@ -226,7 +236,7 @@ function ProviderForm({
           <Play className="mr-1 size-3" />
           保存并测试
         </Button>
-        <Button size="xs" variant="ghost" onClick={onCancel}>
+        <Button size="xs" variant="ghost" disabled={saving} onClick={() => { if (confirmDiscard()) onCancel() }}>
           取消
         </Button>
       </div>
@@ -335,6 +345,8 @@ export function ModelProvidersSection(): React.JSX.Element {
   const busyId = useConnectionsStore((s) => s.busyId)
   const [creating, setCreating] = React.useState(false)
   const [editingId, setEditingId] = React.useState<string | null>(null)
+  const [formDirty, setFormDirty] = React.useState(false)
+  const canSwitch = (): boolean => !formDirty || window.confirm('有未保存的模型服务修改，确定放弃并切换吗？')
 
   // 清单拉取（幂等；与「媒体生成」分组共用 store）
   React.useEffect(() => {
@@ -362,6 +374,7 @@ export function ModelProvidersSection(): React.JSX.Element {
           variant="outline"
           className="ml-auto"
           onClick={() => {
+            if (!canSwitch()) return
             setEditingId(null)
             setCreating(true)
           }}
@@ -371,8 +384,8 @@ export function ModelProvidersSection(): React.JSX.Element {
         </Button>
       </div>
 
-      {creating && <ProviderForm onDone={() => setCreating(false)} onCancel={() => setCreating(false)} />}
-      {!creating && editing && <ProviderForm initial={editing} onDone={() => setEditingId(null)} onCancel={() => setEditingId(null)} />}
+      {creating && <ProviderForm onDirtyChange={setFormDirty} onDone={() => setCreating(false)} onCancel={() => setCreating(false)} />}
+      {!creating && editing && <ProviderForm key={editing.id} initial={editing} onDirtyChange={setFormDirty} onDone={() => setEditingId((id) => id === editing.id ? null : id)} onCancel={() => setEditingId(null)} />}
 
       {providers.length === 0 && !creating && !(loading && providers.length === 0) && (
         <div className="rounded-lg border border-dashed px-4 py-6 text-center text-[11.5px] leading-5 text-muted-foreground">
@@ -391,6 +404,7 @@ export function ModelProvidersSection(): React.JSX.Element {
               connection={connection}
               busy={busyId === connection.id}
               onEdit={() => {
+                if (editingId !== connection.id && !canSwitch()) return
                 setCreating(false)
                 setEditingId(connection.id)
               }}

@@ -350,22 +350,15 @@ export function GraphView(): React.JSX.Element {
     [agents, session],
   )
 
-  // 结构指纹：流式 delta 不改变图结构/边权，避免 40ms 高频重建（status/mentions/createdAt 变化才重算）
-  const structureKey = useSessionStore((s) =>
-    s.order
-      .map((id) => {
-        const m = s.byId.get(id)
-        return m ? `${m.role}~${m.agentId ?? ''}~${m.status}~${m.mentions.join(',')}` : '_'
-      })
-      .join('|'),
-  )
+  // 图谱专用变更版本：O(1) 订阅。消息增删 / 角色分身 / 状态 / 提及时推进，纯流式正文与 reasoning delta 不推进。
+  const graphRevision = useSessionStore((s) => s.graphRevision)
 
-  /** 实时全量消息（回放切片的基底；structureKey 驱动） */
+  /** 实时全量消息（回放切片的基底；graphRevision 驱动） */
   const liveMessages = React.useMemo(() => {
     const { byId, order } = useSessionStore.getState()
     return messagesOf({ byId, order })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [structureKey])
+  }, [graphRevision])
 
   /** 回放切片（null = 实时视图）：index 条消息构成的「当时图」 */
   const replayIndex = replay?.index ?? null
@@ -383,7 +376,7 @@ export function GraphView(): React.JSX.Element {
       replayMessages ? REPLAY_LIVE : live,
     )
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [structureKey, participants, groups, active, currentWave, queue, statuses, replayMessages])
+  }, [graphRevision, participants, groups, active, currentWave, queue, statuses, replayMessages])
 
   const summary = React.useMemo(() => summarizeGraph(model), [model])
 
@@ -400,7 +393,7 @@ export function GraphView(): React.JSX.Element {
     }
     return count
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [structureKey])
+  }, [graphRevision])
 
   // 工作产出：会话交付件全量（档案面板按 authorAgentId 过滤；artifactVersion 驱动刷新）
   const artifactVersion = useSessionStore((s) => s.artifactVersion)
@@ -803,7 +796,7 @@ export function GraphView(): React.JSX.Element {
   const previewMessage = React.useMemo(
     () => (preview ? findLastMessage(preview.id) : undefined),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [preview, structureKey],
+    [preview, graphRevision],
   )
   const links = React.useMemo(
     () => (selectedId ? neighborsOf(model, selectedId) : { upstream: [], downstream: [] }),
@@ -820,7 +813,7 @@ export function GraphView(): React.JSX.Element {
   const lastMessage = React.useMemo(
     () => (selectedId ? findLastMessage(selectedId) : undefined),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [selectedId, structureKey],
+    [selectedId, graphRevision],
   )
 
   // M77：接力摘要 / 工件归属按成员实例署名（分身 = 名字·灵魂名；工件作者仍为基础角色 → 按 base 匹配）

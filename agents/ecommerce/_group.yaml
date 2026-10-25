@@ -19,3 +19,20 @@ agenda:
 stage:
   layout: dock
   panel: console
+category: business
+catalog:
+  keywords:
+    - 电商经营
+    - 选品评估
+    - 上架优化
+    - 大促节奏
+    - 客服话术
+  inputs:
+    - 商品与店铺数据
+    - 成本库存
+    - 增长目标
+  outputs:
+    - 选品评估
+    - 店铺运营计划
+    - 增长实验
+  boundary: 数据与保本口径先确认；不保证销量，不擅自投流或下单。

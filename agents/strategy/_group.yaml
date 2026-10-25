@@ -21,3 +21,20 @@ stage:
   layout: roundtable
   panel: pool
 
+category: business
+catalog:
+  keywords:
+    - 商业战略
+    - 经营简报
+    - 优先级排序
+    - 决策评估
+    - 定价测算
+  inputs:
+    - 商业问题
+    - 经营数据
+    - 资源与约束
+  outputs:
+    - 决策简报
+    - 经营分析
+    - 商业方案
+  boundary: 提供战略判断与经营解释，不替代用户决策；数据库取数由 BI、数据管道由数据工程负责。

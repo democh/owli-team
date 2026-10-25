@@ -12,6 +12,7 @@
  * 原则：
  * - 用户显式 mode > 文本显式指令 > 会话策略 > 复杂度推断；
  * - 高风险动作始终强制规划（即便会话策略是 never-plan）；
+ * - 判定只看肯定动作：被否定的危险动作不构成风险；
  * - 低置信度默认直接执行（避免无意义挂起），由工具审批门兜底不可逆动作。
  */
 import type { IntentRisk, IntentSource, SessionAutonomy, TurnIntent, TurnMode } from '@multi-agent/shared'
@@ -25,7 +26,7 @@ export interface IntentInput {
   autonomy?: SessionAutonomy
   /** M24 兼容：会话「规划先行」开关 */
   planFirst?: boolean
-  /** 是否已有进行中的计划（有 → 不重复进入规划） */
+  /** @deprecated 已批准计划的执行入口使用 planExecutionIntent；仅保留兼容旧调用方 */
   hasActivePlan?: boolean
   /** 用户显式选择的范式（Composer；undefined = 未选择） */
   explicitMode?: TurnMode
@@ -42,7 +43,7 @@ const PLAN_WORDS =
 const DIRECT_WORDS = /(直接|马上|立刻)[^，。；\n]{0,3}(做|执行|开始|改)|不用(计划|规划)|别(规划|计划)|跳过(计划|规划)/
 /** 验收 / 评审类请求（是否“纯验收”还要看有无产出动作，见 reviewFirst） */
 const REVIEW_WORDS =
-  /(评审|验收|复核|审阅|审核)[一下]?|帮我(看看|检查|评估)[^，。；\n]{0,8}(方案|文档|这份|这个|对不对)|有(没有)问题|挑(挑)?毛病/
+  /(评审|验收|复核|审阅|审核)[一下]?|帮我(看看|检查|评估)[^，。；\n]{0,8}(方案|文档|这份|这个|对不对)|只(?:检查|看看|核对)|有(没有)问题|挑(挑)?毛病/
 /** 产出动作（与验收词共存时，先执行再评审，不进只读首波） */
 const PRODUCE_WORDS = /(做|写|整理|制定|生成|实现|输出|产出|设计|搭建|改|优化|完成|准备|拟|起草|汇总|拆解)/
 /**
@@ -52,10 +53,46 @@ const PRODUCE_WORDS = /(做|写|整理|制定|生成|实现|输出|产出|设计
  */
 const HIGH_RISK_WORDS =
   /(正式发布|对外发布|上线发布|发布到|发布上线|部署到|部署上线|转账|汇款|发起退款|执行退款|付款(?!功能|接口|流程|模块)|删除(?!功能|接口|逻辑|按钮|字段)|清空|格式化|授权给|解绑|签署|签约|群发|发邮件|提交申报|代扣代缴|注销|解散|迁移数据)/
-/** 多环节标记（顺序词：真正的阶段推进信号） */
+/** 否定词只作用于当前小句内的高风险动作（「不要删除 A，但删除 B」后半句仍然危险） */
+const NEGATION_WORDS = /(不要|不得|不能|禁止|请勿|无需|没必要|只|先不|别|勿|未|不)/
+const CLAUSE_SEPARATOR =
+  /[。；;！!？?\n]|，(?=(?:但|不过|而是|只|先|然后|再|还是|改成|改为|直接|马上|立刻|仍然|依然))|,(?=(?:but|instead|only|then))/
 const STEP_WORDS = /(然后|接着|之后|最后|同时|并且|再然后|第一步|第二步|首先|其次)/
 /** 多交付物信号（文档类产出；与顺序词共同构成“多环节交付”） */
 const DELIVERABLE_WORDS = /(文档|报告|方案|计划书|清单|纪要|演示稿|PPT|白皮书|设计稿)/g
+
+/** 按小句切分，保留动作与否定词的作用范围 */
+function clausesOf(text: string): string[] {
+  return text.split(CLAUSE_SEPARATOR).map((clause) => clause.trim()).filter(Boolean)
+}
+
+/**
+ * 只认肯定动作：逐个危险动作检查同句中「前一个逗号/句号到现在」的否定辖域。
+ * 「不要删除 A，但删除 B」与「不要删除 A，直接清空 B」的后者都是肯定动作。
+ */
+function hasAffirmedHighRisk(text: string): boolean {
+  const pattern = new RegExp(HIGH_RISK_WORDS.source, 'g')
+  for (const match of text.matchAll(pattern)) {
+    const index = match.index ?? 0
+    const start = Math.max(text.lastIndexOf('。', index), text.lastIndexOf('；', index), text.lastIndexOf('\n', index), text.lastIndexOf('，', index)) + 1
+    if (!NEGATION_WORDS.test(text.slice(start, index))) return true
+  }
+  return false
+}
+
+/** 纯评审对象里的动作名不构成执行授权（「只评审修改方案」） */
+function isReviewOnly(text: string): boolean {
+  if (!REVIEW_WORDS.test(text)) return false
+  const clauses = clausesOf(text)
+  if (clauses.some((clause) => DIRECT_WORDS.test(clause) && !NEGATION_WORDS.test(clause))) return false
+  // 逐小句剥离评审动词及其对象，避免把「评审修改方案」里的修改当成产出授权；
+  // 产出与验收可以相距很远或分句书写，不能用固定字符窗口判断二者关系。
+  return !clauses.some((clause) => {
+    if (NEGATION_WORDS.test(clause)) return false
+    const withoutReviewObjects = clause.replace(/(?:评审|验收|复核|审阅|审核|检查|核对|评估)(?:一下)?[^，。；]{0,12}/g, '')
+    return PRODUCE_WORDS.test(withoutReviewObjects)
+  })
+}
 
 /**
  * 复杂度信号：只有「顺序词 ≥2」或「长文本 + 顺序词 + 多交付物」才算多环节。
@@ -81,22 +118,26 @@ function round2(value: number): number {
   return Math.round(Math.max(0, Math.min(1, value)) * 100) / 100
 }
 
+/** 显式 Composer 范式：首波评审同样由 reviewFirst 表达，避免 PRS 合并后退回 execute。 */
+export function explicitIntentOf(mode: TurnMode): TurnIntent {
+  return {
+    needsPlan: mode === 'plan',
+    needsReview: mode === 'review',
+    ...(mode === 'review' ? { reviewFirst: true } : {}),
+    risk: 'low',
+    confidence: 1,
+    reasons: ['你在输入框显式选择了本回合范式'],
+    source: 'user',
+  }
+}
+
 /**
  * L0：确定性意图判定（纯函数，可单测）。
  * 输出的是「意图」而不是 mode —— 调用方用 modeOfIntent 派生 TurnMode。
  */
 export function resolveIntent(input: IntentInput): TurnIntent {
   // ① 用户显式选择：最高优先级（用户已经替系统做完决定）
-  if (input.explicitMode) {
-    return {
-      needsPlan: input.explicitMode === 'plan',
-      needsReview: input.explicitMode === 'review',
-      risk: 'low',
-      confidence: 1,
-      reasons: ['你在输入框显式选择了本回合范式'],
-      source: 'user',
-    }
-  }
+  if (input.explicitMode) return explicitIntentOf(input.explicitMode)
 
   const text = input.text.trim()
   const reasons: string[] = []
@@ -108,30 +149,36 @@ export function resolveIntent(input: IntentInput): TurnIntent {
   let source: IntentSource = 'rule'
 
   // ② 高风险：无视会话策略强制规划（不可逆动作必须有一次拍板）
-  if (HIGH_RISK_WORDS.test(text)) {
+  const highRisk = hasAffirmedHighRisk(text)
+  if (highRisk) {
     risk = 'high'
     needsPlan = true
     confidence = Math.max(confidence, 0.9)
     reasons.push('涉及高风险动作（对外 / 不可逆）')
   }
 
-  // ③ 文本显式指令（比会话策略更具体）
+  // ③ 文本显式指令（比会话策略更具体，来源固定为 user，不能被 PRS 覆盖）
+  // 「先别动手 / 不要执行」是禁止型，不能当成「直接执行」授权
   const planAsked = PLAN_WORDS.test(text)
-  const directAsked = DIRECT_WORDS.test(text)
+  // 「先别动手 / 不要执行」是禁止型；「直接执行」仍受高风险强制规划约束
+  const directAsked = DIRECT_WORDS.test(text) && !NEGATION_WORDS.test(text)
   if (planAsked) {
     needsPlan = true
     confidence = Math.max(confidence, 0.9)
+    source = 'user'
     reasons.push('你要求先看方案 / 计划')
   }
   if (directAsked && risk !== 'high') {
     needsPlan = false
     confidence = Math.max(confidence, 0.85)
+    // 「先出计划」的明确要求优先于「不用规划」这类弱信号
+    if (!planAsked) source = 'user'
     reasons.push('你要求直接执行')
   }
-  if (REVIEW_WORDS.test(text)) {
+  const reviewWord = /检查|核对/.test(text) && !/(并|和|或|再|然后|最后)[^，。；\s]{0,4}(检查|核对)/.test(text)
+  if (REVIEW_WORDS.test(text) || reviewWord || /(?:并|再|然后|最后)[^，。；\s]{0,4}(?:检查|核对)/.test(text)) {
     needsReview = true
-    // M89：只有“纯验收”（无产出动作）才首波进评审；“整理方案并检查”先执行、交付后过评审门
-    if (!PRODUCE_WORDS.test(text)) {
+    if (isReviewOnly(text)) {
       reviewFirst = true
       reasons.push('这是一次验收 / 评审请求')
     } else {
@@ -140,7 +187,7 @@ export function resolveIntent(input: IntentInput): TurnIntent {
     confidence = Math.max(confidence, 0.85)
   }
 
-  // ④ 会话策略（仅在文本没有显式要求时生效）
+  // ④ 会话策略（仅在文本没有显式要求时生效；never-plan 不被复杂度覆盖）
   if (!planAsked && !directAsked) {
     if (input.autonomy === 'always-plan' || (!input.autonomy && input.planFirst)) {
       needsPlan = true
@@ -153,8 +200,9 @@ export function resolveIntent(input: IntentInput): TurnIntent {
     }
   }
 
-  // ⑤ 复杂度 / 交付核对
-  if (!directAsked && looksComplex(text)) {
+  // ⑤ 复杂度 / 交付核对（会话显式 never-plan 不被规则推断覆盖）
+  const complexity = !directAsked && input.autonomy !== 'never-plan' && looksComplex(text)
+  if (complexity) {
     needsPlan = true
     confidence = Math.max(confidence, 0.62)
     reasons.push('多环节需求，先对齐方案再动手')
@@ -164,12 +212,6 @@ export function resolveIntent(input: IntentInput): TurnIntent {
     needsReview = true
     confidence = Math.max(confidence, 0.7)
     reasons.push('带附件的交付，先核对内容')
-  }
-
-  // ⑥ 已有进行中的计划：不重复规划（执行其步骤）
-  if (input.hasActivePlan && needsPlan) {
-    needsPlan = false
-    reasons.push('已有进行中的计划，按步骤推进')
   }
 
   return {
@@ -199,16 +241,7 @@ export function legacyIntentOf(input: {
   autonomy?: SessionAutonomy
   planFirst?: boolean
 }): TurnIntent {
-  if (input.explicitMode) {
-    return {
-      needsPlan: input.explicitMode === 'plan',
-      needsReview: input.explicitMode === 'review',
-      risk: 'low',
-      confidence: 1,
-      reasons: ['显式选择范式'],
-      source: 'user',
-    }
-  }
+  if (input.explicitMode) return explicitIntentOf(input.explicitMode)
   const forced = input.autonomy === 'always-plan' || (!input.autonomy && input.planFirst === true)
   return {
     needsPlan: forced || input.autonomy === 'always-plan',
@@ -228,6 +261,7 @@ export function planExecutionIntent(hasAcceptance: boolean): TurnIntent {
   return {
     needsPlan: false,
     needsReview: hasAcceptance,
+    approvedPlan: true,
     risk: 'low',
     confidence: 0.9,
     reasons: [hasAcceptance ? '计划含验收标准，收口过评审门' : '已批准计划，按步骤执行'],
@@ -268,7 +302,15 @@ export function coerceRouterIntent(raw: unknown): TurnIntent | undefined {
  */
 export function applyConfidencePolicy(intent: TurnIntent): TurnIntent {
   if (intent.source === 'user' || intent.source === 'policy') return intent
-  if (intent.risk === 'high') return intent
+  if (intent.risk === 'high') {
+    return intent.needsPlan
+      ? intent
+      : {
+          ...intent,
+          needsPlan: true,
+          reasons: clampReasons([...intent.reasons, '高风险动作先确认方案']),
+        }
+  }
   const threshold = intent.risk === 'medium' ? 0.55 : 0.75
   if (intent.needsPlan && intent.confidence < threshold) {
     return {
@@ -281,19 +323,40 @@ export function applyConfidencePolicy(intent: TurnIntent): TurnIntent {
 }
 
 /**
- * L1 合并：路由模型的结构化判定覆盖规则推断（用户显式 / 会话策略除外）。
- * 合并后统一过一遍置信度策略。
+ * L1 合并：路由模型只补充规则未识别的需求，不推翻用户显式要求。
+ * - 用户显式 Composer / 文本明确要求：原样保留；
+ * - 会话策略：仅高风险可强制规划，其余保留策略；
+ * - 其余：合并计划、评审与高风险，并统一过置信度策略。
  */
 export function mergeRouterIntent(base: TurnIntent, router: TurnIntent | undefined): TurnIntent {
   if (!router) return applyConfidencePolicy(base)
-  if (base.source === 'user' || base.source === 'policy') return base
-  // 高风险以两者更高者为准（任一判高风险即高风险）
-  const risk: IntentRisk =
-    base.risk === 'high' || router.risk === 'high' ? 'high' : router.risk === 'medium' || base.risk === 'medium' ? 'medium' : 'low'
+  // 文本明确先规划 / 未显式点名执行时，路由不能把核心高风险需求降为直接执行
+  if (base.source === 'user') {
+    if (!router.needsPlan && base.needsPlan && base.confidence >= 0.9) return base
+    if (base.risk === 'high' && !base.needsPlan && router.needsPlan) {
+      return applyConfidencePolicy({ ...base, needsPlan: true, reasons: clampReasons([...base.reasons, '风险动作先确认方案']) })
+    }
+    return base
+  }
+  const highRisk = base.risk === 'high' || router.risk === 'high'
+  // 已批准计划的执行步骤：needsPlan 已由「批准」满足，路由不能重新要求规划。
+  if (base.approvedPlan) return base
+  if (base.source === 'policy') {
+    if (!highRisk || base.needsPlan) return base
+    return {
+      ...base,
+      needsPlan: true,
+      risk: 'high',
+      reasons: clampReasons(['会话策略放行，但发现高风险动作']),
+    }
+  }
+  const risk: IntentRisk = highRisk ? 'high' : router.risk === 'medium' || base.risk === 'medium' ? 'medium' : 'low'
+  // 规则已识别的高风险同样属于强制规划，不能因路由低置信度而退回直接执行。
+  const forcedPlan = base.risk === 'high' || router.risk === 'high'
   const merged: TurnIntent = {
-    needsPlan: router.needsPlan || (risk === 'high' && base.needsPlan),
+    needsPlan: router.needsPlan || base.needsPlan || forcedPlan,
     needsReview: router.needsReview || base.needsReview,
-    // 首波评审只能由用户/规则判定（路由模型只表达“交付后需评审”），不因合并而变成只读首波
+    // 首波评审只能由用户 / 规则判定（路由模型只表达“交付后需评审”）。
     ...(base.reviewFirst ? { reviewFirst: true } : {}),
     risk,
     confidence: Math.max(base.confidence, router.confidence),

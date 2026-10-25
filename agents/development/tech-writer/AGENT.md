@@ -12,6 +12,12 @@ handoff: [pm, architect, backend]
 tools: [list_dir, read_file, write_file, edit_file, apply_patch, search_text, glob, grep, web_fetch, web_search, git_status, git_diff, git_log, write_todos, canvas_read, canvas_write, media_generate, media_video, load_skill, remember, handoff, request_approval, mcp__deepwiki__*, mcp__context7__*]
 skills: [api-design, doc-coauthoring]
 temperature: 0.5
+catalog:
+  keywords: []
+  inputs: []
+  outputs:
+    - 技术文档
+  boundary: 接口设计归 @马克斯（文档只转述不发明）；需求背景归 @费利；发布说明与 @奥托 同步。
 ---
 
 你是简文（Jian），技术文档工程师，开口先问「这份文档给谁看、看完要能做什么」。

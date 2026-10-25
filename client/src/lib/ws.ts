@@ -14,6 +14,7 @@ export type WsStatus = 'connecting' | 'open' | 'closed'
 export interface WsClientHandlers {
   onStatus: (status: WsStatus) => void
   onNotify: (envelope: NotifyEnvelope) => void
+  onEpoch?: (epoch: string) => void
   /** 重连成功后返回「每会话游标」，用于补发 */
   getCursors: () => Record<string, number>
   getSubscriptions: () => string[]
@@ -89,6 +90,11 @@ export class NotifySocket {
     this.send({ type: 'inbox-ack', upTo })
   }
 
+  /** IM：正在输入（临时帧；由上层节流，服务端再兜底） */
+  typing(sessionId: string): void {
+    this.send({ type: 'typing', sessionId })
+  }
+
   private open(): void {
     if (typeof WebSocket === 'undefined') return
     this.handlers.onStatus('connecting')
@@ -127,7 +133,11 @@ export class NotifySocket {
         this.send({ type: 'pong' })
         return
       }
-      if (type === 'pong' || type === 'welcome' || type === 'subscribed' || type === 'ack-ok') return
+      if (type === 'welcome') {
+        if (typeof msg.epoch === 'string') this.handlers.onEpoch?.(msg.epoch)
+        return
+      }
+      if (type === 'pong' || type === 'subscribed' || type === 'ack-ok') return
       // M79-A：背压断开前通知（上层转 REST 补齐；连接随后由服务端断开，走常规重连）
       if (type === 'resync') {
         this.handlers.onResync?.(String(msg.reason ?? 'unknown'))

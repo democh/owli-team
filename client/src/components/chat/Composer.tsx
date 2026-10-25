@@ -11,9 +11,10 @@
  */
 import * as React from 'react'
 import { toast } from 'sonner'
-import { CornerDownLeft, Loader2, Paperclip, Send, Smile, Square } from 'lucide-react'
-import type { UserAvatar, AgentDefinition, AgentRunState, Artifact, MessageAttachment, SkillMeta, TurnMode } from '@multi-agent/shared'
-import { apiGet, apiUpload } from '../../lib/api'
+import { CornerDownLeft, Loader2, Paperclip, Reply, Send, Smile, Square, X } from 'lucide-react'
+import type { UserAvatar, AgentDefinition, AgentRunState, MessageAttachment, SkillMeta, TurnMode } from '@multi-agent/shared'
+import { apiUpload } from '../../lib/api'
+import { useArtifactStore } from '../../stores/artifact-store'
 import { memberViews } from '../../lib/members'
 import {
   ATTACHMENT_ACCEPT,
@@ -29,6 +30,7 @@ import { useAgentStore } from '../../stores/agent-store'
 import { useRunStore } from '../../stores/run-store'
 import { useSessionStore, useCurrentSession } from '../../stores/session-store'
 import { useUiStore } from '../../stores/ui-store'
+import { readDraft, writeDraft } from '../../lib/draft-store'
 import { Button } from '../ui/button'
 import { AgentAvatar } from '../agents/AgentAvatar'
 import { HumanAvatar } from './HumanAvatar'
@@ -155,23 +157,41 @@ export interface ComposerProps {
   lockedHint?: string
 }
 
-export function Composer({ onReady, locked = false, lockedHint }: ComposerProps): React.JSX.Element {
-  const [value, setValue] = React.useState('')
+export function Composer(props: ComposerProps): React.JSX.Element {
+  const currentId = useSessionStore((s) => s.currentId)
+  return <SessionComposer key={currentId ?? 'no-session'} {...props} />
+}
+
+function SessionComposer({ onReady, locked = false, lockedHint }: ComposerProps): React.JSX.Element {
+  const [value, setValue] = React.useState(() => readDraft(draftKey(useSessionStore.getState().currentId)))
   const [mention, setMention] = React.useState<MentionState>(CLOSED)
   const [slashIndex, setSlashIndex] = React.useState(0)
   const [sending, setSending] = React.useState(false)
+  /** IM：typing 上报节流（3s 一次；服务端另有 1.5s 兜底） */
+  const lastTypingRef = React.useRef(0)
   const [dragging, setDragging] = React.useState(false)
   /** M33：附件托盘（待发附件；上传中 / 完成 / 失败三态） */
   const [tray, setTray] = React.useState<TrayItem[]>([])
   const [lightbox, setLightbox] = React.useState<{ items: LightboxItem[]; index: number } | null>(null)
   /** M24：消息级范式（仅对下一条消息生效；发送 / 切会话后复位为「执行」） */
   const [mode, setMode] = React.useState<TurnMode>('execute')
-  const [files, setFiles] = React.useState<Artifact[] | null>(null)
+  // 提交只清理对应的编辑版本；切会话卸载后，旧请求不再操作输入区。
+  const draft = React.useMemo(() => ({ value, mode }), [value, mode])
+  const draftRef = React.useRef(draft)
+  React.useLayoutEffect(() => { draftRef.current = draft }, [draft])
+  const mountedRef = React.useRef(false)
+  const sendingRef = React.useRef(false)
+  React.useEffect(() => {
+    mountedRef.current = true
+    return () => { mountedRef.current = false }
+  }, [])
+  const files = useArtifactStore((s) => s.artifacts)
   const ref = React.useRef<HTMLTextAreaElement>(null)
   const fileRef = React.useRef<HTMLInputElement>(null)
   const caretRef = React.useRef<number | null>(null)
   /** M80-A：表情选择器开关（与 @ 候选面板互斥） */
   const [emojiOpen, setEmojiOpen] = React.useState(false)
+  const mentionListRef = React.useRef<HTMLDivElement>(null)
 
   const agents = useAgentStore((s) => s.agents)
   const skills = useAgentStore((s) => s.skills)
@@ -182,6 +202,7 @@ export function Composer({ onReady, locked = false, lockedHint }: ComposerProps)
   const queued = useRunStore((s) => s.queued)
   const queue = useRunStore((s) => s.queue)
   const composerInsert = useUiStore((s) => s.composerInsert)
+  const replyTarget = useUiStore((s) => s.replyTarget)
   // M79-E：会话人类（@ 真人候选；显示名优先，重名时回退 @username）
   const humanProfiles = useSessionStore((s) => s.humanProfiles)
   // M79-G：人类候选在线点（可见域 = 好友 ∪ 同会话成员）
@@ -357,32 +378,22 @@ export function Composer({ onReady, locked = false, lockedHint }: ComposerProps)
   }, [humanProfiles, myUserId, poolSorted])
 
   // 提及菜单打开时拉取文件候选（30s 内复用缓存）
-  const filesFetchedAtRef = React.useRef(0)
   React.useEffect(() => {
-    if (!mention.open || !currentId) return
-    if (files !== null && Date.now() - filesFetchedAtRef.current < 30_000) return
-    let alive = true
-    void apiGet<{ artifacts: Artifact[] }>(`/api/sessions/${currentId}/artifacts`)
-      .then((res) => {
-        if (!alive) return
-        filesFetchedAtRef.current = Date.now()
-        setFiles(res.artifacts)
-      })
-      .catch(() => {
-        if (!alive) return
-        // 失败也记时间戳：否则 files 依赖会触发无限重试（测试环境无 mock 网络）
-        filesFetchedAtRef.current = Date.now()
-        setFiles([])
-      })
-    return () => {
-      alive = false
-    }
-  }, [mention.open, currentId, files])
+    if (mention.open && currentId) void useArtifactStore.getState().ensure(currentId)
+  }, [mention.open, currentId])
+
+  React.useEffect(() => {
+    if (!mention.open) return
+    mentionListRef.current
+      ?.querySelector<HTMLElement>(`#composer-mention-option-${mention.index}`)
+      ?.scrollIntoView({ block: 'nearest' })
+  }, [mention.open, mention.index])
 
   // 草稿：切会话时恢复 / 清空（M24：范式选择不持久化，同复位；M33：待发附件与预览同清、在途上传中止）
   React.useEffect(() => {
-    const key = draftKey(currentId)
-    setValue(key ? (localStorage.getItem(key) ?? '') : '')
+    // 引用只对原会话有效：切会话即取消（避免误发到另一会话）
+    useUiStore.getState().startReply(undefined)
+    lastTypingRef.current = 0
     setMention(CLOSED)
     setSlashDismissed(false)
     setMode('execute')
@@ -403,19 +414,26 @@ export function Composer({ onReady, locked = false, lockedHint }: ComposerProps)
     if (draftSaveTimerRef.current) clearTimeout(draftSaveTimerRef.current)
     draftSaveTimerRef.current = setTimeout(() => {
       draftSaveTimerRef.current = undefined
-      if (value) localStorage.setItem(key, value)
-      else localStorage.removeItem(key)
+      writeDraft(key, value)
     }, 400)
     return () => {
-      if (draftSaveTimerRef.current) {
-        clearTimeout(draftSaveTimerRef.current)
-        draftSaveTimerRef.current = undefined
-        // 卸载/切会话前补写，防抖窗口内的内容不丢
-        if (value) localStorage.setItem(key, value)
-        else localStorage.removeItem(key)
-      }
+      clearTimeout(draftSaveTimerRef.current)
+      draftSaveTimerRef.current = undefined
     }
   }, [value, currentId])
+
+  React.useEffect(() => {
+    const key = draftKey(currentId)
+    const flush = (): void => {
+      if (!key) return
+      writeDraft(key, draftRef.current.value)
+    }
+    window.addEventListener('pagehide', flush)
+    return () => {
+      window.removeEventListener('pagehide', flush)
+      flush()
+    }
+  }, [currentId])
 
   // 草稿：多标签页同步（其他标签页改了同一会话草稿时跟随；本页输入中（聚焦）不覆盖，避免打字被打断）
   React.useEffect(() => {
@@ -430,6 +448,12 @@ export function Composer({ onReady, locked = false, lockedHint }: ComposerProps)
     window.addEventListener('storage', onStorage)
     return () => window.removeEventListener('storage', onStorage)
   }, [currentId])
+
+  // 进入引用后聚焦输入，用户可直接开始写回复
+  React.useEffect(() => {
+    if (!replyTarget) return
+    requestAnimationFrame(() => ref.current?.focus())
+  }, [replyTarget])
 
   // M8：引用插入（消息菜单 / 交付件 / 任务 / 命令面板）
   React.useEffect(() => {
@@ -489,6 +513,12 @@ export function Composer({ onReady, locked = false, lockedHint }: ComposerProps)
     const next = e.target.value
     const caret = e.target.selectionStart ?? next.length
     setValue(next)
+    // IM：正在输入（空内容不报；节流 3s）
+    const now = Date.now()
+    if (!locked && currentId && next.trim().length > 0 && now - lastTypingRef.current >= 3000) {
+      lastTypingRef.current = now
+      useWsStore.getState().sendTyping(currentId)
+    }
     setSlashIndex(0)
     setSlashDismissed(false)
     const probe = detectMention(next, caret)
@@ -634,14 +664,6 @@ export function Composer({ onReady, locked = false, lockedHint }: ComposerProps)
     })
   }
 
-  const clearTray = (): void => {
-    setTray((ts) => {
-      ts.forEach((t) => t.localUrl && URL.revokeObjectURL(t.localUrl))
-      return []
-    })
-    setLightbox(null)
-  }
-
   /** 托盘图片 / 视频 → Lightbox（多张时左右切换） */
   const openTrayLightbox = (id: string): void => {
     if (!currentId) return
@@ -660,7 +682,7 @@ export function Composer({ onReady, locked = false, lockedHint }: ComposerProps)
 
   const submit = async (): Promise<void> => {
     const content = value.trim()
-    if (sending) return
+    if (sendingRef.current || locked || !currentId) return
     // M33：附件上传中拦截（避免发送半成品附件）
     if (tray.some((t) => t.status === 'uploading')) {
       toast('附件上传中，请稍候')
@@ -673,25 +695,37 @@ export function Composer({ onReady, locked = false, lockedHint }: ComposerProps)
       await runCommand(content)
       return
     }
+    sendingRef.current = true
     setSending(true)
+    const submittedDraft = draftRef.current
+    const submittedReply = replyTarget?.sessionId === currentId ? replyTarget.messageId : undefined
     try {
+      // IM：历史上下文窗口内发送时先回到最新页，保证新消息与后续 Run 状态可见
+      if (useSessionStore.getState().historyMode) await useSessionStore.getState().selectSession(currentId)
       // M24：plan / review 随消息提交；「执行」不显式指定（服务端按「规划先行」→ execute 兑底）
       // M33：附件一并提交（图片走视觉通道，文档自动提取，视频带时长元数据）
       await useRunStore.getState().send(
         content,
         mode === 'execute' ? undefined : mode,
         ready.length > 0 ? ready.map((t) => t.attachment!) : undefined,
+        submittedReply,
       )
-      setValue('')
-      clearTray()
-      setMode('execute') // 仅对下一条消息生效：发送后自动复位
-      const key = draftKey(currentId)
-      if (key) localStorage.removeItem(key)
-      setMention(CLOSED)
+      if (!mountedRef.current) return
+      lastTypingRef.current = 0
+      if (useUiStore.getState().replyTarget?.messageId === submittedReply) useUiStore.getState().startReply(undefined)
+      for (const item of ready) removeTrayItem(item.id)
+      if (draftRef.current === submittedDraft) {
+        setValue('')
+        setMode('execute')
+        setMention(CLOSED)
+        // 已提交内容同步从内存 / localStorage 双写层清除；之后的新输入不受影响。
+        writeDraft(draftKey(currentId), '')
+      }
     } catch (err) {
       toast.error((err as Error).message)
     } finally {
-      setSending(false)
+      sendingRef.current = false
+      if (mountedRef.current) setSending(false)
     }
   }
 
@@ -751,7 +785,10 @@ export function Composer({ onReady, locked = false, lockedHint }: ComposerProps)
   const insertHint = active ? '插话 · 回合结束后生效' : null
 
   return (
-    <div className="border-t bg-background/80 px-4 py-2 backdrop-blur">
+    <div
+      className="border-t bg-background/80 px-4 py-2 backdrop-blur"
+      style={{ paddingBottom: 'max(0.5rem, env(safe-area-inset-bottom))' }}
+    >
       <div
         className={cn(
           'relative rounded-xl border bg-card shadow-soft transition-all focus-within:border-primary/40 focus-within:shadow-md focus-within:shadow-primary/10 focus-within:ring-[3px] focus-within:ring-primary/12',
@@ -794,9 +831,11 @@ export function Composer({ onReady, locked = false, lockedHint }: ComposerProps)
 
         {mention.open && candidates.length > 0 && (
           <div
+            ref={mentionListRef}
+            id="composer-mention-listbox"
             role="listbox"
             aria-label="候选列表"
-            className="absolute bottom-full left-0 z-30 mb-2 max-h-80 w-80 overflow-y-auto rounded-xl border bg-popover p-1 shadow-xl shadow-primary/10 animate-fade-in"
+            className="absolute bottom-full left-0 z-30 mb-2 max-h-80 w-[min(20rem,calc(100vw-2rem))] overflow-y-auto rounded-xl border bg-popover p-1 shadow-xl shadow-primary/10 animate-fade-in"
           >
             {candidates[0]?.kind === 'agent' && (
               <div className="flex items-baseline justify-between px-2 py-1">
@@ -815,6 +854,9 @@ export function Composer({ onReady, locked = false, lockedHint }: ComposerProps)
                 )}
                 <button
                   type="button"
+                  id={`composer-mention-option-${i}`}
+                  role="option"
+                  aria-selected={i === mention.index}
                   className={cn(
                     'flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[13px] transition-colors',
                     i === mention.index ? 'bg-primary/10 text-primary' : 'hover:bg-accent/60',
@@ -916,6 +958,28 @@ export function Composer({ onReady, locked = false, lockedHint }: ComposerProps)
           </div>
         )}
 
+        {/* IM：引用回复条（原消息已删时仅提示，不提供跳转） */}
+        {replyTarget && (
+          <div className="mx-2.5 mt-2 flex items-start gap-2 rounded-lg border-l-2 border-primary/50 bg-primary/[0.04] px-2.5 py-1.5">
+            <Reply className="mt-0.5 size-3.5 shrink-0 text-primary/70" aria-hidden />
+            <div className="min-w-0 flex-1 text-[11.5px] leading-4">
+              <span className="font-medium text-primary">回复 {replyTarget.authorName ?? '成员'}</span>
+              <p className={cn('truncate text-muted-foreground', replyTarget.deleted && 'line-through opacity-60')}>
+                {replyTarget.deleted ? '原消息已删除' : replyTarget.excerpt}
+              </p>
+            </div>
+            <button
+              type="button"
+              aria-label="取消引用回复"
+              title="取消引用"
+              onClick={() => useUiStore.getState().startReply(undefined)}
+              className="rounded p-0.5 text-muted-foreground hover:bg-accent/70 hover:text-foreground"
+            >
+              <X className="size-3.5" />
+            </button>
+          </div>
+        )}
+
         {/* M33：待发附件托盘（图片缩略 / 文件卡 / 上传进度；发送后清空） */}
         {tray.length > 0 && (
           <AttachmentTray items={tray} onRemove={removeTrayItem} onOpen={openTrayLightbox} />
@@ -926,6 +990,12 @@ export function Composer({ onReady, locked = false, lockedHint }: ComposerProps)
           value={value}
           disabled={disabled}
           rows={1}
+          aria-autocomplete="list"
+          aria-expanded={mention.open && candidates.length > 0}
+          aria-controls={mention.open && candidates.length > 0 ? 'composer-mention-listbox' : undefined}
+          aria-activedescendant={
+            mention.open && candidates.length > 0 ? `composer-mention-option-${mention.index}` : undefined
+          }
           placeholder={
             locked
               ? (lockedHint ?? '只读共享（viewer）：无写权限')

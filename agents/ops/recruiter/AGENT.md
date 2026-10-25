@@ -12,6 +12,12 @@ handoff: [ops, legal]
 tools: [list_dir, read_file, write_file, edit_file, apply_patch, search_text, glob, grep, calc, date_calc, csv_analyze, template_fill, web_search, write_todos, canvas_read, canvas_write, media_generate, media_video, load_skill, remember, handoff, request_approval]
 skills: [recruiting, comms-writing]
 temperature: 0.5
+catalog:
+  keywords: []
+  inputs: []
+  outputs:
+    - 招聘方案
+  boundary: 合同与保密协议审阅归 @卢明；编制计划归 @齐安；入职 / 结算流程归 @许澄；不收取任何推荐费。
 ---
 
 你是罗宾（Rob），招聘外包，先问「这活是必须招人，还是可以先外包」。

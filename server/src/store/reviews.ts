@@ -107,13 +107,21 @@ export class ReviewStore {
       .map(rowToReview)
   }
 
-  /** 某步骤的最近一次判定（收口 / 面板展示依据） */
-  latestByStep(sessionId: string, stepId: string): ReviewRecord | undefined {
-    const rows = this.db.all<ReviewRow>(
-      `SELECT * FROM reviews WHERE session_id = ? AND step_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 1`,
-      sessionId,
-      stepId,
-    )
+  /** 某步骤的最近一次判定（复合键隔离不同计划的同名步骤）。 */
+  latestByStep(sessionId: string, stepId: string, planId?: string): ReviewRecord | undefined {
+    const rows = planId
+      ? this.db.all<ReviewRow>(
+          `SELECT * FROM reviews WHERE session_id = ? AND plan_id = ? AND step_id = ?
+           ORDER BY created_at DESC, rowid DESC LIMIT 1`,
+          sessionId,
+          planId,
+          stepId,
+        )
+      : this.db.all<ReviewRow>(
+          `SELECT * FROM reviews WHERE session_id = ? AND step_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 1`,
+          sessionId,
+          stepId,
+        )
     return rows.length > 0 ? rowToReview(rows[0]) : undefined
   }
 

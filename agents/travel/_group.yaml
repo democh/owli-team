@@ -20,3 +20,20 @@ stage:
   layout: dock
   panel: coach
 
+category: life
+catalog:
+  keywords:
+    - 出行旅行
+    - 行程规划
+    - 交通住宿
+    - 行前清单
+    - 预算测算
+  inputs:
+    - 目的地与日期
+    - 预算与偏好
+    - 证件和出行限制
+  outputs:
+    - 行程计划
+    - 出行预算
+    - 事务检查清单
+  boundary: 价格、签证与交通需核实时效；不代订、不提供财务负担判断。

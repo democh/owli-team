@@ -134,46 +134,43 @@ async function openBuilder(user: ReturnType<typeof userEvent.setup>): Promise<vo
 }
 
 describe('建会话组队台 CreateSessionDialog（M50）', () => {
-  it('来源搜索：按名称 / 描述过滤预设与场景，空组隐藏、空态与清空恢复', async () => {
+  it('来源搜索：场景页按名称 / 描述过滤、空态与清空恢复；预设页独立搜索', async () => {
     const user = userEvent.setup()
     await openBuilder(user)
     const search = screen.getByPlaceholderText('搜索模板 / 场景…')
 
-    // 名称命中：仅保留研发团队（预设组整组隐藏）
+    // 场景页：名称命中仅保留研发团队（预设不混排）
     await user.type(search, '研发')
     expect(screen.getByRole('button', { name: '组队来源：研发团队' })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '组队来源：产品发布' })).toBeNull()
-    expect(screen.queryByText('快速组队')).toBeNull()
-
-    // 描述命中：仅保留产品发布（需求到发布一条龙）
-    await user.clear(search)
-    await user.type(search, '一条龙')
-    expect(screen.getByRole('button', { name: '组队来源：产品发布' })).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: '组队来源：研发团队' })).toBeNull()
-    expect(screen.queryByText('按场景组队')).toBeNull()
 
     // 无命中：空态文案
     await user.clear(search)
     await user.type(search, '不存在的来源')
     expect(screen.getByText('没有匹配的来源')).toBeInTheDocument()
 
-    // 清空搜索：恢复全部来源
+    // 清空搜索：恢复场景列表
     await user.click(screen.getByTitle('清空来源搜索'))
     expect(screen.getByRole('button', { name: '组队来源：研发团队' })).toBeInTheDocument()
+
+    // 任务预设页：描述命中「一条龙」仅保留产品发布
+    await user.click(screen.getByRole('button', { name: '任务预设' }))
+    await user.type(screen.getByPlaceholderText('搜索模板 / 场景…'), '一条龙')
     expect(screen.getByRole('button', { name: '组队来源：产品发布' })).toBeInTheDocument()
+    expect(screen.queryByText('按场景组队')).toBeNull()
   })
 
-  it('来源切换：整体替换编制并清 souls；「已微调」随集合差异显隐', async () => {
+  it('来源切换：整体替换编制并清 souls；「已调整」随集合差异显隐', async () => {
     const user = userEvent.setup()
     await openBuilder(user)
 
-    // 选场景 → chain 2 位；移出艾达 → 已微调显形
+    // 选场景 → chain 2 位；移出艾达 → 已调整显形
     await user.click(screen.getByRole('button', { name: '组队来源：研发团队' }))
     expect(screen.getByText('已选 2 位')).toBeInTheDocument()
-    expect(screen.queryByText('已微调')).toBeNull()
+    expect(screen.queryByText('已调整')).toBeNull()
     await user.click(screen.getByRole('button', { name: /艾达/ }))
     expect(screen.getByText('已选 1 位')).toBeInTheDocument()
-    expect(screen.getByText('已微调')).toBeInTheDocument()
+    expect(screen.getByText('已调整')).toBeInTheDocument()
 
     // 编制行给费利设灵魂覆盖（狂野 → 禅意）：多选面板先勾禅意、再取消狂野（回到单人格禅意）
     await user.click(screen.getByRole('button', { name: '狂野' }))
@@ -182,18 +179,21 @@ describe('建会话组队台 CreateSessionDialog（M50）', () => {
     await user.click(within(soulMenu).getByRole('button', { name: /^狂野/ }))
     expect(screen.getByRole('button', { name: '禅意' })).toBeInTheDocument()
 
-    // 重选同一来源 → 整体替换：souls 清空（恢复默认狂野）、已微调消失
+    // 重选同一来源 → 已调整时先确认替换；确认后 souls 清空（恢复默认狂野）、已调整消失
     await user.click(screen.getByRole('button', { name: '组队来源：研发团队' }))
+    expect(screen.getByText('替换当前团队和开场草稿？')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '确认替换' }))
     expect(screen.getByText('已选 2 位')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '禅意' })).toBeNull()
     expect(screen.getByRole('button', { name: '狂野' })).toBeInTheDocument()
-    expect(screen.queryByText('已微调')).toBeNull()
+    expect(screen.queryByText('已调整')).toBeNull()
 
-    // 切预设 → 编制收缩为 1 位（整体替换，不保留追加成员）
+    // 切预设页签 → 编制收缩为 1 位（整体替换，不保留追加成员）
+    await user.click(screen.getByRole('button', { name: '任务预设' }))
     await user.click(screen.getByRole('button', { name: '组队来源：产品发布' }))
     expect(screen.getByText('已选 1 位')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /艾达/ })).toHaveAttribute('aria-pressed', 'false')
-    expect(screen.queryByText('已微调')).toBeNull()
+    expect(screen.getByRole('button', { name: /费利/ })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.queryByText('已调整')).toBeNull()
   })
 
   it('编制行移出：aria-label「移出编制」不与池卡名二义', async () => {
@@ -210,7 +210,7 @@ describe('建会话组队台 CreateSessionDialog（M50）', () => {
     expect(screen.getByRole('button', { name: /费利/ })).toHaveAttribute('aria-pressed', 'false')
   })
 
-  it('清空编制：来源保留（已微调）+ 0 人提示回显', async () => {
+  it('清空编制：来源保留（已调整）+ 0 人提示回显', async () => {
     const user = userEvent.setup()
     await openBuilder(user)
     await user.click(screen.getByRole('button', { name: '组队来源：研发团队' }))
@@ -220,7 +220,7 @@ describe('建会话组队台 CreateSessionDialog（M50）', () => {
     expect(screen.getByText('已选 0 位')).toBeInTheDocument()
     expect(screen.getByText(/未选成员：首条消息将由平台自动组队并派发任务/)).toBeInTheDocument()
     expect(screen.queryByTitle('清空编制')).toBeNull()
-    expect(screen.getByText('已微调')).toBeInTheDocument()
+    expect(screen.getByText('已调整')).toBeInTheDocument()
   })
 
   it('窄屏：三页签收敛单面板；选来源自动切「编制」页', async () => {

@@ -13,7 +13,7 @@ agents/
 ├── _presets.yaml             # 快速组队预设（可选；跨场景编制模板，缺失时 UI 自动隐藏）
 └── <场景 id>/                # 一个目录 = 一个场景（group）
     ├── _group.yaml           # 场景元数据（必填）
-    ├── _protocol.md          # 场景协议（可选；本包 41 场景已全量具备，追加在全局协议之后）
+    ├── _protocol.md          # 场景协议（可选；本包 34 场景已全量具备，追加在全局协议之后）
     └── <agent id>/           # 一个目录 = 一个 Agent（id 跨场景全局唯一）
         ├── AGENT.md          # front-matter + 人设正文（必填）
         ├── souls/            # 灵魂变体（可选；不建目录 = 无灵魂，行为与经典模式一致）
@@ -69,7 +69,7 @@ temperature: 0.6              # 可选；设置面板「统一温度」开启时
 - 业务工具四件套（M21）：`calc`（金额 / 比例 / 利率，禁止心算）、`date_calc`（日期与排期，含工作日）、`csv_analyze`（表格汇总 / 筛选，禁止目测）、`template_fill`（合同 / 报价 / 邮件等模板批量渲染，写类走审批）；
 - 「何时必须用」由协议层约束（`_protocol.md <tool_policy>` 的业务纪律四条），工具授权只解决「能不能用」。
 - 外部 MCP（免 Key 批，`mcp.json` 文件权威）：九台服务器（sequential-thinking / memory / time / weather / markitdown / deepwiki / context7 / arxiv / yfinance）按场景最小授权授予对应角色（`mcp__<slug>__*` 通配，会话绑定后可见）；安装台账见 [design.md §109](../design.md)。
-- 协作基线（M29，v14 扩展至全部角色）：全部 163 业务角色白名单均含 `handoff`（结构化转交为第一通道，ADR 2；`reason` / `expected_output` 随交接注入接收方回合指令）；研发 7 角色均含 `remember`（关键口径固化，对齐协议 `<context_semantics>`）。空场景通用助手 `general` 除外：无 `handoff`，单助手纪律（M50）。
+- 协作基线（M29，v14 扩展至全部角色）：全部 139 业务角色白名单均含 `handoff`（结构化转交为第一通道，ADR 2；`reason` / `expected_output` 随交接注入接收方回合指令）；研发 7 角色均含 `remember`（关键口径固化，对齐协议 `<context_semantics>`）。空场景通用助手 `general` 除外：无 `handoff`，单助手纪律（M50）。
 - 调度（M48）：**不再有「调度官」角色**——未 @ 消息与空编制开场由引擎的**平台路由步（PRS）**自动组队与派发（见 [design.md §57](../design.md) / [ADR 0101](../docs/adr/0101-platform-routing-step.md)）；全部 agent 均为单一业务角色，不存在「平台机制角色」。
 
 ## 研发场景能力基线（M29）
@@ -221,7 +221,7 @@ presets:
 
 ## 场景分层（选择建议）
 
-41 个场景按使用频次与语义分六层，建会话时优先从「核心工作」「生活与身心」两层选择；「专业支援」类场景用于专项任务：
+34 个场景按使用频次与语义分六层，建会话时优先从「核心工作」「生活与身心」两层选择；「专业支援」类场景用于专项任务：
 
 - **核心工作（16）**：development / sre / ops / strategy / finance / invest / bullbear / bi / marketing / sales / ecommerce / funding / legal-personal / moot-court / academic / research
 - **创作与表达（5）**：writing / creator / gamedesign / brainstorm / trpg

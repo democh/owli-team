@@ -5,7 +5,7 @@
  * 进程启动时把遗留的活跃态 Run 标记为 interrupted，
  * 前端据此展示「从断点继续」（复用队列 + 发言史 + 已产出消息）。
  */
-import type { RunSnapshot } from '@multi-agent/shared'
+import type { RunExecutionState, RunSnapshot } from '@multi-agent/shared'
 import { getLogger } from '../logger.js'
 import type { AppDb } from './db.js'
 import { nowIso } from './sessions.js'
@@ -22,6 +22,8 @@ interface RunRow {
   pending_user_messages: string
   /** M57：运行归因（users.id；NULL = 单用户兼容模式） */
   user_id?: string | null
+  trigger_user_id?: string | null
+  execution_state?: string | null
   error: string | null
   created_at: string
   updated_at: string
@@ -37,7 +39,18 @@ function parseArray(raw: string): string[] {
   }
 }
 
+function parseExecution(raw: string | null | undefined): RunExecutionState | undefined {
+  if (!raw) return undefined
+  try {
+    const value = JSON.parse(raw) as RunExecutionState
+    return value.version === 1 ? value : undefined
+  } catch {
+    return undefined
+  }
+}
+
 function rowToSnapshot(row: RunRow): RunSnapshot {
+  const execution = parseExecution(row.execution_state)
   return {
     id: row.id,
     sessionId: row.session_id,
@@ -47,6 +60,9 @@ function rowToSnapshot(row: RunRow): RunSnapshot {
     turnIndex: Number(row.turn_index),
     fallbackUsed: Number(row.fallback_used) === 1,
     handedToUser: Number(row.handed_to_user) === 1,
+    triggerUserId: row.trigger_user_id ?? execution?.triggerUserId ?? undefined,
+    pendingUserMessages: parseArray(row.pending_user_messages),
+    execution,
     error: row.error ?? undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -61,6 +77,8 @@ export interface RunCreateInput {
   queue: string[]
   /** M57：运行归因（会话属主；单用户兼容模式缺省） */
   userId?: string
+  triggerUserId?: string
+  execution?: RunExecutionState
 }
 
 export interface RunStateUpdate {
@@ -71,6 +89,7 @@ export interface RunStateUpdate {
   fallbackUsed?: boolean
   handedToUser?: boolean
   pendingUserMessages?: string[]
+  execution?: RunExecutionState | null
   error?: string | null
   endedAt?: string | null
 }
@@ -95,14 +114,16 @@ export class RunStore {
   create(input: RunCreateInput): void {
     const ts = nowIso()
     this.db.run(
-      `INSERT INTO runs (id, session_id, state, queue, spoken, turn_index, fallback_used, handed_to_user, pending_user_messages, user_id, created_at, updated_at)
-       VALUES (?, ?, ?, ?, '[]', 0, 0, 0, '[]', ?, ?, ?)
+      `INSERT INTO runs (id, session_id, state, queue, spoken, turn_index, fallback_used, handed_to_user, pending_user_messages, user_id, trigger_user_id, execution_state, created_at, updated_at)
+       VALUES (?, ?, ?, ?, '[]', 0, 0, 0, '[]', ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO NOTHING`,
       input.id,
       input.sessionId,
       input.state,
       JSON.stringify(input.queue),
       input.userId ?? null,
+      input.triggerUserId ?? input.execution?.triggerUserId ?? null,
+      input.execution ? JSON.stringify(input.execution) : null,
       ts,
       ts,
     )
@@ -149,7 +170,7 @@ export class RunStore {
       key in patch ? (patch[key] as unknown as T) : current
     this.db.run(
       `UPDATE runs SET state = ?, queue = ?, spoken = ?, turn_index = ?, fallback_used = ?,
-        handed_to_user = ?, pending_user_messages = ?, error = ?, updated_at = ?, ended_at = ?
+        handed_to_user = ?, pending_user_messages = ?, execution_state = ?, error = ?, updated_at = ?, ended_at = ?
        WHERE id = ?`,
       pick('state', row.state),
       JSON.stringify(pick('queue', parseArray(row.queue))),
@@ -158,6 +179,7 @@ export class RunStore {
       pick('fallbackUsed', Number(row.fallback_used) === 1) ? 1 : 0,
       pick('handedToUser', Number(row.handed_to_user) === 1) ? 1 : 0,
       JSON.stringify(pick('pendingUserMessages', parseArray(row.pending_user_messages))),
+      JSON.stringify(pick('execution', parseExecution(row.execution_state) ?? null)) ?? null,
       pick('error', row.error),
       nowIso(),
       pick('endedAt', row.ended_at),

@@ -133,6 +133,8 @@ export function ArtifactsView(): React.JSX.Element {
   // M87：列表来自交付件单一数据源（面板 / 实况面 / 消息元数据共享，不再各自拉全量）
   const list = useArtifactStore((s) => s.artifacts)
   const listLoading = useArtifactStore((s) => s.loading)
+  const listTotal = useArtifactStore((s) => s.total)
+  const listError = useArtifactStore((s) => s.error)
   const ensureArtifacts = useArtifactStore((s) => s.ensure)
   const [selected, setSelected] = React.useState<string>()
   const [preview, setPreview] = React.useState<ContentResponse | null>(null)
@@ -165,8 +167,8 @@ export function ArtifactsView(): React.JSX.Element {
 
   // 刷新列表后若选中项已消失 → 回退
   React.useEffect(() => {
-    if (selected && list.length > 0 && !list.some((a) => a.path === selected)) setSelected(list[0].path)
-  }, [list, selected])
+    if (!listLoading && !listError && selected && list.length > 0 && !list.some((a) => a.path === selected)) setSelected(list[0].path)
+  }, [list, selected, listLoading, listError])
 
   const artifact = list.find((a) => a.path === selected)
 
@@ -266,24 +268,31 @@ export function ArtifactsView(): React.JSX.Element {
   return (
     <div className="flex h-full min-h-0 flex-1">
       {/* 文件树 */}
-      <div className="flex w-60 shrink-0 flex-col border-r">
+      <div className="flex w-48 shrink-0 flex-col border-r sm:w-60">
         <div className="flex h-9 shrink-0 items-center justify-between border-b px-3">
           <span className="text-[12px] font-semibold text-muted-foreground">
-            工作区 · {list.length} 个文件 {listLoading && <Loader2 className="inline size-3 animate-spin" />}
+            工作区 · {listTotal} 个文件 {listLoading && <Loader2 className="inline size-3 animate-spin" />}
           </span>
           <Button
             variant="ghost"
             size="icon-sm"
             title="刷新（强制校准工作区索引）"
+            disabled={listLoading}
             onClick={() => {
-              if (currentId) void ensureArtifacts(currentId, { force: true })
+              if (currentId) void ensureArtifacts(currentId, { force: true, reconcile: true })
             }}
           >
             <RefreshCw className="size-3.5" />
           </Button>
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto p-1.5">
-          {list.length === 0 && !listLoading && (
+          {listError && (
+            <div role="alert" className="space-y-2 px-2 py-4 text-[12px] text-muted-foreground">
+              <p>{listError}</p>
+              <Button variant="outline" size="sm" disabled={listLoading} onClick={() => { if (currentId) void ensureArtifacts(currentId, { force: true }) }}>重试加载交付件</Button>
+            </div>
+          )}
+          {list.length === 0 && !listLoading && !listError && (
             <div className="px-2 py-10 text-center text-[12px] leading-5 text-muted-foreground">
               <PackageOpen className="mx-auto mb-2 size-6 opacity-60" />
               暂无交付件

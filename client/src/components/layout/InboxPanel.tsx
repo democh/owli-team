@@ -9,12 +9,9 @@
 import * as React from 'react'
 import { AtSign, CheckCheck, Hourglass, Inbox, Info, Mail, UserCheck, UserPlus } from 'lucide-react'
 import type { InboxItem, InboxType } from '@multi-agent/shared'
-import { attachActiveRunFor } from '../../stores/run-store'
+import { openConversation, openContacts } from '../../lib/navigation'
 import { useAuthStore } from '../../stores/auth-store'
 import { useInboxStore } from '../../stores/inbox-store'
-import { useSessionStore } from '../../stores/session-store'
-import { useUiStore } from '../../stores/ui-store'
-import { useWsStore } from '../../stores/ws-store'
 import { Button } from '../ui/button'
 import { cn } from '../../lib/utils'
 import { timeAgo } from '../../lib/time'
@@ -56,22 +53,17 @@ export function InboxPanel(): React.JSX.Element | null {
   const ordered = [...items].sort((a, b) => b.seq - a.seq)
 
   const openItem = (item: InboxItem): void => {
-    void useInboxStore.getState().ack([item.id])
-    setOpen(false)
     if (item.sessionId) {
-      const id = item.sessionId
-      void (async () => {
-        await useSessionStore.getState().selectSession(id)
-        useWsStore.getState().ensureSubscribed(id)
-        useWsStore.getState().markRead(id)
-        await attachActiveRunFor(id)
-      })()
+      void openConversation(item.sessionId).then((opened) => {
+        if (!opened) return
+        setOpen(false)
+        void useInboxStore.getState().ack([item.id])
+      })
       return
     }
-    if (item.type === 'friend-request' || item.type === 'friend-accepted') {
-      useUiStore.getState().setLeftPanelOpen(true)
-      useUiStore.getState().setLeftTab('contacts')
-    }
+    if ((item.type === 'friend-request' || item.type === 'friend-accepted') && !openContacts()) return
+    setOpen(false)
+    void useInboxStore.getState().ack([item.id])
   }
 
   return (
@@ -91,7 +83,7 @@ export function InboxPanel(): React.JSX.Element | null {
         )}
       </Button>
       {open && (
-        <div className="absolute right-0 top-full z-50 mt-1 w-80 overflow-hidden rounded-xl border bg-popover text-popover-foreground shadow-xl shadow-slate-900/10">
+        <div className="absolute right-0 top-full z-50 mt-1 w-80 max-w-[calc(100vw-1rem)] overflow-hidden rounded-xl border bg-popover text-popover-foreground shadow-xl shadow-slate-900/10">
           <div className="flex items-center justify-between border-b px-3 py-2">
             <span className="text-[12.5px] font-medium">通知</span>
             <Button

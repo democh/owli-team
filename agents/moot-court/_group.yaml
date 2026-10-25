@@ -25,3 +25,20 @@ stage:
     right: [defense-counsel]
     center: [presiding-judge]
   parts: [round-track, claim-tree, verdicts]
+category: discussion
+catalog:
+  keywords:
+    - 模拟法庭
+    - 开庭审理
+    - 单点质证
+    - 判决书演练
+    - 复盘上次庭审
+  inputs:
+    - 虚构或教学案情
+    - 证据材料
+    - 程序与法域
+  outputs:
+    - 诉辩要点
+    - 庭审演练
+    - 模拟判决
+  boundary: 仅限教学与模拟，不代替真实案件法律意见或司法判断。

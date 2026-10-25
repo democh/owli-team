@@ -59,6 +59,11 @@ export default defineConfig({
   retries: process.env.CI ? 1 : 0,
   reporter: process.env.CI ? [['list'], ['html', { open: 'never' }]] : 'list',
   use: {
+    /**
+     * 浏览器通道可用 PW_CHANNEL 覆盖（缺省仍用 Playwright 自带 Chromium，CI 行为不变）——
+     * 本地 CDN 受限环境验证时：`PW_CHANNEL=chrome npx playwright test ...` 改走本机 Chrome。
+     */
+    ...(process.env.PW_CHANNEL ? { channel: process.env.PW_CHANNEL } : {}),
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
   },
@@ -152,8 +157,9 @@ export default defineConfig({
       // M57：多用户（独立实例，含首启向导 / 隔离断言）
       // M79：社交协作（好友 / 私聊 / 群聊 / 邀请实时化 / 多端未读同步）
       // M80：表情回应 / 已读回执（双人互挂与对等隐身）
+      // M90：IM 交互（引用/撤回/编辑/自删/typing · 偏好四字段多端同步 · 群主转让 · 搜索筛选/直达）
       name: 'auth',
-      testMatch: /(m57-auth|m79-social|m79-realtime|m80-.*)\.spec\.ts/,
+      testMatch: /(m57-auth|m79-social|m79-realtime|m80-.*|m90-im)\.spec\.ts/,
       use: { baseURL: `http://127.0.0.1:${AUTH_PORT}` },
     },
   ],

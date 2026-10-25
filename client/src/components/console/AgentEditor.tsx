@@ -22,6 +22,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '../ui/tabs'
 import { ColorPair, FieldRow, IconPicker, MarkdownField, RefMultiSelect, Switch, TagInput, TextInput } from './fields'
 
 interface AgentDraft {
+  catalog?: AgentDefinition['catalog']
   name: string
   role: string
   title: string
@@ -64,6 +65,7 @@ function buildDraft(d: ConsoleAgentDetail): AgentDraft {
     title: meta.title ?? '',
     description: meta.description ?? '',
     capabilities: meta.capabilities ?? [],
+    catalog: meta.catalog,
     avatar: { ...meta.avatar, image: meta.avatar.image === autoImage ? undefined : meta.avatar.image },
     handoff: meta.handoff ?? [],
     toolsMode: meta.tools && meta.tools.length > 0 ? 'custom' : 'all',
@@ -227,6 +229,7 @@ export function AgentEditor({ agentId, onClose }: { agentId: string; onClose: ()
         title: draft.title.trim(),
         description: draft.description.trim(),
         capabilities: draft.capabilities,
+        catalog: draft.catalog,
         avatar: draft.avatar,
         soul: draft.soul,
         handoff: draft.handoff,

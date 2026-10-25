@@ -20,3 +20,20 @@ stage:
   layout: dock
   panel: console
 
+category: technology
+catalog:
+  keywords:
+    - 站点可靠性
+    - 故障响应
+    - 复盘归因
+    - 巡检加固
+    - SLO 设计
+  inputs:
+    - 故障现象与时间线
+    - 日志指标
+    - 环境授权
+  outputs:
+    - 故障处置记录
+    - 复盘报告
+    - 可靠性改进项
+  boundary: 先止血与留证；生产写操作、重启和回滚需明确授权。

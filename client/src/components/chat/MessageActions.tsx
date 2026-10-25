@@ -12,6 +12,7 @@ import * as React from 'react'
 import { toast } from 'sonner'
 import {
   Copy,
+  EyeOff,
   GitBranch,
   Hand,
   Loader2,
@@ -20,12 +21,14 @@ import {
   Play,
   Quote,
   RefreshCw,
+  Reply,
   SquarePen,
   ThumbsDown,
   ThumbsUp,
   Trash2,
+  Undo2,
 } from 'lucide-react'
-import type { FeedbackItem, Session } from '@multi-agent/shared'
+import type { ChatMessage, FeedbackItem, Session } from '@multi-agent/shared'
 import { baseAgentId } from '@multi-agent/shared'
 import { apiDelete, apiGet, apiPost } from '../../lib/api'
 import { baseName } from '../../lib/artifacts'
@@ -83,10 +86,13 @@ export function MessageActions({
   const attach = useRunStore((s) => s.attach)
   const insertToComposer = useUiStore((s) => s.insertToComposer)
   const startEditMessage = useUiStore((s) => s.startEditMessage)
+  const startReply = useUiStore((s) => s.startReply)
 
   const [open, setOpen] = React.useState(false)
   const [busy, setBusy] = React.useState(false)
   const [confirmDelete, setConfirmDelete] = React.useState(false)
+  /** IM：撤回二段确认（不可恢复） */
+  const [confirmRecall, setConfirmRecall] = React.useState(false)
   const [dispatchMode, setDispatchMode] = React.useState(false)
   const [feedback, setFeedback] = React.useState<FeedbackItem | null>(null)
   const [reasonMode, setReasonMode] = React.useState(false)
@@ -165,6 +171,7 @@ export function MessageActions({
   const close = (): void => {
     setOpen(false)
     setConfirmDelete(false)
+    setConfirmRecall(false)
     setDispatchMode(false)
   }
 
@@ -195,6 +202,29 @@ export function MessageActions({
       .join('\n')
     insertToComposer(`${quoted}\n\n`)
     toast.success('已引用到输入框')
+    close()
+  }
+
+  /** IM：结构化引用回复（服务端会重新生成权威快照，不信任客户端摘要） */
+  const reply = (): void => {
+    const key = message.memberKey ?? message.agentId
+    const state = useSessionStore.getState()
+    const authorName =
+      message.role === 'user'
+        ? (message.userId ? (state.humanProfiles[message.userId]?.name ?? state.humanNames[message.userId] ?? '成员') : '你')
+        : key
+          ? labelOfMemberKey(agentsNow, sessionNow, key)
+          : undefined
+    const plain = message.content.replace(/\s+/g, ' ').trim()
+    const attachmentLabel = message.attachments?.length
+      ? `[附件] ${message.attachments.map((a) => a.name).join('、')}`
+      : ''
+    startReply({
+      sessionId: currentId,
+      messageId: message.id,
+      ...(authorName ? { authorName } : {}),
+      excerpt: (plain || attachmentLabel || '（无正文）').slice(0, 120),
+    })
     close()
   }
 
@@ -257,7 +287,33 @@ export function MessageActions({
     void guard(async () => {
       await apiDelete(`/api/sessions/${currentId}/messages/${message.id}`)
       useSessionStore.getState().removeMessage(message.id)
-      toast.success('已删除该消息')
+      toast.success('已删除该消息（所有人）')
+    })
+  }
+
+  /** IM：仅自己删除（个人视图；其他人无感） */
+  const hideSelf = (): void => {
+    void guard(async () => {
+      await apiDelete(`/api/sessions/${currentId}/messages/${message.id}?scope=self`)
+      useSessionStore.getState().removeMessage(message.id)
+      void useSessionStore.getState().loadSessions()
+      toast.success('已从你的会话中删除')
+    })
+  }
+
+  /** IM：撤回（作者 + 2 分钟窗口；服务端二次校验） */
+  const recall = (): void => {
+    if (!confirmRecall) {
+      setConfirmRecall(true)
+      return
+    }
+    void guard(async () => {
+      const res = await apiPost<{ message: ChatMessage }>(
+        `/api/sessions/${currentId}/messages/${message.id}/recall`,
+      )
+      useSessionStore.getState().upsertMessage(res.message)
+      void useSessionStore.getState().loadSessions()
+      toast.success('已撤回')
     })
   }
 
@@ -269,6 +325,15 @@ export function MessageActions({
   const mineHuman = !!message.userId && !!myUserId && message.userId === myUserId
   const canEdit = isUser && (!message.userId || !myUserId || mineHuman)
   const canDelete = !isViewer && (!isUser || !message.userId || !myUserId || mineHuman || isSessionOwner)
+  /** IM：撤回 = 作者本人 + 2 分钟窗口 + 非运行中 */
+  const canRecall =
+    isUser &&
+    (!message.userId || !myUserId || mineHuman) &&
+    !message.recalledAt &&
+    !active &&
+    Date.now() - Date.parse(message.createdAt) <= 2 * 60_000
+  /** IM：仅自己删除需要账号体系（兼容模式无个人视图语义） */
+  const canHideSelf = !!myUserId
   const busyReason = active ? '运行中暂不可操作' : undefined
   /** M4：可续写态（已中断且有正文；streaming / complete 与空正文由服务端守卫拒绝） */
   const resumable = !isUser && (message.status === 'stopped' || message.status === 'error') && message.content.trim().length > 0
@@ -349,7 +414,30 @@ export function MessageActions({
             </div>
           )}
           <MenuItem icon={<Copy className="size-3.5" />} label="复制" onClick={copy} />
+          <MenuItem
+            icon={<Reply className="size-3.5" />}
+            label="回复"
+            title="引用这条消息并回复；原消息删除后仍保留摘要"
+            disabled={message.status === 'streaming'}
+            onClick={reply}
+          />
           <MenuItem icon={<Quote className="size-3.5" />} label="引用到输入框" onClick={quote} />
+          {canRecall ? (
+            <MenuItem
+              icon={<Undo2 className="size-3.5" />}
+              label={confirmRecall ? '确认撤回？' : '撤回'}
+              title="撤回后所有人看到「已撤回」，正文与附件清除（2 分钟内）"
+              onClick={recall}
+            />
+          ) : null}
+          {canHideSelf ? (
+            <MenuItem
+              icon={<EyeOff className="size-3.5" />}
+              label="仅自己删除"
+              title="只从你的视图中移除；其他成员仍可看到"
+              onClick={hideSelf}
+            />
+          ) : null}
           {!isUser && message.artifacts && message.artifacts.length > 0 ? (
             <MenuItem
               icon={<MessageSquarePlus className="size-3.5" />}
@@ -410,10 +498,10 @@ export function MessageActions({
           {canDelete ? (
             <MenuItem
               icon={<Trash2 className="size-3.5" />}
-              label={confirmDelete ? '确认删除？' : '删除'}
+              label={confirmDelete ? '确认删除（所有人）？' : '删除（所有人）'}
               danger
               disabled={active}
-              title={busyReason}
+              title={busyReason ?? '对所有成员生效'}
               onClick={remove}
             />
           ) : null}

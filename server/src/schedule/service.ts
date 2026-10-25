@@ -15,7 +15,7 @@
  * 回填（沿用 streamHub 先例；本文件不 import engine，依赖为函数类型）。
  */
 import type { ChatMessage, NotifyType, RitualDeclaration, RitualSubscription, ScheduleActionKind, ScheduleNotifyAction, ScheduleSpec, ScheduledTask } from '@multi-agent/shared'
-import { isValidTimezone, nextScheduleAt, serverTimezone, validateScheduleSpec } from '@multi-agent/shared'
+import { isValidTimezone, nextScheduleAt, retiredScenesOf, serverTimezone, validateScheduleSpec } from '@multi-agent/shared'
 import type { AppConfig } from '../config.js'
 import { getLogger } from '../logger.js'
 import type { RitualStore } from '../store/rituals.js'
@@ -159,6 +159,10 @@ export class ScheduleService {
     if (!cfg.scheduleEnabled) return { ok: false, error: '定时任务未启用（SCHEDULE_ENABLED=false）' }
     const session = sessions.getSession(req.sessionId)
     if (!session) return { ok: false, error: '会话不存在' }
+    // 下线资产（历史兼容）：含下线成员的会话不再接受新建定时任务
+    if (retiredScenesOf(session.participantIds).length > 0) {
+      return { ok: false, error: '会话包含已下线角色，仅可查看历史内容（不能创建定时任务）' }
+    }
     const title = req.title.trim()
     if (!title) return { ok: false, error: '任务标题不能为空' }
     if (title.length > TITLE_MAX) return { ok: false, error: `任务标题过长（上限 ${TITLE_MAX} 字）` }
@@ -203,6 +207,9 @@ export class ScheduleService {
     if (!task) return { ok: false, error: '定时任务不存在' }
     const session = sessions.getSession(task.sessionId)
     if (!session) return { ok: false, error: '会话不存在' }
+    if (retiredScenesOf(session.participantIds).length > 0) {
+      return { ok: false, error: '会话包含已下线角色，仅可查看历史内容（不能修改定时任务）' }
+    }
 
     const title = patch.title === undefined ? task.title : patch.title.trim()
     if (!title) return { ok: false, error: '任务标题不能为空' }
@@ -319,6 +326,10 @@ export class ScheduleService {
     )
     if (!validation.ok || !validation.next) return { ok: false, error: validation.error ?? '仪式 cron 非法' }
     const members = [...new Set((declaration.members ?? chain).map((id) => id.trim()).filter(Boolean))]
+    const retired = retiredScenesOf(members)
+    if (retired.length > 0) {
+      return { ok: false, error: `该仪式包含已下线角色（${retired.join('、')}），无法订阅` }
+    }
     const subscription = rituals.create({
       userId,
       sceneId,
@@ -414,6 +425,16 @@ export class ScheduleService {
       rituals.settle(sub.id, { lastRunAt: now.toISOString(), nextRunAt: next, error: 'spawn 未装配' })
       return
     }
+    // 下线资产（历史兼容）：订阅成员快照含下线角色 → 不生成会话
+    const retired = retiredScenesOf(sub.members)
+    if (retired.length > 0) {
+      rituals.settle(sub.id, {
+        lastRunAt: now.toISOString(),
+        nextRunAt: next,
+        error: `订阅成员含已下线角色（${retired.join('、')}），本次触发已跳过`,
+      })
+      return
+    }
     let spawned: { sessionId: string; messageId: string } | null = null
     try {
       spawned = spawnRitualSession(sub)
@@ -455,6 +476,17 @@ export class ScheduleService {
     }
     const now = new Date()
     const next = opts.manual ? (task.nextRunAt ?? null) : this.nextAfterFire(task, now)
+
+    // 下线资产（历史兼容）：到期也不触发（不注入孤立消息）
+    const retired = retiredScenesOf(session.participantIds)
+    if (retired.length > 0) {
+      const settled = schedules.settle(task.id, {
+        status: 'error',
+        error: `会话包含已下线角色（${retired.join('、')}），本次触发已跳过`,
+        nextRunAt: next,
+      })
+      return this.finalizeFailure(task, settled)
+    }
 
     // 补跑窗口：自动触发时检查延迟；manual 为用户明确意图，不受窗口限制
     if (!opts.manual && task.nextRunAt) {

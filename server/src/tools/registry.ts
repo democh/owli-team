@@ -132,6 +132,10 @@ export interface ToolRuntime {
   submitPlan?(input: PlanSubmitInput, signal?: AbortSignal): Promise<PlanSubmitOutcome>
   /** M24：本回合可更新的计划步骤（引擎按「步骤负责人或计划作者」计算） */
   planSteps?: Array<{ planId: string; stepId: string; content: string }>
+  /** 本回合经角色、范式、环境与连接过滤后的执行授权；缺省兼容独立工具调用。 */
+  allowedTools?: ReadonlySet<string>
+  /** 评审消息目标归属复核；仅接受本会话消息。 */
+  reviewMessageExists?: (messageId: string) => boolean
   /** M35：定时任务服务（schedule_task / list_schedules / manage_schedule；缺省 = 工具返回未启用提示） */
   scheduleRuntime?: ScheduleService
   /** M34：金融数据网关（fin_* 工具；缺省 = FINANCE_ENABLED=false 或未装配，工具返回未启用提示） */
@@ -239,8 +243,10 @@ export interface AgentTool<P = any> {
   parameters: Record<string, unknown>
   /** 运行期参数校验 */
   schema: z.ZodType<P>
-  /** M5：只读工具（可并行 + 幂等缓存）；缺省视为写类（串行、不缓存） */
+  /** 只读工具可并行且失败可重试；缺省视为写类。 */
   readOnly?: boolean
+  /** 只读结果是否可缓存；缺省兼容只读缓存，状态性发现显式关闭。 */
+  cacheable?: boolean
   /**
    * M28：加载层级（渐进披露）。core = 每回合常驻模型工具清单；
    * deferred = 默认不加载，经 tool_search 检索激活后本 Run 内可用（缺省视为 core，行为与 M27 前一致）。
@@ -350,24 +356,16 @@ export class ToolRegistry {
   }
 
   /** 角色工具白名单过滤（未声明 = 全部可用；最小权限，§21.2）
-   *  M24：mode 非 execute 时收敛为「只读工具 ∪ 范式附加工具」——不包含任何写类工具（审批门不再触发）；
+   *  mode 非 execute 时收敛为「角色授权 ∩ 只读工具」，再加入明确的平台范式工具；
    *  extraTools：引擎按回合动态授权（如派发执行波的 update_plan_step）。
    *  M27：白名单条目支持尾部 `*` 通配（mcp__<slug>__* 整台 MCP 服务器 / mcp__* 全部 MCP 工具）。 */
   forAgent(agent: { tools?: string[] }, mode?: TurnMode, extraTools?: string[]): AnyTool[] {
-    if (!mode || mode === 'execute') {
-      const base =
-        !agent.tools || agent.tools.length === 0
-          ? this.list()
-          : this.resolveTools(agent.tools)
-      return this.withExtras(base, extraTools)
-    }
-    const allowed = new Map<string, AnyTool>()
-    for (const tool of this.tools.values()) if (tool.readOnly === true) allowed.set(tool.name, tool)
-    for (const name of [...MODE_EXTRA_TOOLS[mode], ...(extraTools ?? [])]) {
-      const tool = this.tools.get(name)
-      if (tool) allowed.set(tool.name, tool)
-    }
-    return [...allowed.values()]
+    const base = !agent.tools || agent.tools.length === 0 ? this.list() : this.resolveTools(agent.tools)
+    if (!mode || mode === 'execute') return this.withExtras(base, extraTools)
+    return this.withExtras(
+      base.filter((tool) => tool.readOnly === true),
+      [...MODE_EXTRA_TOOLS[mode], ...(extraTools ?? [])],
+    )
   }
 
   /** M24：并入回合级动态授权工具（保持既有顺序，新增项追加） */
@@ -416,9 +414,10 @@ export class ToolRegistry {
     name: string,
     rawArgs: unknown,
     ctx: ToolRuntime,
-    signal?: AbortSignal,
+    signal: AbortSignal | undefined = ctx.signal ?? ctx.turnSignal,
     timeoutMs = this.toolTimeoutMs,
   ): Promise<ToolResult> {
+    if (signal?.aborted) throw toolAbortError()
     const tool = this.tools.get(name)
     if (!tool) {
       // M47：已知但整组未启用的工具（如金融关闭时的 fin_*）→ 精确「未启用」提示，模型可如实向用户说明并降级
@@ -434,8 +433,11 @@ export class ToolRegistry {
     // 幂等缓存（仅只读工具）
     // M57 P2：缓存键含会话与触发者——跨会话绑定不同 / 共享会话内角色不同（如连接最小权限复核）
     // 的结果不得互相复用；否则同参调用会命中他人缓存而绕过复核（本回合同会话同用户仍正常去重）。
-    const cacheable = tool.readOnly === true
-    const key = cacheable ? `${ctx.sessionId}:${ctx.triggerUserId ?? ''}:${name}:${stableKey(rawArgs)}` : ''
+    const readOnly = tool.readOnly === true
+    const cacheable = readOnly && tool.cacheable !== false
+    const key = cacheable
+      ? stableKey([ctx.sessionId, ctx.runId, ctx.memberKey ?? ctx.agentId, ctx.triggerUserId ?? '', name, rawArgs])
+      : ''
     if (cacheable) {
       const hit = this.readCache.get(key)
       if (hit && hit.expiresAt > Date.now()) {
@@ -469,6 +471,8 @@ export class ToolRegistry {
         void execPromise?.catch(() => undefined)
         if (timer) clearTimeout(timer)
         signal?.removeEventListener('abort', onParentAbort)
+        // 写入可能已经生效后才失败或取消，仍需失效旧读结果。
+        if (!readOnly) this.readCache.clear()
       }
     }
 
@@ -483,7 +487,6 @@ export class ToolRegistry {
           this.readCache.delete(oldest)
         }
       }
-      if (!cacheable) this.readCache.clear() // 写类执行后：读缓存整体失效
       return result
     }
 
@@ -494,7 +497,7 @@ export class ToolRegistry {
       if (isToolAbortError(err) || signal?.aborted) throw err
       // 写类工具不自动重试：错误可能发生在「服务端已生效但响应失败」之后
       // （如远程写入成功但连接断开），盲目重试会造成重复副作用；交由模型按语义决定是否重来
-      if (!cacheable) {
+      if (!readOnly) {
         return { ok: false, summary: `工具失败：${(err as Error).message}` }
       }
       // 只读工具失败重试 1 次（§21.2；幂等，重复执行无副作用）

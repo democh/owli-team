@@ -35,6 +35,7 @@ import {
 import type { ConnectionKind } from '@multi-agent/shared'
 import { apiGet, apiPost, apiPut } from '../../lib/api'
 import { cn } from '../../lib/utils'
+import { useUnsavedChanges } from '../../lib/unsaved-changes'
 import { useAgentStore } from '../../stores/agent-store'
 import { useConnectionsStore } from '../../stores/connections-store'
 import { useMcpStore } from '../../stores/mcp-store'
@@ -427,6 +428,7 @@ export function SettingsView(): React.JSX.Element {
   }
 
   const dirty = form !== null && JSON.stringify(form) !== baseline
+  const confirmDiscard = useUnsavedChanges(dirty)
 
   /** 统一温度开关说明：展示角色温度覆盖统计（AGENT.md 中单独配置了 temperature 的角色数） */
   const tempOverrideHint = React.useMemo(() => {
@@ -555,7 +557,7 @@ export function SettingsView(): React.JSX.Element {
               未保存改动
             </span>
           )}
-          <Button variant="ghost" size="sm" disabled={loading || !form} onClick={() => void load()}>
+          <Button variant="ghost" size="sm" disabled={loading || saving || !form} onClick={() => { if (confirmDiscard()) void load() }}>
             <RotateCcw className="size-3.5" />
             恢复已保存值
           </Button>

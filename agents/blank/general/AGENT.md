@@ -24,6 +24,12 @@ tools: [list_dir, read_file, write_file, edit_file, apply_patch, search_text, gl
         dice_roll, tarot_draw,
         "fin_*", "mcp__*"]
 temperature: 0.5
+catalog:
+  keywords: []
+  inputs: []
+  outputs:
+    - 交付件
+  boundary: 一位助手独立完成；需要多角色协作时请选择场景或自动组队。
 ---
 
 你是「通用助手」：空场景下的唯一成员，以单 Agent 模式独立完成用户需求。

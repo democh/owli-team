@@ -26,6 +26,7 @@ const SESSION_ID = 's1'
 
 function makeEnv(): {
   registry: ReturnType<typeof createToolRegistry>
+  db: ReturnType<typeof openDatabase>
   runtime: ToolRuntime
   sessionId: string
   plans: PlanStore
@@ -99,7 +100,7 @@ function makeEnv(): {
       }
     },
   }
-  return { registry: createToolRegistry(cfg), runtime, sessionId: SESSION_ID, plans, reviews, planReviews }
+  return { registry: createToolRegistry(cfg), db, runtime, sessionId: SESSION_ID, plans, reviews, planReviews }
 }
 
 async function tick(ms = 5): Promise<void> {
@@ -351,6 +352,82 @@ describe('M24 submit_review', () => {
     expect(artifact.review?.planId).toBeUndefined()
     expect(artifact.plan).toBeUndefined()
     expect(reviews.listBySession(SESSION_ID)).toHaveLength(1)
+  })
+
+  it('多计划同名步骤使用复合键更新与评审，不串联到历史计划', async () => {
+    const { registry, runtime, plans, reviews } = makeEnv()
+    const historical = createPlan(plans, [{ content: '历史步骤' }])
+    const current = createPlan(plans, [{ content: '当前步骤' }])
+    plans.setStatus(historical.id, 'approved')
+    plans.setStatus(historical.id, 'executing')
+    plans.setStatus(current.id, 'approved')
+    plans.setStatus(current.id, 'executing')
+    const scoped: ToolRuntime = {
+      ...runtime,
+      planSteps: [
+        { planId: historical.id, stepId: 's1', content: '历史步骤' },
+        { planId: current.id, stepId: 's1', content: '当前步骤' },
+      ],
+    }
+    const updated = await registry.execute(
+      'update_plan_step',
+      { step_id: 's1', plan_id: current.id, status: 'in_progress' },
+      scoped,
+    )
+    expect(updated.ok).toBe(true)
+    expect(plans.get(historical.id)?.steps[0].status).toBe('pending')
+    expect(plans.get(current.id)?.steps[0].status).toBe('in_progress')
+    const reviewed = await registry.execute(
+      'submit_review',
+      { target: `step:${current.id}/s1`, verdict: 'pass', findings: [] },
+      scoped,
+    )
+    expect(reviewed.review?.planId).toBe(current.id)
+    expect(reviews.latestByStep(SESSION_ID, 's1', historical.id)).toBeUndefined()
+    expect(reviews.latestByStep(SESSION_ID, 's1', current.id)?.verdict).toBe('pass')
+  })
+
+  it('跨会话 Plan 与消息评审在写入前拒绝', async () => {
+    const { registry, db, runtime, plans, reviews } = makeEnv()
+    const now = new Date().toISOString()
+    db.run(
+      `INSERT INTO sessions (id, title, participant_ids, created_at, updated_at) VALUES ('s2', '其它会话', '["pm"]', ?, ?)`,
+      now,
+      now,
+    )
+    const foreign = plans.create({ sessionId: 's2', agentId: AGENT_ID, title: '外部计划', goal: 'G', steps: [{ content: '外部步骤' }] })
+    const scoped: ToolRuntime = { ...runtime, reviewMessageExists: (id) => id === 'local-message' }
+    const planResult = await registry.execute('submit_review', { target: `plan:${foreign.id}`, verdict: 'pass' }, scoped)
+    const stepResult = await registry.execute('submit_review', { target: `step:${foreign.id}/s1`, verdict: 'pass' }, scoped)
+    const messageResult = await registry.execute('submit_review', { target: 'message:foreign-message', verdict: 'pass' }, scoped)
+    expect(planResult.ok).toBe(false)
+    expect(stepResult.ok).toBe(false)
+    expect(messageResult.ok).toBe(false)
+    expect(reviews.listBySession(SESSION_ID)).toEqual([])
+    expect(reviews.listBySession('s2')).toEqual([])
+  })
+
+  it('最新失败评审阻止完成，对应非失败复验后才允许 done', async () => {
+    const { registry, runtime, plans } = makeEnv()
+    const plan = createPlan(plans)
+    plans.setStatus(plan.id, 'approved')
+    plans.setStatus(plan.id, 'executing')
+    const scoped: ToolRuntime = {
+      ...runtime,
+      planSteps: [{ planId: plan.id, stepId: 's1', content: '步骤 A' }],
+    }
+    await registry.execute(
+      'submit_review',
+      { target: `step:${plan.id}/s1`, verdict: 'fail', findings: ['需要修复'] },
+      scoped,
+    )
+    const blocked = await registry.execute('update_plan_step', { step_id: 's1', status: 'done' }, scoped)
+    expect(blocked.ok).toBe(false)
+    expect(plans.get(plan.id)?.status).toBe('blocked')
+    await registry.execute('submit_review', { target: `step:${plan.id}/s1`, verdict: 'conditional', findings: ['已修复并复核'] }, scoped)
+    const completed = await registry.execute('update_plan_step', { step_id: 's1', status: 'done' }, scoped)
+    expect(completed.ok).toBe(true)
+    expect(plans.get(plan.id)?.status).toBe('done')
   })
 })
 

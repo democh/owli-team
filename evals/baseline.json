@@ -1,509 +1,446 @@
 {
-  "ts": "2026-10-25T06-12-04",
+  "ts": "2026-10-25T09-34-18",
   "mode": "mock",
   "tasks": {
     "full-relay-login": {
       "ok": true,
       "stats": {
         "turns": 7,
-        "promptTokens": 195331,
+        "promptTokens": 191985,
         "completionTokens": 3207,
-        "durationMs": 580
+        "durationMs": 3886
       }
     },
     "three-member-register": {
       "ok": true,
       "stats": {
         "turns": 3,
-        "promptTokens": 81152,
+        "promptTokens": 78993,
         "completionTokens": 1428,
-        "durationMs": 155
+        "durationMs": 1220
       }
     },
     "design-flow-payment": {
       "ok": true,
       "stats": {
         "turns": 3,
-        "promptTokens": 86904,
+        "promptTokens": 84742,
         "completionTokens": 1388,
-        "durationMs": 158
+        "durationMs": 874
       }
     },
     "qa-quality-search": {
       "ok": true,
       "stats": {
         "turns": 3,
-        "promptTokens": 80375,
+        "promptTokens": 78215,
         "completionTokens": 1431,
-        "durationMs": 156
+        "durationMs": 856
       }
     },
     "single-backend-message": {
       "ok": true,
       "stats": {
         "turns": 1,
-        "promptTokens": 36880,
+        "promptTokens": 35314,
         "completionTokens": 558,
-        "durationMs": 111
+        "durationMs": 741
       }
     },
     "full-chain-export-budget": {
       "ok": true,
       "stats": {
         "turns": 7,
-        "promptTokens": 194889,
+        "promptTokens": 191546,
         "completionTokens": 3207,
-        "durationMs": 103
+        "durationMs": 482
       }
     },
     "blob-upload-contracts": {
       "ok": true,
       "stats": {
         "turns": 4,
-        "promptTokens": 111101,
+        "promptTokens": 108645,
         "completionTokens": 1903,
-        "durationMs": 264
+        "durationMs": 1386
       }
     },
     "seven-relay-permission": {
       "ok": true,
       "stats": {
         "turns": 7,
-        "promptTokens": 195050,
+        "promptTokens": 191704,
         "completionTokens": 3207,
-        "durationMs": 106
+        "durationMs": 450
       }
     },
     "designer-devops-favorite": {
       "ok": true,
       "stats": {
         "turns": 4,
-        "promptTokens": 110059,
+        "promptTokens": 107603,
         "completionTokens": 1849,
-        "durationMs": 191
+        "durationMs": 1311
       }
     },
     "judge-comments": {
       "ok": true,
       "stats": {
         "turns": 3,
-        "promptTokens": 81183,
-        "completionTokens": 1428,
-        "durationMs": 89
+        "promptTokens": 67677,
+        "completionTokens": 1067,
+        "durationMs": 577
       }
     },
     "brainstorm-roundtable": {
       "ok": true,
       "stats": {
         "turns": 4,
-        "promptTokens": 107179,
+        "promptTokens": 104724,
         "completionTokens": 1519,
-        "durationMs": 270
+        "durationMs": 2050
       }
     },
     "research-verification": {
       "ok": true,
       "stats": {
         "turns": 4,
-        "promptTokens": 115860,
+        "promptTokens": 113404,
         "completionTokens": 1275,
-        "durationMs": 283
+        "durationMs": 2162
       }
     },
     "opc-weekly-review": {
       "ok": true,
       "stats": {
         "turns": 5,
-        "promptTokens": 122712,
-        "completionTokens": 2587,
-        "durationMs": 265
+        "promptTokens": 123458,
+        "completionTokens": 2593,
+        "durationMs": 1585
       }
     },
     "content-campaign": {
       "ok": true,
       "stats": {
         "turns": 4,
-        "promptTokens": 108464,
+        "promptTokens": 106022,
         "completionTokens": 1943,
-        "durationMs": 255
+        "durationMs": 1821
       }
     },
     "memory-recall-injection": {
       "ok": true,
       "stats": {
         "turns": 1,
-        "promptTokens": 37059,
-        "completionTokens": 566,
-        "durationMs": 93
+        "promptTokens": 21544,
+        "completionTokens": 159,
+        "durationMs": 679
       }
     },
     "invest-quick-review": {
       "ok": true,
       "stats": {
         "turns": 3,
-        "promptTokens": 85909,
+        "promptTokens": 83736,
         "completionTokens": 1848,
-        "durationMs": 238
+        "durationMs": 2528
       }
     },
     "invest-strategy-research": {
       "ok": true,
       "stats": {
         "turns": 4,
-        "promptTokens": 121076,
+        "promptTokens": 118607,
         "completionTokens": 2519,
-        "durationMs": 244
+        "durationMs": 2068
       }
     },
     "platform-routing": {
       "ok": true,
       "stats": {
         "turns": 3,
-        "promptTokens": 81276,
+        "promptTokens": 79117,
         "completionTokens": 1447,
-        "durationMs": 92
+        "durationMs": 697
       }
     },
     "bull-bear-duel": {
       "ok": true,
       "stats": {
         "turns": 5,
-        "promptTokens": 140270,
+        "promptTokens": 138776,
         "completionTokens": 3156,
-        "durationMs": 203
+        "durationMs": 1425
       }
     },
     "blank-scene": {
       "ok": true,
       "stats": {
         "turns": 1,
-        "promptTokens": 17724,
+        "promptTokens": 17427,
         "completionTokens": 445,
-        "durationMs": 109
+        "durationMs": 716
       }
     },
     "negotiation": {
       "ok": true,
       "stats": {
         "turns": 3,
-        "promptTokens": 63268,
+        "promptTokens": 62379,
         "completionTokens": 1283,
-        "durationMs": 183
+        "durationMs": 1107
       }
     },
     "society": {
       "ok": true,
       "stats": {
         "turns": 3,
-        "promptTokens": 66630,
+        "promptTokens": 65742,
         "completionTokens": 1150,
-        "durationMs": 209
+        "durationMs": 1450
       }
     },
     "career": {
       "ok": true,
       "stats": {
         "turns": 4,
-        "promptTokens": 91432,
+        "promptTokens": 90246,
         "completionTokens": 1471,
-        "durationMs": 249
+        "durationMs": 1542
       }
     },
     "gamedesign": {
       "ok": true,
       "stats": {
         "turns": 4,
-        "promptTokens": 93647,
+        "promptTokens": 92463,
         "completionTokens": 1486,
-        "durationMs": 277
-      }
-    },
-    "housing": {
-      "ok": true,
-      "stats": {
-        "turns": 3,
-        "promptTokens": 69214,
-        "completionTokens": 1167,
-        "durationMs": 223
-      }
-    },
-    "care": {
-      "ok": true,
-      "stats": {
-        "turns": 3,
-        "promptTokens": 65455,
-        "completionTokens": 1130,
-        "durationMs": 220
+        "durationMs": 2111
       }
     },
     "metaphysics": {
       "ok": true,
       "stats": {
         "turns": 3,
-        "promptTokens": 73735,
+        "promptTokens": 72847,
         "completionTokens": 1023,
-        "durationMs": 234
+        "durationMs": 1444
       }
     },
     "routing-finance": {
       "ok": true,
       "stats": {
         "turns": 3,
-        "promptTokens": 76856,
+        "promptTokens": 74680,
         "completionTokens": 1484,
-        "durationMs": 188
+        "durationMs": 992
       }
     },
     "handoff-receipts": {
       "ok": true,
       "stats": {
         "turns": 2,
-        "promptTokens": 56487,
+        "promptTokens": 55895,
         "completionTokens": 953,
-        "durationMs": 133
+        "durationMs": 724
       }
     },
     "scheduling-guards": {
       "ok": true,
       "stats": {
         "turns": 3,
-        "promptTokens": 71987,
+        "promptTokens": 71099,
         "completionTokens": 1367,
-        "durationMs": 144
+        "durationMs": 1020
       }
     },
     "parallel-guard": {
       "ok": true,
       "stats": {
         "turns": 2,
-        "promptTokens": 50902,
+        "promptTokens": 50310,
         "completionTokens": 1237,
-        "durationMs": 121
+        "durationMs": 2086
       }
     },
     "interior": {
       "ok": true,
       "stats": {
         "turns": 4,
-        "promptTokens": 80759,
+        "promptTokens": 79733,
         "completionTokens": 1391,
-        "durationMs": 201
+        "durationMs": 1979
       }
     },
     "metaphysics-transit-synastry": {
       "ok": true,
       "stats": {
         "turns": 2,
-        "promptTokens": 47458,
+        "promptTokens": 46866,
         "completionTokens": 1859,
-        "durationMs": 170
+        "durationMs": 1159
       }
     },
     "fengshui": {
       "ok": true,
       "stats": {
         "turns": 2,
-        "promptTokens": 42914,
+        "promptTokens": 42394,
         "completionTokens": 767,
-        "durationMs": 164
+        "durationMs": 959
       }
     },
     "metaphysics-daliuren-qimen": {
       "ok": true,
       "stats": {
         "turns": 2,
-        "promptTokens": 49171,
+        "promptTokens": 48579,
         "completionTokens": 1223,
-        "durationMs": 181
+        "durationMs": 1376
       }
     },
     "health": {
       "ok": true,
       "stats": {
         "turns": 3,
-        "promptTokens": 61109,
+        "promptTokens": 60229,
         "completionTokens": 1582,
-        "durationMs": 192
-      }
-    },
-    "home": {
-      "ok": true,
-      "stats": {
-        "turns": 4,
-        "promptTokens": 75306,
-        "completionTokens": 1924,
-        "durationMs": 227
-      }
-    },
-    "wealth": {
-      "ok": true,
-      "stats": {
-        "turns": 3,
-        "promptTokens": 66930,
-        "completionTokens": 1035,
-        "durationMs": 215
+        "durationMs": 2638
       }
     },
     "personal": {
       "ok": true,
       "stats": {
         "turns": 3,
-        "promptTokens": 58819,
+        "promptTokens": 58007,
         "completionTokens": 1243,
-        "durationMs": 194
+        "durationMs": 1503
       }
     },
     "learning": {
       "ok": true,
       "stats": {
         "turns": 3,
-        "promptTokens": 54498,
+        "promptTokens": 53608,
         "completionTokens": 1407,
-        "durationMs": 186
+        "durationMs": 1928
       }
     },
     "travel": {
       "ok": true,
       "stats": {
         "turns": 3,
-        "promptTokens": 62681,
+        "promptTokens": 61797,
         "completionTokens": 1047,
-        "durationMs": 209
+        "durationMs": 2677
       }
     },
     "relationship": {
       "ok": true,
       "stats": {
         "turns": 3,
-        "promptTokens": 64797,
+        "promptTokens": 63803,
         "completionTokens": 855,
-        "durationMs": 216
-      }
-    },
-    "legal-personal": {
-      "ok": true,
-      "stats": {
-        "turns": 3,
-        "promptTokens": 67752,
-        "completionTokens": 890,
-        "durationMs": 230
+        "durationMs": 1773
       }
     },
     "ops": {
       "ok": true,
       "stats": {
         "turns": 4,
-        "promptTokens": 90564,
-        "completionTokens": 1710,
-        "durationMs": 276
+        "promptTokens": 89378,
+        "completionTokens": 1806,
+        "durationMs": 2243
       }
     },
     "tarot": {
       "ok": true,
       "stats": {
         "turns": 3,
-        "promptTokens": 68286,
+        "promptTokens": 67397,
         "completionTokens": 856,
-        "durationMs": 229
-      }
-    },
-    "trpg": {
-      "ok": true,
-      "stats": {
-        "turns": 4,
-        "promptTokens": 91167,
-        "completionTokens": 1136,
-        "durationMs": 270
+        "durationMs": 2163
       }
     },
     "philosophy": {
       "ok": true,
       "stats": {
         "turns": 3,
-        "promptTokens": 64929,
+        "promptTokens": 64000,
         "completionTokens": 837,
-        "durationMs": 208
+        "durationMs": 1578
       }
     },
     "creator": {
       "ok": true,
       "stats": {
         "turns": 4,
-        "promptTokens": 90745,
+        "promptTokens": 89561,
         "completionTokens": 1150,
-        "durationMs": 238
+        "durationMs": 2531
       }
     },
     "ecommerce": {
       "ok": true,
       "stats": {
         "turns": 4,
-        "promptTokens": 89521,
+        "promptTokens": 88336,
         "completionTokens": 1239,
-        "durationMs": 249
+        "durationMs": 2009
       }
     },
     "funding-dd": {
       "ok": true,
       "stats": {
         "turns": 4,
-        "promptTokens": 93783,
+        "promptTokens": 92599,
         "completionTokens": 1471,
-        "durationMs": 256
+        "durationMs": 1964
       }
     },
     "writing": {
       "ok": true,
       "stats": {
         "turns": 4,
-        "promptTokens": 92244,
+        "promptTokens": 91060,
         "completionTokens": 1334,
-        "durationMs": 269
+        "durationMs": 2306
       }
     },
     "moot-court": {
       "ok": true,
       "stats": {
         "turns": 3,
-        "promptTokens": 68731,
+        "promptTokens": 67759,
         "completionTokens": 817,
-        "durationMs": 205
+        "durationMs": 1627
       }
     },
     "wellness-mind": {
       "ok": true,
       "stats": {
         "turns": 3,
-        "promptTokens": 63578,
+        "promptTokens": 62689,
         "completionTokens": 911,
-        "durationMs": 218
+        "durationMs": 1609
       }
     },
     "finance-deep": {
       "ok": true,
       "stats": {
         "turns": 4,
-        "promptTokens": 91839,
-        "completionTokens": 1893,
-        "durationMs": 203
-      }
-    },
-    "sales": {
-      "ok": true,
-      "stats": {
-        "turns": 4,
-        "promptTokens": 91713,
-        "completionTokens": 1960,
-        "durationMs": 233
+        "promptTokens": 78249,
+        "completionTokens": 1530,
+        "durationMs": 1751
       }
     },
     "academic": {
       "ok": true,
       "stats": {
         "turns": 4,
-        "promptTokens": 100782,
+        "promptTokens": 99597,
         "completionTokens": 1157,
-        "durationMs": 270
+        "durationMs": 2001
       }
     }
   }

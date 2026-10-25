@@ -1,19 +1,19 @@
 /**
  * E2E · M69 场景玩法容器（mock 模式）：
- * 1) 跑团工坊（roundtable·pool，单成员编制）：骰子走查 → 骰卡（骰面 / 总值 / 种子徽章）+ 再掷回填；
+ * 1) 空场景通用助手：骰子走查 → 骰卡（骰面 / 总值 / 种子徽章）+ 再掷回填；
  * 2) 塔罗研习（dock·chartboard，单成员编制）：牌阵走查 → 牌阵卡（正逆位行）+ 牌阵台（chartboard cards 区，无摇卦入口）。
  * 注：场景工作区流式期间冻结（M52-A 口径），收束后断言；发送后确认草稿清空（防共享环境点击丢失）。
  */
 import { expect, test } from '@playwright/test'
 import { composer, createSession, disableSerial, expectYourTurn, openApp, sendMessage } from './helpers'
 
-test('M69 · 跑团工坊：骰子走查 → 骰卡 + 再掷回填', async ({ page }) => {
+test('M69 · 通用骰子：骰子走查 → 骰卡 + 再掷回填', async ({ page }) => {
   await openApp(page)
-  const title = `E2E-M69-TRPG-${Date.now()}`
-  await createSession(page, { scene: '跑团工坊', title, unpick: ['scenario-writer', 'npc-player', 'rule-keeper'] })
+  const title = `E2E-M69-骰卡-${Date.now()}`
+  await createSession(page, { scene: '空场景', title })
   await disableSerial(page, title)
 
-  await sendMessage(page, '@开卷 骰子走查：做一次攀爬判定。')
+  await sendMessage(page, '骰子走查：显示确定性骰子结果卡片。')
   await expect(composer(page)).toHaveValue('') // 发送落地确认（防共享环境点击丢失）
   await expectYourTurn(page)
 

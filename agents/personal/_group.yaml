@@ -25,3 +25,20 @@ stage:
   layout: dock
   panel: coach
 
+category: life
+catalog:
+  keywords:
+    - 个人管理
+    - 状态梳理
+    - 琐事清点
+    - 目标推进
+    - 到点提醒
+  inputs:
+    - 近期目标
+    - 待办与时间安排
+    - 现实约束
+  outputs:
+    - 行动计划
+    - 事务清单
+    - 复盘建议
+  boundary: 侧重行动组织，不提供心理治疗、个人理财或医疗结论。

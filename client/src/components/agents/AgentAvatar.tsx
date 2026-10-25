@@ -46,6 +46,7 @@ export const AgentAvatar = React.memo(function AgentAvatar({
       {showImage ? (
         <img
           src={src}
+          loading={animated ? 'eager' : 'lazy'}
           alt={agent?.name ?? ''}
           width={size}
           height={size}

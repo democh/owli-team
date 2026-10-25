@@ -154,6 +154,7 @@ const writePlanTool = {
 
 interface UpdateStepArgs {
   step_id: string
+  plan_id?: string
   status: 'in_progress' | 'done' | 'blocked' | 'skipped'
   note?: string
 }
@@ -166,6 +167,7 @@ const updatePlanStepTool = {
     type: 'object',
     properties: {
       step_id: { type: 'string', description: '步骤 id（见回合指令「你负责的计划步骤」或系统提示 <active_plans>）' },
+      plan_id: { type: 'string', description: '所属计划 id（多计划存在同名步骤时必填）' },
       status: { type: 'string', enum: ['in_progress', 'done', 'blocked', 'skipped'] },
       note: { type: 'string', description: '进度备注（blocked 必填：阻塞原因）' },
     },
@@ -173,13 +175,14 @@ const updatePlanStepTool = {
   },
   schema: z.object({
     step_id: z.string().min(1).max(40),
+    plan_id: z.string().min(1).max(80).optional(),
     status: z.enum(['in_progress', 'done', 'blocked', 'skipped']),
     note: z.string().max(300).optional(),
   }),
   async execute(args: UpdateStepArgs, ctx: ToolRuntime): Promise<ToolResult> {
     if (!ctx.plans) return { ok: false, summary: '计划存储未启用' }
     const scope = ctx.planSteps ?? []
-    const target = scope.find((s) => s.stepId === args.step_id)
+    const target = scope.find((s) => s.stepId === args.step_id && (!args.plan_id || s.planId === args.plan_id))
     if (!target) {
       const list = scope.length > 0 ? scope.map((s) => `${s.stepId}（${s.content}）`).join('；') : '（无）'
       return {
@@ -192,8 +195,16 @@ const updatePlanStepTool = {
     if (args.status === 'blocked' && !note) {
       return { ok: false, summary: 'blocked 必须提供 note 说明阻塞原因（后续恢复依据）' }
     }
-    let plan = ctx.plans.setStepStatus(target.planId, args.step_id, args.status, note)
-    if (!plan) return { ok: false, summary: `更新失败：计划或步骤不存在（${target.planId}/${args.step_id}）` }
+    if (args.status === 'done' && ctx.reviews) {
+      const latestStep = ctx.reviews.latestByStep(ctx.sessionId, target.stepId, target.planId)
+      const planReviews = ctx.reviews.listByPlan(target.planId).filter((review) => !review.stepId)
+      const latestPlan = planReviews[planReviews.length - 1]
+      if (latestStep?.verdict === 'fail' || latestPlan?.verdict === 'fail') {
+        return { ok: false, summary: '最新评审仍为不通过：请先提交对应的 pass / conditional 复验，再完成步骤' }
+      }
+    }
+    let plan = ctx.plans.setStepStatus(target.planId, target.stepId, args.status, note)
+    if (!plan) return { ok: false, summary: `更新失败：计划或步骤不存在（${target.planId}/${target.stepId}）` }
     // 步骤推进（非 blocked）自动解除计划 blocked（评审 fail 后的修复路径）
     if (plan.status === 'blocked' && args.status !== 'blocked') {
       plan = ctx.plans.setStatus(plan.id, 'executing') ?? plan
@@ -231,7 +242,7 @@ const submitReviewTool = {
     properties: {
       target: {
         type: 'string',
-        description: '评审目标：plan:<计划id> / step:<步骤id> / artifact:<工作区路径> / message:<消息id>',
+        description: '评审目标：plan:<计划id> / step:<计划id>/<步骤id>（兼容 step:<步骤id>）/ artifact:<工作区路径> / message:<消息id>',
       },
       verdict: { type: 'string', enum: ['pass', 'conditional', 'fail'], description: '判定：通过 / 有条件通过 / 不通过' },
       findings: { type: 'array', items: { type: 'string' }, description: '发现清单（fail / conditional 必填；pass 可空）' },
@@ -262,12 +273,16 @@ const submitReviewTool = {
     let step: PlanStep | undefined
     if (kind === 'plan') {
       plan = ctx.plans.get(ref)
-      if (!plan) return { ok: false, summary: `计划不存在：${ref}` }
+      if (!plan || plan.sessionId !== ctx.sessionId) return { ok: false, summary: `计划不存在：${ref}` }
     } else if (kind === 'step') {
-      const hit = ctx.plans.findByStepId(ctx.sessionId, ref)
-      if (!hit) return { ok: false, summary: `步骤不存在：${ref}（step:<id> 需为会话内某计划的步骤）` }
+      const scoped = /^([^/]+)\/([^/]+)$/.exec(ref)
+      const current = ctx.planSteps?.find((item) => item.stepId === ref)
+      const hit = ctx.plans.findByStepId(ctx.sessionId, scoped?.[2] ?? ref, scoped?.[1] ?? current?.planId)
+      if (!hit) return { ok: false, summary: `步骤不存在：${ref}（请使用 step:<计划id>/<步骤id> 明确目标）` }
       plan = hit.plan
       step = hit.step
+    } else if (kind === 'message' && ctx.reviewMessageExists && !ctx.reviewMessageExists(ref)) {
+      return { ok: false, summary: `消息不存在：${ref}` }
     }
     const record = ctx.reviews.create({
       sessionId: ctx.sessionId,
@@ -284,9 +299,8 @@ const submitReviewTool = {
     // fail 的结构性后果：命中步骤 → 该步 blocked；命中计划 → 计划 blocked（待修复后恢复）
     let updated: Plan | undefined
     if (args.verdict === 'fail' && plan) {
-      updated = step
-        ? ctx.plans.setStepStatus(plan.id, step.id, 'blocked', args.findings[0])
-        : ctx.plans.setStatus(plan.id, 'blocked', { feedback: args.findings[0] })
+      if (step) ctx.plans.setStepStatus(plan.id, step.id, 'blocked', args.findings[0])
+      updated = ctx.plans.setStatus(plan.id, 'blocked', { feedback: args.findings[0] })
     }
     const label = { pass: '通过', conditional: '有条件通过', fail: '不通过' }[args.verdict]
     const suffix = args.verdict === 'fail' && plan ? (step ? '（步骤已置 blocked）' : '（计划已置 blocked）') : ''

@@ -3,7 +3,7 @@
  * Esc 或点击遮罩关闭；打开期间锁定 body 滚动。
  */
 import * as React from 'react'
-import { createPortal } from 'react-dom'
+import * as Dialog from '@radix-ui/react-dialog'
 import { X } from 'lucide-react'
 
 export function Overlay({
@@ -17,33 +17,41 @@ export function Overlay({
   onClose: () => void
   children: React.ReactNode
 }): React.JSX.Element | null {
-  React.useEffect(() => {
-    if (!open) return
-    const onKey = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') onClose()
-    }
-    window.addEventListener('keydown', onKey)
-    const prev = document.body.style.overflow
-    document.body.style.overflow = 'hidden'
-    return () => {
-      window.removeEventListener('keydown', onKey)
-      document.body.style.overflow = prev
-    }
-  }, [open, onClose])
+  const returnFocusRef = React.useRef<HTMLElement | null>(null)
 
   if (!open) return null
-  return createPortal(
-    <div className="md-overlay" role="dialog" aria-modal="true" aria-label={title} onClick={onClose}>
-      <div className="md-overlay-panel" onClick={(e) => e.stopPropagation()}>
-        <div className="md-overlay-bar">
-          <span className="md-overlay-title">{title}</span>
-          <button type="button" className="md-block-btn" title="关闭（Esc）" aria-label="关闭" onClick={onClose}>
-            <X className="size-3.5" />
-          </button>
-        </div>
-        <div className="md-overlay-body">{children}</div>
-      </div>
-    </div>,
-    document.body,
+  return (
+    <Dialog.Root
+      open={open}
+      onOpenChange={(next) => {
+        if (!next) onClose()
+      }}
+    >
+      <Dialog.Portal>
+        <Dialog.Overlay className="md-overlay">
+          <Dialog.Content
+            className="md-overlay-panel"
+            aria-describedby={undefined}
+            onOpenAutoFocus={() => {
+              returnFocusRef.current = document.activeElement as HTMLElement | null
+            }}
+            onCloseAutoFocus={(event) => {
+              event.preventDefault()
+              if (returnFocusRef.current?.isConnected) returnFocusRef.current.focus()
+            }}
+          >
+            <div className="md-overlay-bar">
+              <Dialog.Title asChild>
+                <span className="md-overlay-title">{title}</span>
+              </Dialog.Title>
+              <Dialog.Close className="md-block-btn" title="关闭（Esc）" aria-label="关闭">
+                <X className="size-3.5" />
+              </Dialog.Close>
+            </div>
+            <div className="md-overlay-body">{children}</div>
+          </Dialog.Content>
+        </Dialog.Overlay>
+      </Dialog.Portal>
+    </Dialog.Root>
   )
 }

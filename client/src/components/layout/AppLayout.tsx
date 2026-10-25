@@ -35,11 +35,11 @@ import { memberViews } from '../../lib/members'
 import { cn } from '../../lib/utils'
 import { useAgentStore } from '../../stores/agent-store'
 import { useAuthStore } from '../../stores/auth-store'
-import { useSessionStore, useCurrentSession } from '../../stores/session-store'
+import { useSessionStore, useCurrentSession, filterSessions } from '../../stores/session-store'
 import { useSpaceStore } from '../../stores/space-store'
 import { useUiStore, type MainTab } from '../../stores/ui-store'
 import { useWsStore } from '../../stores/ws-store'
-import { attachActiveRunFor } from '../../stores/run-store'
+import { openConversation } from '../../lib/navigation'
 import { AccountDialog } from '../account/AccountDialog'
 import { InboxPanel } from './InboxPanel'
 import { Button } from '../ui/button'
@@ -301,7 +301,8 @@ export function AppLayout(): React.JSX.Element {
   // 左栏（会话）宽度：默认约 200px、最窄可拖到约 160px；小屏上限 17%/15%
   const sessionDefault = toPanelSize(200, 17)
   const sessionMin = toPanelSize(160, 15)
-  const [sessionDrawer, setSessionDrawer] = React.useState(false)
+  const sessionDrawer = useUiStore((s) => s.sessionDrawer)
+  const setSessionDrawer = useUiStore((s) => s.setSessionDrawer)
   const [teamDrawer, setTeamDrawer] = React.useState(false)
   /** 三栏比例记忆（右栏收起 / 展开原位恢复；收起期间的拖动按比例折叠回三栏，展开无跳变；
    *  持久化 localStorage——刷新后布局不丢；拖动中高频 onLayout 防抖 500ms 落盘） */
@@ -332,12 +333,7 @@ export function AppLayout(): React.JSX.Element {
     [],
   )
 
-  const handleSelect = React.useCallback(async (id: string): Promise<void> => {
-    await useSessionStore.getState().selectSession(id)
-    useWsStore.getState().ensureSubscribed(id)
-    useWsStore.getState().markRead(id)
-    await attachActiveRunFor(id)
-  }, [])
+  const handleSelect = React.useCallback((id: string): Promise<boolean> => openConversation(id), [])
 
   // 启动引导：角色/技能元数据 + 空间元数据（记忆面板用）+ 会话列表 → WS 初始化 → 自动选中第一个会话
   React.useEffect(() => {
@@ -350,7 +346,7 @@ export function AppLayout(): React.JSX.Element {
         useWsStore.getState().init()
         const state = useSessionStore.getState()
         if (!state.currentId && state.sessions.length > 0) {
-          void handleSelect(state.sessions[0].id)
+          void openConversation(state.sessions[0].id, { reveal: false })
         }
       })
       .catch(() => undefined)
@@ -362,7 +358,8 @@ export function AppLayout(): React.JSX.Element {
       if (!e.altKey || e.metaKey || e.ctrlKey || e.shiftKey) return
       const n = Number(e.key)
       if (!Number.isInteger(n) || n < 1 || n > 9) return
-      const sessions = useSessionStore.getState().sessions
+      if (e.isComposing || e.defaultPrevented || document.querySelector('[role="dialog"], [role="alertdialog"]')) return
+      const sessions = filterSessions(useSessionStore.getState().sessions, useUiStore.getState().sessionFilter)
       if (n <= sessions.length) {
         e.preventDefault()
         void handleSelect(sessions[n - 1].id)
@@ -393,9 +390,9 @@ export function AppLayout(): React.JSX.Element {
 
   /** 左栏显隐入口（宽屏 = 分栏收起；窄屏 = 会话抽屉开关）：会话头部收起钮 / 左缘把手 / ⌘⇧B 共用 */
   const toggleLeftPane = React.useCallback((): void => {
-    if (narrow) setSessionDrawer((v) => !v)
+    if (narrow) setSessionDrawer(!useUiStore.getState().sessionDrawer)
     else useUiStore.getState().toggleLeftPanel()
-  }, [narrow])
+  }, [narrow, setSessionDrawer])
 
   // ⌘B / Ctrl+B 右栏显隐；⌘⇧B / Ctrl+Shift+B 左栏显隐（与 ⌘K 同款：输入态不拦）
   React.useEffect(() => {
@@ -474,15 +471,10 @@ export function AppLayout(): React.JSX.Element {
 
   const overlays = (
     <>
-      <Dialog open={sessionDrawer} onOpenChange={setSessionDrawer}>
+      <Dialog open={narrow && sessionDrawer} onOpenChange={setSessionDrawer}>
         <DialogContent hideClose className="h-[72vh] max-w-xs overflow-hidden p-0">
           <DialogTitle className="sr-only">会话列表</DialogTitle>
-          <SessionList
-            onSelect={(id) => {
-              setSessionDrawer(false)
-              void handleSelect(id)
-            }}
-          />
+          <SessionList onSelect={handleSelect} />
         </DialogContent>
       </Dialog>
       {!humanOnlyChat && (
@@ -508,6 +500,7 @@ export function AppLayout(): React.JSX.Element {
   // M68：素材库为全员可见的个人资源视图（无 isAdmin 条件）
   // 懒加载边界：控制台 / 设置视图首次进入时才拉取对应 chunk（未进入则不加载）。
   const consoleView = (
+    <ErrorBoundary key={appView}>
     <React.Suspense
       fallback={<div className="flex h-full items-center justify-center text-[12px] text-muted-foreground">正在加载…</div>}
     >
@@ -528,11 +521,12 @@ export function AppLayout(): React.JSX.Element {
         isAdmin ? <SettingsView /> : <PersonalSettingsView />
       ) : null}
     </React.Suspense>
+    </ErrorBoundary>
   )
 
   if (narrow) {
     return (
-      <div className="flex h-screen flex-col overflow-hidden">
+      <div className="flex h-screen flex-col overflow-hidden" style={{ height: '100dvh' }}>
         <HeaderBar narrow onOpenSessions={() => setSessionDrawer(true)} />
         <div className="flex min-h-0 flex-1 overflow-hidden">
           <ActivityRail />
@@ -554,7 +548,7 @@ export function AppLayout(): React.JSX.Element {
   }
 
   return (
-    <div className="flex h-screen flex-col overflow-hidden">
+    <div className="flex h-screen flex-col overflow-hidden" style={{ height: '100dvh' }}>
       <HeaderBar />
       <div className="flex min-h-0 flex-1 overflow-hidden">
         <ActivityRail />
@@ -597,7 +591,7 @@ export function AppLayout(): React.JSX.Element {
                   maxSize={26}
                   className="min-h-0"
                 >
-                  <SessionList onSelect={(id) => void handleSelect(id)} />
+                  <SessionList onSelect={handleSelect} />
                 </Panel>
               )}
               {leftPanelOpen && (

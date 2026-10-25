@@ -513,7 +513,7 @@ export function buildWindow(input: WindowInput): WindowOutput {
         remaining--
         visionTokens += VISION_TOKENS_PER_IMAGE
       }
-      if (parts.length > 1) windowMessages[i].content = parts
+      if (parts.length > 1) windowMessages[i + (digestMessage ? 1 : 0)].content = parts
     }
   }
   return {

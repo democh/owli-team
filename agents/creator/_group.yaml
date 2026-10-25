@@ -19,3 +19,20 @@ agenda:
 stage:
   layout: dock
   panel: board
+category: creative
+catalog:
+  keywords:
+    - 自媒体工作室
+    - 账号定位
+    - 选题与脚本
+    - 发布节奏
+    - 变现设计
+  inputs:
+    - 账号定位
+    - 内容数据
+    - 目标受众与商业约束
+  outputs:
+    - 账号策略
+    - 短视频脚本
+    - 商业化方案
+  boundary: 面向账号经营，不承诺流量或收入；发布、广告合作需用户确认。

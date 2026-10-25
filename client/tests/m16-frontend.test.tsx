@@ -251,17 +251,17 @@ describe('灵魂层解析与徽标（M16）', () => {
 // ---------- AgentPicker ----------
 
 describe('AgentPicker（M16）', () => {
-  it('分组 Tab：切到头脑风暴只显示该场景角色，切回全部恢复', () => {
+  it('场景选择：切到头脑风暴只显示该场景角色，切回全部恢复', () => {
     render(<AgentPicker value={[]} onChange={() => undefined} />)
     expect(screen.getByRole('button', { name: /费利/ })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /卢娜/ })).toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole('button', { name: /头脑风暴/ }))
+    fireEvent.change(screen.getByLabelText('选择角色场景'), { target: { value: 'brainstorm' } })
     expect(screen.queryByRole('button', { name: /费利/ })).toBeNull()
     expect(screen.getByRole('button', { name: /卢娜/ })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /梅森/ })).toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole('button', { name: /全部/ }))
+    fireEvent.change(screen.getByLabelText('选择角色场景'), { target: { value: 'all' } })
     expect(screen.getByRole('button', { name: /费利/ })).toBeInTheDocument()
   })
 

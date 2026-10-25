@@ -171,6 +171,30 @@ describe('M48：roster_catalog（可召集角色目录，PRS 输入）', () => {
   })
 })
 
+describe('目录缓存展示输入', () => {
+  const agents = [
+    { id: 'pm', name: '产品', role: '产品', description: '', group: 'dev' },
+    { id: 'qa', name: '测试', role: '测试', description: '', group: 'dev' },
+    { id: 'backend', name: '后端', role: '后端', description: '', group: 'dev' },
+  ]
+  const prompts = {
+    list: () => agents,
+    groups: () => [{ id: 'dev', name: '研发', objective: '', chain: ['pm', 'qa', 'backend'] }],
+    get: (id: string) => agents.find((a) => a.id === id),
+  } as unknown as Parameters<typeof buildRosterCatalogBlock>[0]
+
+  it('展示标签改变时不复用旧标签，成员顺序也是缓存输入', () => {
+    const first = buildRosterCatalogBlock(prompts, ['pm', 'qa'], { pm: '产品甲' })
+    const second = buildRosterCatalogBlock(prompts, ['pm', 'qa'], { pm: '产品乙' })
+    expect(first).toContain('产品甲(pm)')
+    expect(second).toContain('产品乙(pm)')
+    expect(second).not.toContain('产品甲')
+    const reversed = buildRosterCatalogBlock(prompts, ['qa', 'pm'], { pm: '产品乙' })
+    expect(reversed).toContain('测试(qa)、产品乙(pm)')
+    expect(buildRosterCatalogBlock(prompts, ['qa', 'pm'], { pm: '产品乙' })).toBe(reversed)
+  })
+})
+
 // ---------- 成员回合指令 ----------
 
 describe('M48：成员回合指令（buildTurnInstruction）', () => {

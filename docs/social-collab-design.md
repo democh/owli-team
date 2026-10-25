@@ -1035,3 +1035,112 @@ server：`m79-trigger.test.ts`（矩阵全表逐行——空闲 / 运行 × @age
 main 长套件失败链的完整根因与修复（多轮 trace 实证）：① **spec 硬编码 `data/e2e-main` 路径**（m26/m27 回收站 / m28 mcp.json）——与轮换目录策略冲突 → 跟随 `PW_DATA_DIR`；② **收束信号被历史 DOM 秒过**（m43：`「你的回合」`旧胶囊命中 → 前一轮 submit 在途时发起下一次发送 → fill 被 `setValue('')` 清空 → 按钮永久 disabled 卡 144.8s）→ 固化 `expectRunSettled`（「停止」出现→消失双段，M79-K 先例）并替换 6 处；③ **点击稳定性饿死**（m31-canvas-ux 菜单项 not stable 卡死）→ `robustClick`（短超时 + DOM click 兜底）；④ **累积数据目录渲染压力**（e2e-main 1700+ 会话致 ux/m77 型卡顿）→ 轮换目录即解（134/134 用时 13.8min vs 累积目录 16-22min）。临时诊断 spec 已全部移除；`playwright.config.ts` 全局预算 120s（注释含先例）。
 
 **审计确认无缺口面**：消息发送（同会话互斥无竞态）· 未读口径（自己消息不计 / 单调推进）· 订阅 ACL（用户主题仅本人、全局主题 admin、会话主题归属可见）· 待决计划/审批的 SSE 重放（attach 快照）· 会话删除 / ACL 撤销的即时退订。**降级轮询增量游标（本批已实施）**：`GET /api/notifications` 增 `cursors`（客户端 `pollUrlOf` 携带 per-session 游标只拉增量，超长 / 非法 / 缺省回退全量）——`NotifyHub.list` 过滤下界 = `cursors[sid] ?? since`。**已知边界（不在本批）**：跨实例 seq 游标不可比（REST 快照补齐，ADR 0199；**全局化方案经评估否决**——全局 id 的分配序与到达序在两实例并发时不守恒，会引入"水位去重丢实时帧"窗口，而现状"远程条目现场分配新 seq"保证实时流严格单调，收益/风险不划算）· admin 对成员私有会话无旁路（M79-G 既定语义，m79-privacy 固化）。
+
+## 24. 消息可靠性补强（M90 / ADR 0228）
+
+M79/M80 已解决「有实时通道、有未读、有回执」，本批补齐专业 IM 的投递语义，不新增入口、不改会话模型：
+
+| 主题 | 结论 |
+| --- | --- |
+| 幂等接收 | `POST /sessions/:id/messages` 增 `clientMessageId`；`message_submissions`（v38）与消息、`message_seq` 同事务。同摘要回原消息（含首次运行结果），异摘要 409，已删 410。 |
+| 失败语义 | 消息落库后 AI 启动失败返回 `201 { message, dispatchError }`；客户端只提示，不回退输入框、不重发。 |
+| 本地待发箱 | `client/src/stores/outbox-store.ts`：按账号持久化，同会话保序，失败原位重试；刷新后的在途消息降级为「待确认」，不自动重跑 AI。 |
+| 通知补偿 | `NotifyHub` 进程代际 `epoch`；重放缺口、缓冲过期、轮询 `truncated` 均触发权威对账（收件箱 + 列表 + 当前会话正文）。 |
+| 收件箱分页 | `nextCursor + hasMore`，游标只推进到实收末条；`inbox_cursors`（v38）保证清理已读不回退同步水位。 |
+| 阅读水位 | `client/src/lib/use-message-read-tracker.ts`：DOM 视口交集（排除 overscan / 长消息未读完 / 流式），仅前台有焦点时上报；REST 确认后清徽章，失败退避重试；服务端把水位夹到最大 `seq`。 |
+| 回归 | `server/tests/im-reliability.test.ts`（真实 SQLite + HTTP + ACL）与 `client/tests/im-reliability.test.ts`（待发箱 / 分页 / 代际 / 视口）覆盖；不依赖 `agents/` 资产，可在资产调整期间独立运行。 |
+
+## 25. 引用回复与会话个人偏好（M90 / ADR 0229）
+
+在消息可靠性（§24）之上补齐两项日常语义，均只影响本人：
+
+| 主题 | 结论 |
+| --- | --- |
+| 引用回复 | `POST /messages` 增 `replyToMessageId`；服务端生成 `reply_to` 快照（作者 / 摘要 ≤120 字），原消息编辑不改写、删除后墓碑可读；目标消失仍允许发送（不因竞态阻塞用户）。 |
+| 幂等与待发箱 | 幂等摘要包含引用目标；待发箱持久化 `replyToMessageId`，断网重试仍指向同一条；切会话 / 发送成功 / 取消即清除 `ui-store.replyTarget`。 |
+| 个人偏好 | `session_prefs`（v40）按 `(user_id, session_id)` 存 `pinned / muted`；`PATCH /sessions/:id/prefs` + 用户主题 `notify:session-prefs` 多端同步；列表随行 `prefs`。 |
+| 置顶排序 | 客户端稳定排序置顶优先，组内保持服务端 `updated_at` 顺序；不改全局分页与多端排序。 |
+| 免打扰边界 | 只抑制普通消息 toast / 系统通知；未读照常累计（徽章静音色），邀请 / 提及 / 待回复仍提醒。 |
+| 回归 | `server/tests/im-reliability.test.ts` 覆盖快照 / 墓碑 / 偏好隔离；`client/tests/im-reliability.test.ts` 覆盖待发箱引用、置顶排序、多端帧与静音。 |
+
+## 26. 消息生命周期（M90 / ADR 0230）
+
+| 主题 | 结论 |
+| --- | --- |
+| 撤回 | 仅作者 + 2 分钟 + 非运行中；保留消息行，清空正文 / 附件 / 提及 / 工具记录，写 `recalled_at`；广播 `notify:turn-end`，前端渲染「X 撤回了一条消息」。 |
+| 引用联动 | 引用快照投影 `recalled: true`（「原消息已撤回」不可跳转）；撤回不改写引用摘要；磁盘附件不随撤回删除。 |
+| 编辑标记 | `PATCH` 写 `edited_at`，气泡时间旁显示「已编辑」（hover 见编辑时间）；已撤回消息不可编辑；引用仍保留发送时原文。 |
+| 仅自己删除 | `DELETE ?scope=self` + `message_hides`（v41）；详情分页前过滤、未读聚合、列表最后预览统一排除；用户主题多端同步；其他成员无感。 |
+| 删除（所有人） | 既有 `DELETE` 硬删除保留给作者 / 属主，UI 显式标「删除（所有人）」；与撤回的占位语义区分。 |
+| 回归 | `server/tests/im-reliability.test.ts` 覆盖编辑 / 撤回权限与时限 / 引用投影 / 自删隔离；`client/tests/im-reliability.test.ts` 覆盖撤回帧与自删帧的本地投影。 |
+
+## 27. 会话归档与标记未读（M90 / ADR 0231）
+
+| 主题 | 结论 |
+| --- | --- |
+| 偏好扩展 | `session_prefs`（v42）增 `archived / marked_unread`；`PATCH /sessions/:id/prefs` 接受 `pinned / muted / archived / markedUnread` 任意子集，仍仅本人 + 用户主题多端同步。 |
+| 归档 | 可逆个人视图：服务端列表仍返回（含 `prefs`），客户端 `filterSessions` 默认排除；归档视图独立于团队 / 聊天筛选；新消息不自动取消归档（区别于「隐藏」）。 |
+| 标记未读 | 不改 `last_read_seq`；列表 `unreadCount = max(真实, 1)`；真实读到消息后服务端自动解除并广播偏好帧，客户端收到标记帧把徽章抬到至少 1。 |
+| 边界 | 归档不清未读、不抑制提醒；免打扰仍只静音普通消息；偏好只在多用户模式投影（兼容模式入口隐藏）。 |
+| 回归 | `server/tests/im-reliability.test.ts` 覆盖归档 / 标记未读 / 读到解除；`client/tests/im-reliability.test.ts` 覆盖归档视图过滤与标记未读帧。 |
+
+## 28. 正在输入（M90 / ADR 0232）
+
+| 主题 | 结论 |
+| --- | --- |
+| 协议 | 客户端 `typing` 帧 → 服务端 `notify:typing` 临时帧（`ephemeral=true`、`seq=0`，不写重放缓冲 / 不推进游标 / 不跨实例总线）。 |
+| 节流与权限 | 客户端 3s、服务端 1.5s 双层节流；按 `canAccessSession` 校验；排除发送者连接；本人多端按 userId 过滤。 |
+| 生命周期 | 6s 无新帧自动过期；收到该用户消息（`turn-end`）立即清除；空内容 / viewer / 断线不上报。 |
+| UI | 会话头部「X 正在输入」/ 两人名 / 「N 人正在输入」+ 动画点；仅当前会话渲染。 |
+| 边界 | typing 为瞬时状态，不落库、不占未读、不参与断线补发；多实例部署下仅本实例可见。 |
+
+## 29. 搜索个人可见性与历史直达（M90 / ADR 0233）
+
+| 主题 | 结论 |
+| --- | --- |
+| 个人可见性 | 搜索 SQL 排除本人 `message_hides`（仅自己删除）与 `recalled_at`（撤回）；详情 / 未读 / 预览 / 搜索四处同口径。 |
+| 命中投影 | 返回 `seq / createdAt / role / 作者键`，路由补 `senderName`；共享会话标题改用 `listForUser`，不再为空。 |
+| 直达上下文 | 命中带 `seq` → `focusMessage(id, seq)` → `loadAtMessage` 以 `before=seq+1` 加载目标附近一页；进入 `historyMode`，关闭贴底跟随并显示「回到最新」。 |
+| 历史窗口 | 上滑仍可继续加载更早；不会自动加载更新消息；「回到最新」调用 `selectSession` 退出历史模式；历史窗口内发送先回最新再发送。 |
+| 兼容 | 无 seq 的旧定位入口（接力视图 / 通知）保留逐页回翻，行为不变；FTS5 缺失时 LIKE 回退同样应用过滤。 |
+
+## 30. 群主转让（M90 / ADR 0234）
+
+| 主题 | 结论 |
+| --- | --- |
+| 入口 | `POST /sessions/:id/transfer { userId }`；仅当前 owner、目标须为现有活跃共享成员、私聊 `400`。 |
+| 事务 | 同一事务内：`sessions.owner_id` 改为目标；旧 owner 写入 `session_members`（editor，保留访问）；新 owner 从成员表移除（避免 owner/editor 双角色）。 |
+| 可观测 | 审计 `session.owner-transfer`；群内系统事件「A 将群主转让给 B」；广播 `notify:share-changed`；新 owner 收件箱告知。 |
+| UI | 群成员弹窗：owner 对成员行显示 Crown「转让群主」+ 二次确认；成功后新 owner 显示群主徽章、旧 owner 变为成员、治理按钮消失。team 首期仅 API。 |
+| 边界 | 私聊不适用；旧 owner 保留可协作；转让后仍可自助退出；管理员接管另立流程。 |
+
+## 31. 搜索筛选（M90 / ADR 0235）
+
+| 主题 | 结论 |
+| --- | --- |
+| 服务端 | `/api/search` 增 `mine / from / to / hasAttachment`；与自删、撤回、会话 ACL 同一 SQL 层过滤后排序取 limit，避免「先截断再过滤」的假空。 |
+| 客户端 | 搜索时显示「我发的 / 含附件 / 今天·近7天·近30天 / 重置」；兼容模式隐藏「我发的」；筛选变化复用 250ms 防抖与 AbortController。 |
+| 时间 | 客户端按本地时区计算 `from`（今天 0 点 / 近 N 天）再转 ISO；服务端只接受绝对时间，非法值 `400`。 |
+| 边界 | `mine` 只匹配人类 userId；附件以 `attachments` 列非空判定；不做全量 Agent 下拉（避免上百项候选）。 |
+| 回归 | `server/tests/im-reliability.test.ts` 覆盖我发的 / 时间 / 附件筛选；客户端全量套件保持绿。 |
+
+## 32. IM 交互端到端（M90 / `e2e/m90-im.spec.ts`）
+
+§24–§31 各批以单元 / 接口回归收口；本 spec 补 **端到端 UI 投影与多端同步**（auth 项目：双浏览器上下文 + 同账号双标签页）。
+
+| 用例 | 覆盖 | 关键断言 |
+| --- | --- | --- |
+| T1 私聊 | 引用回复 / 撤回墓碑 / 编辑留痕 / 仅自己删除 / typing | 引用快照双端实时 + 可回跳原消息；撤回 →「撤回了一条消息」+ 引用联动「原消息已撤回」；编辑 → 对端实时「已编辑」；自删本端消失 / 对端无感 / 刷新仍隐藏；头部「正在输入」→ 发消息即清除 |
+| T2 群聊 + admin 双标签 | 置顶 / 免打扰 / 标记未读 / 归档 + 群主转让 | A 端偏好 → B 端偏好帧同步；真实未读红点双端；标记未读 → 读到自动解除（服务端权威 poll）；归档 A→B 主列表消失 → 归档视图独立取消 → A 端复现；Crown 二次确认 → 徽章互换 / 治理按钮消失 / 系统事件条双端 |
+| T3 群聊 | 搜索筛选 + 命中直达 + 撤回不可见 | 关键词命中双方；「我发的」排除他人 / 「含附件」只留附件条 / 重置复现 / 时间范围 today；命中点直达（打开会话 + 定位命中消息）；撤回消息搜索 0 命中 |
+
+**隔离与幂等**：`PW_AUTH_PORT` / `PW_AUTH_DATA_DIR` / `PW_OUTPUT_DIR` / `PW_CHANNEL` 走独立实例（绝不触碰真实数据）；好友 / 私聊经 API 幂等确保，群聊逐轮唯一命名 + 文末转让回 admin 后删除；消息文本逐轮唯一（`Date.now` 关键字）使搜索断言不受历史数据干扰；`ensureDirectSession` 复位 DM 偏好，保证「归档私聊」等中断态可重跑。
+
+**运行与验证结论**：`PW_AUTH_PORT=8805 PW_AUTH_DATA_DIR=e2e-m90j PW_CHANNEL=chrome PW_OUTPUT_DIR=/tmp/pw-m90j npx playwright test --project=auth e2e/m90-im.spec.ts` → 全新环境 **3/3 绿**（T1 10.0s / T2 8.0s / T3 6.2s，总 38.4s）；同数据目录不清空连跑第二轮仍 **3/3 绿**（幂等）。
+
+**选择器 / 时序定式（沉淀，供后续 IM E2E 复用）**：
+- 撤回 / 编辑 / 仅自己删除走 REST（`recall` / `PATCH` / `DELETE ?scope=self`）+ 双端 UI 投影断言——绕开虚拟列表非末行 hover 弹层菜单被兄弟行拦截的不稳定（承 m79-X 先例）；
+- typing 指示器是 `role="status"` 的 aria-live 区域，accessible-name 计算不定 → 用 `locator('[role="status"]', { hasText: '正在输入' })` 而非 `getByRole('status', { name })`；发送前等「通知已连接」确保 WS open（否则 `sendTyping` 静默丢弃），慢速 `pressSequentially` 跨 3s 节流产生多帧；
+- 带未读徽标 / 预览的两行会话行，其几何中心落在右侧悬停操作按钮条（均 `stopPropagation`）内 → `row.click()` 中心点击被拦截而不切换选中；改点行首图标区 `row.click({ position: { x: 8, y: 8 } })`；
+- `sessionRow` 限定 `.group:has([aria-label="私聊"], [aria-label="群聊"])`，排除聊天区当前会话头部 / 消息行（同为 `.group` 且含对端昵称文本）的干扰（如 DM 打开后标题重现于头部导致「已归档行 count 应为 0」误判）；
+- 群主转让按钮直接按 `getByTitle('转让群主（旧群主保留可协作）')` 定位（唯一非 owner 成员行），不用 `locator('div', { hasText }).last()` 包裹（会命中不含按钮的叶子文本 div → click 空等到测试超时）。

@@ -113,8 +113,8 @@ describe('M30：方法论文档在场（技能层与场景协议）', () => {
     for (const keyword of ['口径先行', '只读取数', 'SQL 纪律', '结果校验', '数据安全', '可复现', 'tool_search']) {
       expect(protocol, `bi 协议缺少「${keyword}」`).toContain(keyword)
     }
-    // 新增场景协议后回归：sales 也持有专属协议（报价纪律在场）
-    expect(lib.groupProtocol('sales')).toContain('报价纪律')
+    // 跨场景协议保持独立：市场增长保留实验纪律。
+    expect(lib.groupProtocol('marketing')).toContain('实验纪律')
   })
 
   it('取数口径与经营解读分工：bi 交付件路径与 insight 不重叠', () => {

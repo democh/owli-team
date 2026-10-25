@@ -32,6 +32,9 @@ const attachmentSchema = z.object({
 
 export const sendMessageSchema = z
   .object({
+    clientMessageId: z.string().min(1).max(100).regex(/^[A-Za-z0-9_-]+$/, '提交标识格式不正确').optional(),
+    /** IM：引用回复的目标消息（必须同会话） */
+    replyToMessageId: z.string().trim().min(1).max(100).optional(),
     content: z.string().trim().max(20_000, '消息过长（上限 20000 字符）'),
     /** M24：消息级范式（Composer 三态选择器；仅对本次发送生效，缺省 = 执行） */
     mode: z.enum(['plan', 'execute', 'review'], { message: 'mode 需为 plan / execute / review' }).optional(),
@@ -39,6 +42,23 @@ export const sendMessageSchema = z
     attachments: z.array(attachmentSchema).max(10, '单条消息最多 10 个附件').optional(),
   })
   .refine((v) => v.content.length > 0 || (v.attachments?.length ?? 0) > 0, '消息内容或附件至少提供一个')
+
+export const transferOwnerSchema = z.object({
+  userId: z.string().trim().min(1, 'userId 必填'),
+})
+
+export const sessionPrefsSchema = z
+  .object({
+    pinned: z.boolean().optional(),
+    muted: z.boolean().optional(),
+    archived: z.boolean().optional(),
+    markedUnread: z.boolean().optional(),
+  })
+  .refine(
+    (v) =>
+      v.pinned !== undefined || v.muted !== undefined || v.archived !== undefined || v.markedUnread !== undefined,
+    '至少提供一个偏好字段',
+  )
 
 export const renameSessionSchema = z
   .object({

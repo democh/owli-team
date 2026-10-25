@@ -18,6 +18,7 @@ import type { ApiDeps } from './index.js'
 import { AssetConflictError, AssetNotFoundError, AssetValidationError } from '../assets/manager.js'
 import { mcpSlugOf } from '../mcp/naming.js'
 import { toolCategory } from '../tools/categories.js'
+import { CatalogSchema } from '../store/prompts.js'
 
 const AgentAvatarSchema = z.object({
   icon: z.string().optional(),
@@ -26,6 +27,7 @@ const AgentAvatarSchema = z.object({
 })
 
 const AgentWriteSchema = z.object({
+  catalog: CatalogSchema.nullable().optional(),
   name: z.string().min(1, 'name 不能为空'),
   role: z.string().min(1, 'role 不能为空'),
   title: z.string().optional(),
@@ -42,6 +44,8 @@ const AgentWriteSchema = z.object({
 })
 
 const GroupWriteSchema = z.object({
+  category: z.string().optional(),
+  catalog: CatalogSchema.optional(),
   id: z.string().min(1, 'id 不能为空'),
   name: z.string().min(1, 'name 不能为空'),
   description: z.string().optional(),

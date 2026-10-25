@@ -24,3 +24,20 @@ stage:
   layout: roundtable
   panel: pool
 
+category: creative
+catalog:
+  keywords:
+    - 头脑风暴
+    - 快速发散
+    - 收敛方案
+    - 红队挑刺
+    - 最小可行版
+  inputs:
+    - 问题与受众
+    - 已有想法
+    - 评估约束
+  outputs:
+    - 创意候选
+    - 方案比较
+    - 验证清单
+  boundary: 创意需进一步验证，不把推演当作已验证市场结论。

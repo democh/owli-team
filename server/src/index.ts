@@ -72,6 +72,8 @@ import { NotifyHub } from './ws.js'
 import { InboxStore } from './store/inbox.js'
 import type { InboxAddInput } from './store/inbox.js'
 import { SessionReadsStore } from './store/session-reads.js'
+import { SessionPrefsStore } from './store/session-prefs.js'
+import { MessageHideStore } from './store/message-hides.js'
 import { ReactionStore } from './store/reactions.js'
 import { FriendStore } from './store/friends.js'
 import { SessionHideStore } from './store/session-hides.js'
@@ -196,6 +198,8 @@ const mcpSeeds = parseMcpServerSeeds(cfg.mcpServers)
 // M79-A：收件箱 / 已读存储（用户主题投递的权威层；WS `read` 帧与 REST 路由共用）
 const inboxStore = new InboxStore(db)
 const sessionReads = new SessionReadsStore(db)
+const sessionPrefsStore = new SessionPrefsStore(db)
+const messageHides = new MessageHideStore(db)
 // M80-B：消息表情回应
 const reactionStore = new ReactionStore(db)
 // M79-C：好友关系存储 + 在线状态（用户主题扇出）
@@ -696,6 +700,8 @@ app.use(
     // M79-A：收件箱 / 已读（/inbox、/sessions/:id/read、会话列表 unreadCount）
     inbox: inboxStore,
     reads: sessionReads,
+    sessionPrefs: sessionPrefsStore,
+    messageHides,
     // M80-B：表情回应（/sessions/:id/messages/:mid/reactions）
     reactions: reactionStore,
     // M79-C：好友（/friends、/users/search）+ 收件箱投递 + 在线状态

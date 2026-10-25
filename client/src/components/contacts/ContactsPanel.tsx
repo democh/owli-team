@@ -37,6 +37,8 @@ export function ContactsPanel({ onSelectSession }: ContactsPanelProps): React.JS
   const [query, setQuery] = React.useState('')
   const [hits, setHits] = React.useState<UserSearchHit[] | null>(null)
   const [searching, setSearching] = React.useState(false)
+  const [searchError, setSearchError] = React.useState<string | null>(null)
+  const [searchAttempt, setSearchAttempt] = React.useState(0)
   const [outgoingOpen, setOutgoingOpen] = React.useState(false)
   /** 行内确认态（好友行：移出 / 拉黑 二次确认） */
   const [confirming, setConfirming] = React.useState<string | null>(null)
@@ -69,25 +71,25 @@ export function ContactsPanel({ onSelectSession }: ContactsPanelProps): React.JS
   // 搜索防抖（250ms；清空恢复列表态）
   React.useEffect(() => {
     const q = query.trim()
+    setSearchError(null)
     if (!q) {
       setHits(null)
       setSearching(false)
       return
     }
     setSearching(true)
+    setHits(null)
+    let alive = true
     const timer = setTimeout(() => {
       void useFriendsStore
         .getState()
         .search(q)
-        .then((users) => setHits(users))
-        .catch((err: Error) => {
-          setHits([])
-          toast.error(err.message)
-        })
-        .finally(() => setSearching(false))
+        .then((users) => { if (alive) setHits(users) })
+        .catch((err: Error) => { if (alive) setSearchError(err.message) })
+        .finally(() => { if (alive) setSearching(false) })
     }, 250)
-    return () => clearTimeout(timer)
-  }, [query])
+    return () => { alive = false; clearTimeout(timer) }
+  }, [query, searchAttempt])
 
   const run = async (action: () => Promise<void>, okText?: string): Promise<void> => {
     if (busy) return
@@ -166,7 +168,12 @@ export function ContactsPanel({ onSelectSession }: ContactsPanelProps): React.JS
       <div className="min-h-0 flex-1 overflow-y-auto p-2">
         {query.trim() ? (
           // ---------- 搜索结果 ----------
-          searching && hits === null ? (
+          searchError ? (
+            <div role="alert" className="px-2 py-6 text-center text-[12.5px] text-muted-foreground">
+              <p>{searchError}</p>
+              <Button size="sm" variant="outline" onClick={() => setSearchAttempt((n) => n + 1)}>重试搜索</Button>
+            </div>
+          ) : searching && hits === null ? (
             <div className="flex items-center justify-center gap-2 py-8 text-[12.5px] text-muted-foreground">
               <Loader2 className="size-3.5 animate-spin" />
               搜索中…

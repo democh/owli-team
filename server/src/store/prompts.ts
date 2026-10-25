@@ -22,8 +22,19 @@ import { z } from 'zod'
 import type { AgentDefinition, AgentGroup, RosterPreset, SoulMeta, StageLayout, StagePanel } from '@multi-agent/shared'
 import { DEFAULT_CHAIN, STAGE_LAYOUTS, STAGE_PANELS, baseAgentId, soulIdOfMember, validateScheduleSpec } from '@multi-agent/shared'
 
+const catalogList = (max: number) => z.array(z.string().trim().min(1).max(80)).max(max)
+  .refine((items) => new Set(items).size === items.length, '目录条目不能重复')
+
+export const CatalogSchema = z.object({
+  keywords: catalogList(8).default([]),
+  inputs: catalogList(5).default([]),
+  outputs: catalogList(5).default([]),
+  boundary: z.string().trim().min(1).max(200).optional(),
+})
+
 /** 角色 front-matter 校验（§13.1 / §25）：失败时给出精确报错 */
 export const AgentFrontMatterSchema = z.object({
+  catalog: CatalogSchema.optional(),
   id: z.string().min(1, 'id 不能为空'),
   name: z.string().min(1, 'name 不能为空'),
   role: z.string().min(1, 'role 不能为空'),
@@ -73,6 +84,8 @@ const StageSchema = z.object({
 
 /** 场景元数据校验（_group.yaml，§25） */
 export const AgentGroupSchema = z.object({
+  category: z.string().optional(),
+  catalog: CatalogSchema.optional(),
   id: z.string().min(1, 'id 不能为空'),
   name: z.string().min(1, 'name 不能为空'),
   description: z.string().default(''),
@@ -114,6 +127,8 @@ export const AgentGroupSchema = z.object({
 
 /** 快速组队预设校验（_presets.yaml 单条；成员存在性由 validate() 跨引用检查） */
 export const PresetSchema = z.object({
+  category: z.string().optional(),
+  catalog: CatalogSchema.optional(),
   id: z.string().min(1, 'id 不能为空'),
   name: z.string().min(1, 'name 不能为空'),
   description: z.string().default(''),
@@ -673,6 +688,9 @@ export class PromptLibrary {
           if (fs.existsSync(agentFile)) files.set(agentFile, stat(agentFile))
           const avatar = path.join(agentDir, 'avatar.png')
           if (fs.existsSync(avatar)) files.set(avatar, 0)
+          // 声纹参与变更签名：只改 voice.md 也必须热生效
+          const voice = path.join(agentDir, 'voice.md')
+          if (fs.existsSync(voice)) files.set(voice, stat(voice))
           const soulsDir = path.join(agentDir, 'souls')
           if (fs.existsSync(soulsDir)) {
             for (const s of fs.readdirSync(soulsDir)) {
@@ -697,6 +715,8 @@ export class PromptLibrary {
   private maybeReload(): void {
     // 节流：窗口内重复读取不扫盘（写入侧经 AssetManager.reload() 主动刷新，不受影响）
     if (this.scanIntervalMs > 0 && Date.now() - this.lastScanAt < this.scanIntervalMs) return
+    // 每次到期扫描都推进时间戳：无变更与扫描失败也适用，避免连续读取反复扫盘。
+    this.lastScanAt = Date.now()
     try {
       // 模式切换检测：agents/ 出现即升级（运行中完成迁移也可热生效）；消失即回退
       const hasAgents = fs.existsSync(this.agentsDir)

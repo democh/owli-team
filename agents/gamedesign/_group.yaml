@@ -22,3 +22,20 @@ agenda:
 stage:
   layout: dock
   panel: board
+category: creative
+catalog:
+  keywords:
+    - 游戏工坊
+    - 立项与核心循环
+    - 设计数值体系
+    - 搭建世界观
+    - 模拟验证平衡
+  inputs:
+    - 目标体验
+    - 玩法概念
+    - 平台与资源
+  outputs:
+    - 游戏设计文档
+    - 数值与叙事方案
+    - 玩法验证记录
+  boundary: 模拟验证不等于真实玩家测试，不承诺游戏开发或上线已完成。

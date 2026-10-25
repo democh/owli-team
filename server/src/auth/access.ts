@@ -6,7 +6,9 @@
  * - 多用户模式：读取 = owner ∪ 共享成员（跨用户一律 404，不泄漏存在性）；
  *   写入 = owner / editor（viewer 只读，可自助退出 /leave）；
  * - 孤儿行（owner 为 NULL：migration 与 setup 之间的历史数据）仅管理员可见（兜底阀门）。
+ * - 下线资产（直接删除）只保留历史兼容：执行入口额外拒绝含下线成员的会话，读取不受影响。
  */
+import { RETIRED_SESSION_HINT, retiredScenesOf } from '@multi-agent/shared'
 import type { ProjectDefinition, Session, SessionAccessRole } from '@multi-agent/shared'
 import type { ProjectStore } from '../store/projects.js'
 import type { SessionMemberStore } from '../store/session-members.js'
@@ -80,6 +82,19 @@ export class AccessService {
     if (!this.multiUser) return session
     if (!user || this.sessionRole(user, sessionId) !== 'owner') {
       throw new HttpError(403, '仅会话属主可执行此操作')
+    }
+    return session
+  }
+
+  /**
+   * 执行入口守卫（发送 / 派发 / 续跑 / 重试 / 后台触发）：先归属与写权，再拦下线成员。
+   * 历史会话仍可读取、改名、隐藏与删除；只是不允许继续运行，也不静默替换角色。
+   */
+  assertSessionExecutable(user: AuthUser | undefined, sessionId: string): Session {
+    const session = this.assertSessionWrite(user, sessionId)
+    const retired = retiredScenesOf(session.participantIds)
+    if (retired.length > 0) {
+      throw new HttpError(409, `该会话包含已下线角色（${retired.join('、')}）：${RETIRED_SESSION_HINT}`)
     }
     return session
   }

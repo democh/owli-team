@@ -1,6 +1,6 @@
 id: interior
 name: 家装设计工作室
-description: 家装设计生产链：需求研判 → 空间规划 → 3D 方案与效果图；与置业工程（housing 预算 / 排期 / 验收）区隔——设计专项，产物是方案与视觉呈现
+description: 家装设计生产链：需求研判 → 空间规划 → 3D 方案与效果图；设计专项，产物是方案与视觉呈现；报价与施工安排由用户和现场专业人员核实
 icon: armchair
 theme: ["#0d9488", "#5eead4"]
 objective: 把「住得舒服」翻译成看得见、改得动、能落地的设计方案
@@ -22,3 +22,20 @@ agenda:
 stage:
   layout: dock
   panel: studio
+category: creative
+catalog:
+  keywords:
+    - 家装设计工作室
+    - 上传户型图做方案
+    - 客厅改造
+    - 风格与材质定位
+    - 生成效果图
+  inputs:
+    - 户型尺寸
+    - 生活需求
+    - 风格与空间限制
+  outputs:
+    - 风格方案
+    - 空间布局
+    - 可视化设计
+  boundary: 不提供施工预算核定；承重、消防与拆改安全须现场专业人员确认。

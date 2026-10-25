@@ -799,6 +799,7 @@ const toolSearchTool = {
   name: 'tool_search',
   tier: 'core' as const,
   readOnly: true,
+  cacheable: false,
   description:
     '按需检索并激活更多工具（浏览器 / 数据库 / Git / SSH / 联网 / 命令 / MCP 服务器等默认未加载的能力）。当任务需要系统提示 <tool_discovery> 中列出的能力时，先用本工具检索：命中工具会立即激活并在本任务内持续可用。检索词用「要做的事」，中英文均可，如「查询数据库」「git 提交」「浏览器截图」。',
   parameters: {

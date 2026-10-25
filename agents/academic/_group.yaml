@@ -20,3 +20,20 @@ agenda:
 stage:
   layout: dock
   panel: board
+category: learning
+catalog:
+  keywords:
+    - 学术论文
+    - 选题与缺口
+    - 文献综述
+    - 研究设计
+    - 投稿规划
+  inputs:
+    - 研究课题
+    - 文献与数据
+    - 稿件和投稿要求
+  outputs:
+    - 文献综述
+    - 方法审查
+    - 论文与投稿清单
+  boundary: 不伪造引用、实验或数据；作者对研究真实性与署名负责。

@@ -6,9 +6,9 @@
  */
 import * as React from 'react'
 import { toast } from 'sonner'
-import { Brain, Calculator, ChevronDown, ClipboardList, Clock, Loader2, SearchCheck } from 'lucide-react'
+import { Brain, Calculator, ChevronDown, ClipboardList, Clock, Loader2, Reply, SearchCheck } from 'lucide-react'
 import { apiPatch, apiPost } from '../../lib/api'
-import type { IntentSource } from '@multi-agent/shared'
+import type { ChatMessage, IntentSource } from '@multi-agent/shared'
 import { baseAgentId } from '@multi-agent/shared'
 import { labelOfMemberKey } from '../../lib/members'
 import { useAgentStore } from '../../stores/agent-store'
@@ -52,6 +52,34 @@ function ScheduleBadge(): React.JSX.Element {
       <Clock className="size-2.5" />
       定时
     </span>
+  )
+}
+
+/** IM：引用快照（作者 + 摘要）；点击回跳原消息，原消息已删时不可点。 */
+function ReplyQuote({ reply }: { reply: NonNullable<ChatMessage['replyTo']> }): React.JSX.Element | null {
+  const focusMessage = useUiStore((s) => s.focusMessage)
+  const deleted = !!reply.deleted
+  const recalled = !!reply.recalled
+  const disabled = deleted || recalled
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={() => focusMessage(reply.messageId)}
+      title={deleted ? '原消息已删除' : recalled ? '原消息已撤回' : '跳到原消息'}
+      className={cn(
+        'mb-2 flex w-full items-start gap-1.5 rounded-md border-l-2 border-primary/40 bg-muted/40 px-2 py-1 text-left text-[11.5px] leading-4 transition-colors',
+        disabled ? 'cursor-default opacity-60' : 'hover:bg-accent/60',
+      )}
+    >
+      <Reply className="mt-0.5 size-3 shrink-0 text-primary/60" aria-hidden />
+      <span className="min-w-0 flex-1">
+        <span className="font-medium text-primary/90">{reply.authorName ?? '成员'}</span>
+        <span className={cn('ml-1.5 text-muted-foreground', disabled && 'line-through')}>
+          {deleted ? '原消息已删除' : recalled ? '原消息已撤回' : reply.excerpt}
+        </span>
+      </span>
+    </button>
   )
 }
 
@@ -208,6 +236,22 @@ function MessageItemInner({ messageId }: { messageId: string }): React.JSX.Eleme
 
   if (!message) return null
 
+  // IM：撤回占位（正文 / 附件已清空，不渲染气泡与操作）
+  if (message.recalledAt) {
+    const mine = message.role === 'user' && (!message.userId || message.userId === myUserId)
+    const who = mine
+      ? '你'
+      : message.role === 'user'
+        ? (message.userId ? (humanProfiles[message.userId]?.name ?? humanNames[message.userId] ?? '成员') : '成员')
+        : '成员'
+    return (
+      <div id={`msg-${message.id}`} className="px-4 py-1.5 text-center text-[11.5px] text-muted-foreground/80">
+        {who} 撤回了一条消息
+        {message.editedAt && <span className="ml-1 opacity-60">（原消息已编辑）</span>}
+      </div>
+    )
+  }
+
   // M16：成员事件条（system 消息）——居中轻量展示（加入 / 移出 / 换灵魂），不参与气泡与交接渲染
   if (message.role === 'system') return <SystemMessage message={message} />
 
@@ -293,6 +337,7 @@ function MessageItemInner({ messageId }: { messageId: string }): React.JSX.Eleme
           isSelf ? 'border-primary/20 bg-gradient-to-br from-primary/[0.08] to-primary/[0.03]' : 'bg-card',
         )}
       >
+        {message.replyTo && <ReplyQuote reply={message.replyTo} />}
         {/* M33：附件原生渲染（图片网格 / 视频播放器 / 文档卡；可与文本共存） */}
         {message.attachments && message.attachments.length > 0 && (
           <div className={cn(content && 'mb-2')}>
@@ -359,6 +404,11 @@ function MessageItemInner({ messageId }: { messageId: string }): React.JSX.Eleme
               {message.scheduleId && <ScheduleBadge />}
               {message.mode && message.mode !== 'execute' && <ModeBadge mode={message.mode} source={message.modeSource} />}
               <span>{formatClock(message.createdAt)}</span>
+              {message.editedAt && (
+                <span className="text-[10.5px] text-muted-foreground/70" title={`编辑于 ${formatClock(message.editedAt)}`}>
+                  已编辑
+                </span>
+              )}
               <span className="font-medium text-foreground">{senderName}</span>
               <span className="flex items-center opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100 max-md:opacity-100">
                 <ReactionPickerButton message={message} disabled={!canReact} />
@@ -431,6 +481,11 @@ function MessageItemInner({ messageId }: { messageId: string }): React.JSX.Eleme
           {calcExpr ? <CalcBadge expr={calcExpr} /> : null}
           <span className="text-[10.5px]">·</span>
           <span>{formatClock(message.createdAt)}</span>
+          {message.editedAt && (
+            <span className="text-[10.5px] text-muted-foreground/70" title={`编辑于 ${formatClock(message.editedAt)}`}>
+              已编辑
+            </span>
+          )}
           {message.status === 'stopped' && <Badge variant="warning">已停止</Badge>}
           {message.status === 'error' && <Badge variant="destructive">出错</Badge>}
           <span className="ml-auto flex items-center opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100 max-md:opacity-100">
@@ -455,6 +510,7 @@ function MessageItemInner({ messageId }: { messageId: string }): React.JSX.Eleme
             />
           )}
           {streaming && <span className="turn-progress" aria-hidden />}
+          {message.replyTo && <ReplyQuote reply={message.replyTo} />}
           {/* 过程区（M81）：思考 → 工具 → 过程（::: process 顶层块上提至 markdown 头部）固定序；正文唯一主角 */}
           {reasoning && <ReasoningBlock text={reasoning} phase={streaming && !content ? 'thinking' : 'done'} />}
           {message.toolCalls && message.toolCalls.length > 0 && (

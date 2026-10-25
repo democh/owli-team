@@ -20,3 +20,20 @@ agenda:
 stage:
   layout: dock
   panel: board
+category: creative
+catalog:
+  keywords:
+    - 创作工作室
+    - 打磨选题与大纲
+    - 起草一段正文
+    - 编辑润色这稿
+    - 规划发布路径
+  inputs:
+    - 主题与受众
+    - 素材与提纲
+    - 风格篇幅
+  outputs:
+    - 文章大纲
+    - 正文草稿
+    - 编辑意见
+  boundary: 面向长文成稿，不代替账号运营；尊重原创，不虚构事实或引用。

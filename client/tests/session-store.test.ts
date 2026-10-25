@@ -1,9 +1,9 @@
 /**
  * 会话 store：跨会话流式守卫、消息补丁、交付件版本号。
  */
-import { beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ChatMessage, Session, SessionSummary } from '@multi-agent/shared'
-import { messagesOf, useSessionStore } from '../src/stores/session-store'
+import { filterSessions, messagesOf, useSessionStore } from '../src/stores/session-store'
 
 const SESSION_A: SessionSummary = {
   id: 'sa',
@@ -36,10 +36,87 @@ beforeEach(() => {
     loadingSessions: false,
     loadingMessages: false,
     artifactVersion: 0,
+    selectionVersion: 0,
+    messageLoadError: null,
+    earlierLoadError: null,
+    hasMore: false,
+    loadingEarlier: false,
   })
 })
 
+afterEach(() => {
+  vi.unstubAllGlobals()
+})
+
 describe('session-store', () => {
+  it('加载失败保留错误状态，重试成功恢复消息', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi
+        .fn()
+        .mockRejectedValueOnce(new Error('断网'))
+        .mockResolvedValueOnce(
+          new Response(JSON.stringify({ session: SESSION_A, messages: [msg('ok', 'sa')] })),
+        ),
+    )
+    await expect(useSessionStore.getState().selectSession('sa')).rejects.toThrow('断网')
+    expect(useSessionStore.getState().messageLoadError).toBe('断网')
+    expect(useSessionStore.getState().loadingMessages).toBe(false)
+    await useSessionStore.getState().selectSession('sa')
+    expect(useSessionStore.getState().messageLoadError).toBeNull()
+    expect(useSessionStore.getState().order).toEqual(['ok'])
+  })
+
+  it('A → B → A 的旧请求不能覆盖同名新选择', async () => {
+    const responses: Array<(response: Response) => void> = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => new Promise<Response>((resolve) => responses.push(resolve))),
+    )
+    const a1 = useSessionStore.getState().selectSession('sa')
+    const b = useSessionStore.getState().selectSession('sb')
+    const a2 = useSessionStore.getState().selectSession('sa')
+    responses[2](new Response(JSON.stringify({ session: SESSION_A, messages: [msg('new', 'sa')] })))
+    await a2
+    responses[0](new Response(JSON.stringify({ session: SESSION_A, messages: [msg('old', 'sa')] })))
+    responses[1](new Response(JSON.stringify({ session: { ...SESSION_A, id: 'sb' }, messages: [] })))
+    await Promise.all([a1, b])
+    expect(useSessionStore.getState().order).toEqual(['new'])
+  })
+
+  it('历史分页与当前消息去重，避免重复行和重复统计', async () => {
+    const latest = { ...msg('m2', 'sa'), seq: 2 }
+    useSessionStore.setState({ byId: new Map([['m2', latest]]), order: ['m2'], hasMore: true })
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              session: SESSION_A,
+              messages: [{ ...msg('m1', 'sa'), seq: 1 }, latest],
+              hasMore: false,
+            }),
+          ),
+      ),
+    )
+    await useSessionStore.getState().loadEarlier()
+    expect(useSessionStore.getState().order).toEqual(['m1', 'm2'])
+  })
+
+  it('快捷键与会话列表共享筛选顺序', () => {
+    const sessions = [SESSION_A, { ...SESSION_A, id: 'dm', kind: 'direct' as const }]
+    expect(filterSessions(sessions, 'team').map((s) => s.id)).toEqual(['sa'])
+    expect(filterSessions(sessions, 'chat').map((s) => s.id)).toEqual(['dm'])
+    expect(filterSessions(sessions, 'all')).toEqual(sessions)
+    // 置顶会话在两种筛选下都优先（列表与快捷键保持同一顺序）。
+    const pinned: SessionSummary[] = [
+      { ...sessions[0], id: 'pinned', prefs: { pinned: true, muted: false, archived: false, markedUnread: false } },
+      sessions[0],
+    ]
+    expect(filterSessions(pinned, 'all').map((s) => s.id)).toEqual(['pinned', 'sa'])
+  })
+
   it('upsertMessage：当前会话内新增与覆盖', () => {
     const store = useSessionStore.getState()
     store.upsertMessage(msg('m1', 'sa', '第一句'))

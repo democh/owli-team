@@ -182,7 +182,7 @@ describe('M33：消息内附件渲染（MessageAttachments）', () => {
     await user.click(within(dialog).getByRole('button', { name: '下一张' }))
     expect(within(dialog).getByAltText('2.png')).toBeInTheDocument()
     // Esc 关闭
-    fireEvent.keyDown(window, { key: 'Escape' })
+    await user.keyboard('{Escape}')
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
   })
 
@@ -274,7 +274,7 @@ describe('M33：Composer 附件流', () => {
     await user.type(screen.getByRole('textbox'), '看下这个')
     await user.click(send)
     await waitFor(() => expect(sendMock).toHaveBeenCalledTimes(1))
-    expect(sendMock).toHaveBeenCalledWith('看下这个', undefined, [UPLOADED])
+    expect(sendMock).toHaveBeenCalledWith('看下这个', undefined, [UPLOADED], undefined)
     // 发送后托盘清空
     await waitFor(() => expect(screen.queryByText('note.txt')).not.toBeInTheDocument())
   })

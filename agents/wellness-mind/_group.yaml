@@ -27,3 +27,20 @@ ritual:
 stage:
   layout: dock
   panel: coach
+category: life
+catalog:
+  keywords:
+    - 心理支持
+    - 情绪梳理
+    - 正念练习
+    - 心理科普
+    - 复盘状态
+  inputs:
+    - 当前感受
+    - 愿意分享的情境
+    - 自助偏好
+  outputs:
+    - 情绪梳理
+    - 正念练习
+    - 心理科普
+  boundary: 非治疗情绪支持，不做诊断；危机或持续困扰需专业帮助。

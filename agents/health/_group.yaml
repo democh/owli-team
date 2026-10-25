@@ -23,3 +23,20 @@ stage:
   layout: dock
   panel: coach
 
+category: life
+catalog:
+  keywords:
+    - 健康生活
+    - 训练计划
+    - 饮食配比
+    - 作息调整
+    - 打卡复盘
+  inputs:
+    - 健康目标
+    - 日常饮食作息
+    - 运动基础与限制
+  outputs:
+    - 训练计划
+    - 饮食建议
+    - 作息安排
+  boundary: 不诊断、不处方；疼痛、慢病或特殊人群应先咨询医疗专业人士。

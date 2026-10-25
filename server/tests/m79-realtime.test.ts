@@ -249,6 +249,7 @@ interface SocialEnv {
   server: http.Server
   port: number
   aliceToken: string
+  bobToken: string
   aliceId: string
   bobId: string
 }
@@ -271,11 +272,25 @@ async function makeSocialEnv(overrides: Parameters<typeof makeEnv>[0] = {}): Pro
   await auth.setup({ username: 'alice', password: 'Str0ngPass!x' })
   const aliceLogin = await auth.login({ username: 'alice', password: 'Str0ngPass!x' })
   const bob = await auth.createUser({ username: 'bob', role: 'member' })
+  const bobLogin = await auth.login({ username: 'bob', password: bob.initialPassword! })
   const server = http.createServer((_req, res) => res.end('ok'))
   notify.attach(server)
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', () => resolve()))
   const port = (server.address() as AddressInfo).port
-  return { env, auth, access, notify, inbox, reads, server, port, aliceToken: aliceLogin.rawToken, aliceId: aliceLogin.user.id, bobId: bob.user?.id ?? '' }
+  return {
+    env,
+    auth,
+    access,
+    notify,
+    inbox,
+    reads,
+    server,
+    port,
+    aliceToken: aliceLogin.rawToken,
+    bobToken: bobLogin.rawToken,
+    aliceId: aliceLogin.user.id,
+    bobId: bob.user?.id ?? '',
+  }
 }
 
 /** 连接并等待 welcome；返回 { socket, frames, waitFor } */
@@ -416,6 +431,42 @@ describe('M79-A：NotifyHub 用户主题与稳定化（真实 WS）', () => {
       expect(se.notify.stats().resyncs).toBe(1)
     } finally {
       await teardown(se, [c1.socket])
+    }
+  })
+})
+
+describe('IM：正在输入（typing 临时帧）', () => {
+  it('同会话他人收取、发送端不回显、1.5s 节流且不占会话 seq', async () => {
+    const se = await makeSocialEnv()
+    const sid = se.env.sessions.create([], 'typing', { ownerId: se.aliceId, kind: 'group' }).id
+    se.env.members.upsert(sid, se.bobId, 'editor', se.aliceId)
+    const alice = connectClient(se.port, `sid=${se.aliceToken}`)
+    const bob = connectClient(se.port, `sid=${se.bobToken}`)
+    try {
+      await alice.waitFor((f) => f.type === 'welcome')
+      await bob.waitFor((f) => f.type === 'welcome')
+      alice.socket.send(JSON.stringify({ type: 'subscribe', sessionIds: [sid] }))
+      bob.socket.send(JSON.stringify({ type: 'subscribe', sessionIds: [sid] }))
+      await alice.waitFor((f) => f.type === 'subscribed')
+      await bob.waitFor((f) => f.type === 'subscribed')
+
+      alice.socket.send(JSON.stringify({ type: 'typing', sessionId: sid }))
+      const frame = await bob.waitFor((f) => f.type === 'notify:typing')
+      expect(frame.ephemeral).toBe(true)
+      expect(frame.seq).toBe(0)
+      expect((frame.payload as { userId: string }).userId).toBe(se.aliceId)
+      expect((frame.payload as { name?: string }).name).toBe('alice')
+      expect(alice.frames.some((f) => f.type === 'notify:typing')).toBe(false)
+
+      // 1.5s 内重复上报被服务端节流
+      alice.socket.send(JSON.stringify({ type: 'typing', sessionId: sid }))
+      await new Promise((r) => setTimeout(r, 150))
+      expect(bob.frames.filter((f) => f.type === 'notify:typing')).toHaveLength(1)
+
+      // 临时帧不写重放缓冲、不推进 seq
+      expect(se.notify.list(sid, 0).cursor).toBe(0)
+    } finally {
+      await teardown(se, [alice.socket, bob.socket])
     }
   })
 })

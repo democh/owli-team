@@ -16,3 +16,20 @@ agenda:
     prompt: 帮我安排这项行政事务的步骤与清单：
   - label: 招聘对接
     prompt: 帮我推进这个岗位的招聘或外包（渠道与预算）：
+category: business
+catalog:
+  keywords:
+    - 运营行政
+    - 流程梳理
+    - 会议纪要
+    - 行政安排
+    - 招聘对接
+  inputs:
+    - 团队目标
+    - 现有流程
+    - 资源约束
+  outputs:
+    - 协作流程
+    - 招聘方案
+    - 执行清单
+  boundary: 提供组织与事务安排；真实招聘、采购和外部沟通需用户授权。

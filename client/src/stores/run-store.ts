@@ -6,7 +6,6 @@ import { create } from 'zustand'
 import { toast } from 'sonner'
 import type {
   ApprovalRequest,
-  ChatMessage,
   MessageAttachment,
   RunEndReason,
   RunEvent,
@@ -21,16 +20,7 @@ import { usePlanStore } from './plan-store'
 import { useSessionStore } from './session-store'
 import { useTaskStore } from './task-store'
 import { useUiStore } from './ui-store'
-
-interface SendResponse {
-  message: ChatMessage
-  runId: string
-  queue?: string[]
-  queued?: boolean
-  /** M3：运行中再发送 = 插话（不新建 Run） */
-  injected?: boolean
-  position?: number
-}
+import { setMessageDeliveryHandler, useOutboxStore } from './outbox-store'
 
 export interface ActiveRunInfo {
   runId: string
@@ -59,7 +49,12 @@ interface RunState {
   /** M8：上下文压缩计数（上下文档据此重拉快照） */
   compressionCount: number
   /** M24：mode = Composer 消息级范式（仅本条消息生效；缺省 = 未选择，尊重会话「规划先行」） */
-  send: (content: string, mode?: TurnMode, attachments?: MessageAttachment[]) => Promise<void>
+  send: (
+    content: string,
+    mode?: TurnMode,
+    attachments?: MessageAttachment[],
+    replyToMessageId?: string,
+  ) => Promise<void>
   /** M88：本 Run 的编排判定（可解释；Run Board 展示） */
   intent?: TurnIntent
   /** M88：运行期纠偏建议（写扩散 → 建议改用规划；仅提示） */
@@ -331,6 +326,16 @@ export function handleRunEvent(event: RunEvent): void {
   }
 }
 
+setMessageDeliveryHandler((res, sessionId, selectionVersion) => {
+  // 纯人聊天没有 Run；后台会话及切走再切回的迟到响应不抢占当前运行流。
+  const current = useSessionStore.getState()
+  if (!res.runId || current.currentId !== sessionId || current.selectionVersion !== selectionVersion) return
+  if (res.injected) toast(res.position && res.position > 1 ? `已插话（第 ${res.position} 条）` : '已插话')
+  if (res.queued) toast.success('已排队：前一轮运行结束后自动开始')
+  useRunStore.setState({ queued: res.queued ?? false })
+  if (useRunStore.getState().runId !== res.runId) useRunStore.getState().attach(res.runId, sessionId)
+})
+
 export const useRunStore = create<RunState>((set, get) => ({
   active: false,
   queued: false,
@@ -340,35 +345,22 @@ export const useRunStore = create<RunState>((set, get) => ({
   approvals: [],
   compressionCount: 0,
 
-  send: async (content, mode, attachments) => {
+  send: async (content, mode, attachments, replyToMessageId) => {
     const sessionId = useSessionStore.getState().currentId
     if (!sessionId) return
-    // M24：消息级范式随消息提交（plan / review；缺省不传 = 未选择，服务端按「规划先行」→ execute 兜底）
-    // M33：附件随消息提交（可空正文 + 附件；服务端校验文件存在性与归属）
-    const body: Record<string, unknown> = { content }
-    if (mode) body.mode = mode
-    if (attachments && attachments.length > 0) body.attachments = attachments
-    const res = await apiPost<SendResponse>(`/api/sessions/${sessionId}/messages`, body)
-    useSessionStore.getState().upsertMessage(res.message)
-    if (res.injected) {
-      // M3：运行中再发送 = 插话，团队将在当前回合结束后看到（不新建 Run）
-      toast(res.position && res.position > 1 ? `已插话（第 ${res.position} 条）：团队将在当前回合结束后处理` : '已插话：团队将在当前回合结束后处理')
-      set({ queued: false })
-      if (get().runId !== res.runId) get().attach(res.runId, sessionId)
-      return
-    }
-    if (res.queued) toast.success('已排队：前一轮运行结束后自动开始')
-    set({ queued: res.queued ?? false })
-    get().attach(res.runId, sessionId)
+    // 本地持久接收后即可清空输入；网络失败保留原条目，重试复用提交标识。
+    useOutboxStore.getState().enqueue(sessionId, content, mode, attachments, replyToMessageId)
   },
 
   dispatch: async (agentId, note) => {
-    const sessionId = useSessionStore.getState().currentId
+    const { currentId: sessionId, selectionVersion } = useSessionStore.getState()
     if (!sessionId) return
     const res = await apiPost<{ runId: string; queue: string[]; queued: boolean }>(
       `/api/sessions/${sessionId}/dispatch`,
       { agentId, ...(note?.trim() ? { note: note.trim() } : {}) },
     )
+    const current = useSessionStore.getState()
+    if (current.currentId !== sessionId || current.selectionVersion !== selectionVersion) return
     set({ queued: res.queued ?? false })
     // 同一 Run：只同步队列（服务端已广播 queue:updated，此处乐观对齐）
     if (get().runId === res.runId) {
@@ -497,6 +489,8 @@ export const useRunStore = create<RunState>((set, get) => ({
 
 /** 会话切换后重附着：查询进行中运行并挂接（§18.2）。无匹配运行 = 断开本地旧流，防跨会话状态残留 */
 export async function attachActiveRunFor(sessionId: string): Promise<boolean> {
+  const selectionVersion = useSessionStore.getState().selectionVersion
+  if (useSessionStore.getState().currentId !== sessionId) return false
   const store = useRunStore.getState()
   // 同一会话已挂接着运行流：保持现状（避免重放抖动）
   if (store.active && store.sessionId === sessionId) return true
@@ -506,7 +500,7 @@ export async function attachActiveRunFor(sessionId: string): Promise<boolean> {
   try {
     const res = await apiGet<{ runs: ActiveRunInfo[] }>('/api/runs/active')
     // 竞态守卫：查询期间会话又被切换（快速连点）——迟到响应不覆盖新会话状态
-    if (useSessionStore.getState().currentId !== sessionId) return false
+    if (useSessionStore.getState().currentId !== sessionId || useSessionStore.getState().selectionVersion !== selectionVersion) return false
     const run = res.runs.find((r) => r.sessionId === sessionId)
     if (!run) return false
     useRunStore.getState().attach(run.runId, sessionId)

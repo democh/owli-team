@@ -525,7 +525,7 @@ function PlanProgressCard({ plan, members, reviews }: { plan: Plan; members: Age
         </p>
         <div className="divide-y divide-border/60">
           {plan.steps.map((step, i) => {
-            const stepReviews = reviews.filter((r) => r.stepId === step.id)
+            const stepReviews = reviews.filter((r) => r.planId === plan.id && r.stepId === step.id)
             return (
               <StepRow
                 key={step.id}

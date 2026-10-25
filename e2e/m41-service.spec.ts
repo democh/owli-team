@@ -1,6 +1,6 @@
 /**
  * E2E · M41 服务型渲染包（mock 模式）：
- * 1) 销售客户：管道走查 → 客户管道看板（四列 + 其他列）→ 点卡回填「跟进 <客户>：」；
+ * 1) 市场增长：管道走查 → 客户管道看板（四列 + 其他列）→ 点卡回填「跟进 <客户>：」；
  * 2) 财务法务：财务走查 → 测算表卡（关键行）+ 风险色带（高）+ 口径校验徽章（脚本化 calc）；
  * 3) 融资资本：融资走查 → 进度卡（总进度 25%）+ 问答卡（折叠对展开）。
  * 锚点：data-pipeline-card / data-pipeline-col / data-figures-card / data-figure-key /
@@ -9,12 +9,12 @@
 import { expect, test } from '@playwright/test'
 import { composer, createSession, expectYourTurn, openApp, sendMessage } from './helpers'
 
-test('M41 · 销售客户：客户管道看板（四列 + 其他列 + 点卡回填）', async ({ page }) => {
+test('M41 · 市场增长：客户管道看板（四列 + 其他列 + 点卡回填）', async ({ page }) => {
   await openApp(page)
-  await createSession(page, { title: `E2E-M41-管道-${Date.now()}`, scene: '销售客户' })
+  await createSession(page, { title: `E2E-M41-管道-${Date.now()}`, scene: '市场增长' })
   const log = page.getByRole('log', { name: '消息流' })
 
-  await sendMessage(page, '@陆征 @安然 @夏禾 管道走查：把本周客户管道与下一动作过一遍。')
+  await sendMessage(page, '@高扬 管道走查：展示已有管道卡片与下一动作。')
   await expectYourTurn(page)
 
   const board = log.locator('[data-pipeline-card]').first()

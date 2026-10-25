@@ -28,3 +28,20 @@ ritual:
 stage:
   layout: dock
   panel: chartboard
+category: culture
+catalog:
+  keywords:
+    - 塔罗研习
+    - 抽牌解读
+    - 牌义答疑
+    - 换角度重抽
+    - 术语与文化
+  inputs:
+    - 研习问题
+    - 牌阵偏好
+    - 已有牌面或抽牌参数
+  outputs:
+    - 牌阵解读
+    - 意象叙事
+    - 历史考据
+  boundary: 仅供文化与叙事研习，不作宿命断言或重大决策依据。

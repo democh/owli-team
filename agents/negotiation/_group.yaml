@@ -25,3 +25,20 @@ stage:
     right: [counterpart]
     center: [tactician]
   parts: [round-track, verdicts, claim-tree, offers]
+category: discussion
+catalog:
+  keywords:
+    - 谈判桌
+    - 彩排一轮谈判
+    - 定谈判策略
+    - 模拟对手还价
+    - 复盘上次谈判
+  inputs:
+    - 谈判议题
+    - 双方立场
+    - 目标底线与备选方案
+  outputs:
+    - 谈判策略
+    - 彩排记录
+    - 复盘建议
+  boundary: 演练不等于真实对方反应；不擅自承诺、报价或对外谈判。

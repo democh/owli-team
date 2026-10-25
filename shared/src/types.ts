@@ -8,6 +8,31 @@
 /** M50：空场景（单助手直聊）场景 id —— 单成员编制时未 @ 消息直达本人，不进入平台路由 */
 export const BLANK_SCENE_ID = 'blank'
 
+/** 仅供目录展示与搜索，不参与提示词或权限装配。 */
+export interface AssetCatalog {
+  keywords: string[]
+  inputs: string[]
+  outputs: string[]
+  boundary?: string
+}
+
+export const CATALOG_CATEGORIES = {
+  business: '经营管理',
+  technology: '技术研发',
+  learning: '研究学习',
+  creative: '内容设计',
+  life: '生活成长',
+  discussion: '讨论演练',
+  investment: '投资研判',
+  culture: '文化研习',
+  other: '其他',
+} as const
+export type CatalogCategory = keyof typeof CATALOG_CATEGORIES
+
+export function catalogCategory(value?: string): CatalogCategory {
+  return value && Object.hasOwn(CATALOG_CATEGORIES, value) ? value as CatalogCategory : 'other'
+}
+
 export interface AgentAvatar {
   /** 形象图（agents/<场景>/<id>/avatar.png 自动发现为 /api/agents/<id>/avatar；也可显式配置路径） */
   image?: string
@@ -105,6 +130,8 @@ export interface RitualSubscription {
 
 /** 场景（分组）元数据：agents/<场景>/_group.yaml（§25） */
 export interface AgentGroup {
+  category?: string
+  catalog?: AssetCatalog
   id: string
   name: string
   description: string
@@ -136,6 +163,7 @@ export interface AgentGroup {
 }
 
 export interface AgentDefinition {
+  catalog?: AssetCatalog
   id: string
   name: string
   /** 角色徽标，如「产品经理」 */
@@ -164,6 +192,8 @@ export interface AgentDefinition {
 
 /** 快速组队预设：agents/_presets.yaml（可选资产；缺失时前端自动隐藏该区块） */
 export interface RosterPreset {
+  category?: string
+  catalog?: AssetCatalog
   id: string
   name: string
   description: string
@@ -220,8 +250,20 @@ export interface Session {
   updatedAt: string
 }
 
+/** IM：会话个人偏好（仅本人可见，不参与 ACL） */
+export interface SessionPrefs {
+  pinned: boolean
+  muted: boolean
+  /** 归档：默认不进入主列表，经归档视图查看 */
+  archived: boolean
+  /** 手动标记未读：列表未读至少为 1，读到最新后自动解除 */
+  markedUnread: boolean
+}
+
 export interface SessionSummary extends Session {
   messageCount: number
+  /** IM：本人置顶 / 免打扰投影（缺省 = 均关） */
+  prefs?: SessionPrefs
   /** M57 P2：当前请求者相对会话的角色（owner / editor / viewer；单用户兼容模式缺省不标注） */
   role?: SessionAccessRole
   /** M79：服务端权威未读数（当前请求者视角；缺省 = 无未读语义） */
@@ -315,8 +357,29 @@ export interface ToolCallRecord {
   endedAt?: string
 }
 
+/** 引用回复快照：作者与摘要在发送时固化，原消息删除后仍可展示。 */
+export interface MessageReplyRef {
+  messageId: string
+  authorName?: string
+  excerpt: string
+  /** 服务端投影：原消息已不存在 */
+  deleted?: boolean
+  /** 服务端投影：原消息已撤回 */
+  recalled?: boolean
+}
+
 export interface ChatMessage {
   id: string
+  /** 客户端提交标识：重试复用，同一作者与会话内唯一。 */
+  clientMessageId?: string
+  /** 引用回复（快照；不随原消息编辑变化） */
+  replyTo?: MessageReplyRef
+  /** IM：本条被作者编辑过（展示「已编辑」标记） */
+  editedAt?: string
+  /** IM：本条已撤回（正文 / 附件已清空；保留占位） */
+  recalledAt?: string
+  /** IM：撤回操作者（仅审计展示，不对外泄露） */
+  recalledBy?: string
   sessionId: string
   runId?: string
   /** M33：消息附件（上传的图片 / 视频 / 文档；用户消息为主，发送时随消息持久化） */
@@ -516,10 +579,18 @@ export type NotifyType =
   | 'notify:reaction'
   /** M80-C：成员已读水位推进（会话主题；payload: { sessionId, userId, lastReadSeq }；仅开启已读展示的用户产生） */
   | 'notify:read-receipt'
+  /** IM：会话个人偏好变更（置顶 / 免打扰；payload: { sessionId, prefs }） */
+  | 'notify:session-prefs'
+  /** IM：正在输入（临时帧，不落重放缓冲；payload: { userId, name? }） */
+  | 'notify:typing'
 
 export interface NotifyEnvelope {
   v: 1
   id: string
+  /** 临时帧（typing 等）：不占用会话 seq，不参与去重 / 断线补发 */
+  ephemeral?: boolean
+  /** 通知进程代际；序号只能在同一代际内比较。 */
+  epoch?: string
   /** 每会话递增序号（重连补发游标） */
   seq: number
   type: NotifyType
@@ -531,6 +602,7 @@ export interface NotifyEnvelope {
 
 export interface NotifyListResponse {
   notifications: NotifyEnvelope[]
+  epoch?: string
   cursor: number
   truncated?: boolean
 }
@@ -672,6 +744,7 @@ export interface ConsoleAgentDetail extends ConsoleAgentSummary {
 
 /** Agent 新建 / 更新入参（tools / skills 支持 null 表达三态） */
 export interface AgentWriteInput {
+  catalog?: AssetCatalog | null
   name: string
   role: string
   title?: string
@@ -692,6 +765,8 @@ export interface AgentWriteInput {
 
 /** 场景写入（新建场景 / 二期场景管理共用） */
 export interface GroupWriteInput {
+  category?: string
+  catalog?: AssetCatalog
   id: string
   name: string
   description?: string
@@ -900,6 +975,26 @@ export interface TaskItem {
   ord: number
 }
 
+export interface RunExecutionState {
+  version: 1
+  triggerUserId?: string
+  mode: TurnMode
+  intent?: TurnIntent
+  relayMode?: 'auto' | 'manual'
+  activePlanIds: string[]
+  pendingPlanIds: string[]
+  planDispatch: Record<string, Array<{ planId: string; stepId: string }>>
+  waveSignatures: string[]
+  waveTexts: string[]
+  waveWriteCounts: number[]
+  forceNextParallel: boolean
+  synthesisAdded: boolean
+  planSubmissions: number
+  planRefillStreak: number
+  /** 已按成员加载的技能名；旧快照缺省为空，技能正文可重新 load_skill */
+  loadedSkills?: Record<string, string[]>
+}
+
 export interface RunSnapshot {
   id: string
   sessionId: string
@@ -909,6 +1004,9 @@ export interface RunSnapshot {
   turnIndex: number
   fallbackUsed: boolean
   handedToUser: boolean
+  triggerUserId?: string
+  pendingUserMessages: string[]
+  execution?: RunExecutionState
   error?: string
   createdAt: string
   updatedAt: string
@@ -2141,6 +2239,8 @@ export interface TurnIntent {
    * 交付后的评审门只用 needsReview，不置此位——否则“整理方案并检查”会被误判为只读。
    */
   reviewFirst?: boolean
+  /** 已批准计划的执行波：needsPlan 由批准满足，路由不得重新规划。 */
+  approvedPlan?: boolean
   risk: IntentRisk
   /** 判定置信度 0-1（规则命中 / 路由模型自评） */
   confidence: number

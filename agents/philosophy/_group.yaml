@@ -21,3 +21,20 @@ agenda:
 stage:
   layout: roundtable
   panel: pool
+category: discussion
+catalog:
+  keywords:
+    - 哲学茶室
+    - 追问一个问题
+    - 设计思想实验
+    - 伦理困境研讨
+    - 概念澄清
+  inputs:
+    - 困扰或命题
+    - 背景假设
+    - 讨论目标
+  outputs:
+    - 问题澄清
+    - 思想实验
+    - 伦理框架对照
+  boundary: 呈现多元论证，不给唯一人生答案，不替代心理或法律专业帮助。

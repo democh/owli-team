@@ -56,19 +56,19 @@ export class InboxStore {
 
   /** 入箱（返回落库条目；seq = 该用户当前最大值 + 1） */
   add(input: InboxAddInput): InboxItem {
-    const row = this.db.get<{ next: number }>(
-      'SELECT COALESCE(MAX(seq), 0) + 1 AS next FROM user_inbox WHERE user_id = ?',
-      input.userId,
-    )
-    const seq = Number(row?.next ?? 1)
     const ts = nowIso()
     const id = newId('ib')
-    this.db.run(
+    const seq = this.db.tx(() => {
+      const row = this.db.get<{ seq: number }>(
+        'INSERT INTO inbox_cursors (user_id, seq) VALUES (?, 1) ON CONFLICT(user_id) DO UPDATE SET seq = seq + 1 RETURNING seq',
+        input.userId,
+      )!
+      this.db.run(
       `INSERT INTO user_inbox (id, user_id, seq, type, session_id, actor_id, title, body, payload, read_at, created_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)`,
       id,
       input.userId,
-      seq,
+      row.seq,
       input.type,
       input.sessionId ?? null,
       input.actorId ?? null,
@@ -76,7 +76,9 @@ export class InboxStore {
       input.body ?? null,
       input.payload ? JSON.stringify(input.payload) : null,
       ts,
-    )
+      )
+      return Number(row.seq)
+    })
     return {
       id,
       seq,
@@ -103,7 +105,7 @@ export class InboxStore {
   /** 当前游标（该用户最大 seq） */
   cursor(userId: string): number {
     const row = this.db.get<{ cursor: number }>(
-      'SELECT COALESCE(MAX(seq), 0) AS cursor FROM user_inbox WHERE user_id = ?',
+      'SELECT seq AS cursor FROM inbox_cursors WHERE user_id = ?',
       userId,
     )
     return Number(row?.cursor ?? 0)

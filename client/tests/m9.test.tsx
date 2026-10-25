@@ -3,7 +3,7 @@
  * 消息反馈（👍 / 👎+原因 → POST /api/feedback）、会话全文搜索（防抖检索 / 命中跳转 / 清空）。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type {
   AgentDefinition,
@@ -45,12 +45,7 @@ function makeAgent(id: string, name: string): AgentDefinition {
 
 const T0 = Date.parse('2026-06-01T00:00:00.000Z')
 
-function entry(
-  type: string,
-  payload: Record<string, unknown>,
-  offsetMs: number,
-  turnIndex = 0,
-): TraceEntry {
+function entry(type: string, payload: Record<string, unknown>, offsetMs: number, turnIndex = 0): TraceEntry {
   return {
     id: Math.floor(offsetMs) + type.length,
     runId: 'r1',
@@ -103,11 +98,44 @@ describe('TraceDrawer 全链路时间轴（M9）', () => {
           entry('run:start', { queue: ['backend', 'architect'] }, 0),
           entry('turn:start', { agentId: 'backend' }, 1000),
           entry('tool', { name: 'write_file', ok: true, durationMs: 12, summary: 'docs/接口说明.md' }, 1500),
-          entry('turn:end', { agentId: 'backend', status: 'complete', durationMs: 300, promptTokens: 1000, completionTokens: 200, queue: ['architect'] }, 1600),
-          entry('compression', { untilSeq: 12, beforeTokens: 50000, afterTokens: 20000, degraded: false }, 1700),
-          entry('schedule', { agentId: 'backend', accepted: ['architect'], dropped: [{ id: 'qa', reason: 'not-in-room' }], handedToUser: false, source: 'tool' }, 1800),
-          entry('routing:dispatched', { source: 'handoff', members: ['backend', 'qa'], reason: '需要开发与验证' }, 1900),
-          entry('routing:dispatched', { assignments: [{ agentId: 'architect', task: '继续推进' }], reason: '未 @ 消息首选在场成员' }, 1950),
+          entry(
+            'turn:end',
+            {
+              agentId: 'backend',
+              status: 'complete',
+              durationMs: 300,
+              promptTokens: 1000,
+              completionTokens: 200,
+              queue: ['architect'],
+            },
+            1600,
+          ),
+          entry(
+            'compression',
+            { untilSeq: 12, beforeTokens: 50000, afterTokens: 20000, degraded: false },
+            1700,
+          ),
+          entry(
+            'schedule',
+            {
+              agentId: 'backend',
+              accepted: ['architect'],
+              dropped: [{ id: 'qa', reason: 'not-in-room' }],
+              handedToUser: false,
+              source: 'tool',
+            },
+            1800,
+          ),
+          entry(
+            'routing:dispatched',
+            { source: 'handoff', members: ['backend', 'qa'], reason: '需要开发与验证' },
+            1900,
+          ),
+          entry(
+            'routing:dispatched',
+            { assignments: [{ agentId: 'architect', task: '继续推进' }], reason: '未 @ 消息首选在场成员' },
+            1950,
+          ),
           entry('routing:dispatched', { fallback: true, error: '结构化输出解析失败' }, 1990),
           entry('run:end', { reason: 'completed', turns: 2 }, 2000),
         ],
@@ -173,10 +201,20 @@ describe('TraceDrawer 全链路时间轴（M9）', () => {
           entry('wave:start', { members: ['backend'], mode: 'plan' }, 200),
           entry('queue:updated', { queue: ['architect'] }, 300),
           entry('queue:updated', { queue: [] }, 350),
-          entry('tool:search', { agentId: 'backend', query: 'docker logs', activated: ['run_command', 'read_file'] }, 400),
+          entry(
+            'tool:search',
+            { agentId: 'backend', query: 'docker logs', activated: ['run_command', 'read_file'] },
+            400,
+          ),
           entry(
             'memory:recall',
-            { count: 2, items: [{ id: 'm1', scope: 'session', score: 0.82 }, { id: 'm2', scope: 'global', score: 0.4 }] },
+            {
+              count: 2,
+              items: [
+                { id: 'm1', scope: 'session', score: 0.82 },
+                { id: 'm2', scope: 'global', score: 0.4 },
+              ],
+            },
             500,
           ),
           entry('memory:digest', { candidates: 3, added: 2 }, 600),
@@ -199,8 +237,22 @@ describe('TraceDrawer 全链路时间轴（M9）', () => {
             1100,
           ),
           // M47 中断不是失败：工具 aborted / 回合 stopped 单独标注
-          entry('tool', { name: 'run_command', ok: false, aborted: true, durationMs: 5, summary: '运行已中断（未计入失败）' }, 1150),
-          entry('turn:end', { agentId: 'backend', status: 'stopped', durationMs: 42, promptTokens: 1, completionTokens: 2 }, 1200),
+          entry(
+            'tool',
+            {
+              name: 'run_command',
+              ok: false,
+              aborted: true,
+              durationMs: 5,
+              summary: '运行已中断（未计入失败）',
+            },
+            1150,
+          ),
+          entry(
+            'turn:end',
+            { agentId: 'backend', status: 'stopped', durationMs: 42, promptTokens: 1, completionTokens: 2 },
+            1200,
+          ),
         ],
         usage: null,
       }),
@@ -375,7 +427,7 @@ describe('MessageActions 反馈（M9）', () => {
   beforeEach(() => {
     useSessionStore.setState({
       currentId: 's1',
-      byId: new Map([[('m2'), makeMessage()]]),
+      byId: new Map([['m2', makeMessage()]]),
       order: ['m2'],
     })
   })
@@ -388,7 +440,9 @@ describe('MessageActions 反馈（M9）', () => {
     await user.click(screen.getByRole('button', { name: '消息操作' }))
     await user.click(await screen.findByRole('menuitem', { name: /标记有帮助/ }))
 
-    await waitFor(() => expect(fetchMock.mock.calls.some(([, i]) => (i as RequestInit)?.method === 'POST')).toBe(true))
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.some(([, i]) => (i as RequestInit)?.method === 'POST')).toBe(true),
+    )
     const postCall = fetchMock.mock.calls.find(([, i]) => (i as RequestInit)?.method === 'POST')!
     expect(postCall[0]).toBe('/api/feedback')
     expect(JSON.parse(String((postCall[1] as RequestInit).body))).toEqual({
@@ -449,6 +503,7 @@ describe('MessageActions 反馈（M9）', () => {
 describe('MessageActions 写项 gating（M79-AF）', () => {
   it('viewer：重生成 / fork / 删除隐藏；读面项保留', async () => {
     const user = userEvent.setup()
+    useAuthStore.setState({ user: { id: 'u_me' } } as never)
     useSessionStore.setState({
       currentId: 's1',
       sessions: [{ id: 's1', title: 'T', role: 'viewer' }] as never,
@@ -459,8 +514,11 @@ describe('MessageActions 写项 gating（M79-AF）', () => {
     await user.click(screen.getByRole('button', { name: '消息操作' }))
     expect(screen.queryByRole('menuitem', { name: /重新生成/ })).toBeNull()
     expect(screen.queryByRole('menuitem', { name: /从这条 fork/ })).toBeNull()
-    expect(screen.queryByRole('menuitem', { name: /删除/ })).toBeNull()
+    // IM：硬删除仍受写级 gating；「仅自己删除」是读侧个人视图，viewer 也可用
+    expect(screen.queryByRole('menuitem', { name: /删除（所有人）/ })).toBeNull()
+    expect(screen.getByRole('menuitem', { name: /仅自己删除/ })).toBeInTheDocument()
     expect(screen.getByRole('menuitem', { name: /复制/ })).toBeInTheDocument()
+    useAuthStore.setState({ user: undefined })
     useSessionStore.setState({ sessions: [] })
   })
 
@@ -476,7 +534,8 @@ describe('MessageActions 写项 gating（M79-AF）', () => {
     const first = render(<MessageActions messageId="m2" />)
     await user.click(screen.getByRole('button', { name: '消息操作' }))
     expect(screen.queryByRole('menuitem', { name: /编辑重发/ })).toBeNull()
-    expect(screen.queryByRole('menuitem', { name: /删除/ })).toBeNull()
+    expect(screen.queryByRole('menuitem', { name: /删除（所有人）/ })).toBeNull()
+    expect(screen.getByRole('menuitem', { name: /仅自己删除/ })).toBeInTheDocument()
     first.unmount()
 
     // 本人消息 → 编辑与删除均显示
@@ -484,7 +543,8 @@ describe('MessageActions 写项 gating（M79-AF）', () => {
     render(<MessageActions messageId="m2" />)
     await user.click(screen.getByRole('button', { name: '消息操作' }))
     expect(screen.getByRole('menuitem', { name: /编辑重发/ })).toBeInTheDocument()
-    expect(screen.getByRole('menuitem', { name: /删除/ })).toBeInTheDocument()
+    expect(screen.getByRole('menuitem', { name: /删除（所有人）/ })).toBeInTheDocument()
+    expect(screen.getByRole('menuitem', { name: /仅自己删除/ })).toBeInTheDocument()
     useAuthStore.setState({ user: undefined })
     useSessionStore.setState({ sessions: [] })
   })
@@ -500,14 +560,17 @@ describe('MessageActions 写项 gating（M79-AF）', () => {
     render(<MessageActions messageId="m2" />)
     await user.click(screen.getByRole('button', { name: '消息操作' }))
     expect(screen.getByRole('menuitem', { name: /编辑重发/ })).toBeInTheDocument()
-    expect(screen.getByRole('menuitem', { name: /删除/ })).toBeInTheDocument()
+    expect(screen.getByRole('menuitem', { name: /删除（所有人）/ })).toBeInTheDocument()
     expect(screen.getByRole('menuitem', { name: /从这条 fork/ })).toBeInTheDocument()
   })
 })
 
 // ---------- 会话全文搜索 ----------
 
-function sessionItem(id: string, title: string): {
+function sessionItem(
+  id: string,
+  title: string,
+): {
   id: string
   title: string
   participantIds: string[]
@@ -533,6 +596,56 @@ describe('SessionList 全文搜索（M9）', () => {
     })
   })
 
+  it('旧搜索后返回，不覆盖最新查询的结果', async () => {
+    const pending: Array<(response: Response) => void> = []
+    fetchMock.mockImplementation((url: string) =>
+      String(url).startsWith('/api/search')
+        ? new Promise<Response>((resolve) => pending.push(resolve))
+        : Promise.resolve(jsonResponse({ spaces: [] })),
+    )
+    render(<SessionList onSelect={vi.fn()} />)
+    const box = screen.getByPlaceholderText('搜索全部会话消息…')
+    fireEvent.change(box, { target: { value: '旧' } })
+    await waitFor(() => expect(pending).toHaveLength(1))
+    fireEvent.change(box, { target: { value: '新' } })
+    await waitFor(() => expect(pending).toHaveLength(2))
+    await act(async () =>
+      pending[1](
+        jsonResponse({
+          results: [{ sessionId: 's2', messageId: 'new', content: '新命中', sessionTitle: '新结果' }],
+        }),
+      ),
+    )
+    await screen.findByText('新结果')
+    await act(async () =>
+      pending[0](
+        jsonResponse({
+          results: [{ sessionId: 's1', messageId: 'old', content: '旧命中', sessionTitle: '旧结果' }],
+        }),
+      ),
+    )
+    expect(screen.getByText('新结果')).toBeInTheDocument()
+    expect(screen.queryByText('旧结果')).toBeNull()
+  })
+
+  it('搜索失败显示可重试错误，不冒充没有结果', async () => {
+    let failed = false
+    fetchMock.mockImplementation((url: string) => {
+      if (!String(url).startsWith('/api/search')) return Promise.resolve(jsonResponse({ spaces: [] }))
+      if (!failed) {
+        failed = true
+        return Promise.reject(new Error('搜索服务不可用'))
+      }
+      return Promise.resolve(jsonResponse({ results: [] }))
+    })
+    render(<SessionList onSelect={vi.fn()} />)
+    fireEvent.change(screen.getByPlaceholderText('搜索全部会话消息…'), { target: { value: '内容' } })
+    expect(await screen.findByRole('alert')).toHaveTextContent('搜索服务不可用')
+    expect(screen.queryByText('没有匹配「内容」的消息')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: '重试搜索' }))
+    expect(await screen.findByText('没有匹配「内容」的消息')).toBeInTheDocument()
+  })
+
   it('输入防抖后请求 FTS；命中展示会话名与片段，点击跳转并恢复列表', async () => {
     const user = userEvent.setup()
     const onSelect = vi.fn()
@@ -544,7 +657,12 @@ describe('SessionList 全文搜索（M9）', () => {
           ? jsonResponse({ spaces: [] })
           : jsonResponse({
               results: [
-                { sessionId: 's2', messageId: 'm9', content: '请帮我实现登录功能，注意幂等', sessionTitle: '交接讨论' },
+                {
+                  sessionId: 's2',
+                  messageId: 'm9',
+                  content: '请帮我实现登录功能，注意幂等',
+                  sessionTitle: '交接讨论',
+                },
               ],
             }),
       ),
@@ -553,7 +671,9 @@ describe('SessionList 全文搜索（M9）', () => {
 
     await user.type(screen.getByPlaceholderText('搜索全部会话消息…'), '登录')
     await waitFor(() =>
-      expect(fetchMock.mock.calls.some(([u]) => u === '/api/search?q=%E7%99%BB%E5%BD%95&limit=30')).toBe(true),
+      expect(fetchMock.mock.calls.some(([u]) => u === '/api/search?q=%E7%99%BB%E5%BD%95&limit=30')).toBe(
+        true,
+      ),
     )
 
     expect(await screen.findByText('交接讨论')).toBeInTheDocument()

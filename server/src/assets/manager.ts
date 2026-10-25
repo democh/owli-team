@@ -43,9 +43,9 @@ const PNG_MAGIC = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]
 const AVATAR_MAX_BYTES = 8 * 1024 * 1024
 
 /** 序列化字段顺序（与仓库既有 AGENT.md 风格一致） */
-const AGENT_FIELD_ORDER = ['id', 'name', 'role', 'title', 'description', 'capabilities', 'avatar', 'soul', 'handoff', 'tools', 'skills', 'model', 'temperature']
+const AGENT_FIELD_ORDER = ['id', 'name', 'role', 'title', 'description', 'capabilities', 'catalog', 'avatar', 'soul', 'handoff', 'tools', 'skills', 'model', 'temperature']
 const SOUL_FIELD_ORDER = ['id', 'name', 'tagline', 'icon', 'traits', 'tone', 'quirks']
-const GROUP_FIELD_ORDER = ['id', 'name', 'description', 'icon', 'theme', 'objective', 'chain', 'defaultSkills', 'parallel', 'rounds', 'parallelMax', 'order']
+const GROUP_FIELD_ORDER = ['id', 'name', 'category', 'catalog', 'description', 'icon', 'theme', 'objective', 'chain', 'defaultSkills', 'parallel', 'rounds', 'parallelMax', 'order']
 const SKILL_FIELD_ORDER = ['name', 'description', 'tags']
 
 export class AssetNotFoundError extends Error {
@@ -238,7 +238,7 @@ export class AssetManager {
     this.assertId(id, '角色 id')
     const raw = this.readAgentRaw(id)
     if (!raw) throw new AssetNotFoundError(`角色 "${id}" 不存在`)
-    const { meta, body } = this.buildMeta(id, input, raw.dir)
+    const { meta, body } = this.buildMeta(id, { ...input, catalog: input.catalog === undefined ? raw.meta.catalog : input.catalog }, raw.dir)
     this.writeAgentFile(raw.dir, meta, body)
     this.reloadLibraries()
     return this.getAgent(id)
@@ -373,6 +373,8 @@ export class AssetManager {
       icon: input.icon ?? 'user',
       theme: input.theme ?? (['#64748b', '#94a3b8'] as [string, string]),
       objective: input.objective ?? '',
+      category: input.category,
+      catalog: input.catalog,
       chain: [],
       defaultSkills: [],
       parallel: false,
@@ -689,6 +691,7 @@ export class AssetManager {
       title: input.title ?? '',
       description: input.description ?? '',
       capabilities: input.capabilities ?? [],
+      catalog: input.catalog ?? undefined,
       avatar: input.avatar ?? {},
       handoff: input.handoff ?? [],
     }

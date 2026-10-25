@@ -44,7 +44,7 @@ describe('P1：声纹解析与加载', () => {
     expect(empty.banned).toEqual([])
   })
 
-  it('真实资产库：首批 21 个角色 voice.md 已加载且达标（示例 ≥2 / 禁用词 ≥3）', () => {
+  it('真实资产库：20 个活动角色 voice.md 已加载且达标（示例 ≥2 / 禁用词 ≥3）', () => {
     const cfg = loadConfig()
     const lib = new PromptLibrary({ agentsDir: cfg.agentsDir, promptsDir: cfg.promptsDir, onWarn: () => {} })
     const expected = [
@@ -52,7 +52,7 @@ describe('P1：声纹解析与加载', () => {
       'lead', 'scout', 'analyst', 'verifier',
       'invest-lead', 'analyst-fa', 'analyst-ta', 'analyst-news', 'quant',
       'facilitator', 'ideator', 'challenger', 'refiner',
-      'coach', 'chef',
+      'coach',
     ]
     for (const id of expected) {
       const v = lib.voice(id)

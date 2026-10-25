@@ -42,6 +42,8 @@ export function ChatMembersDialog({ session, open, onOpenChange }: ChatMembersDi
   const amMember = !!me && !!view?.members.some((m) => m.userId === me.id)
   const [selected, setSelected] = React.useState<string[]>([])
   const [confirming, setConfirming] = React.useState<string | null>(null)
+  /** IM：群主转让二次确认（目标成员 id） */
+  const [confirmingTransfer, setConfirmingTransfer] = React.useState<string | null>(null)
   /** M79-AA 群管理补全：退出（成员）/ 解散（群主）行内二次确认 + 解散请求 busy */
   const [confirmingLeave, setConfirmingLeave] = React.useState(false)
   const [confirmingDisband, setConfirmingDisband] = React.useState(false)
@@ -59,6 +61,7 @@ export function ChatMembersDialog({ session, open, onOpenChange }: ChatMembersDi
       useShareStore.getState().close()
       setSelected([])
       setConfirming(null)
+      setConfirmingTransfer(null)
       setConfirmingLeave(false)
       setConfirmingDisband(false)
       setDisbandBusy(false)
@@ -96,6 +99,19 @@ export function ChatMembersDialog({ session, open, onOpenChange }: ChatMembersDi
       await useShareStore.getState().remove(session.id, userId)
       setConfirming(null)
       toast.success(`已移出「${name}」`)
+    } catch (err) {
+      toast.error((err as Error).message)
+    }
+  }
+
+  /** IM：群主转让（旧群主自动降为 editor，保留访问） */
+  const transferOwner = async (userId: string, name: string): Promise<void> => {
+    if (!session || busy) return
+    try {
+      await useShareStore.getState().transferOwner(session.id, userId)
+      setConfirmingTransfer(null)
+      toast.success(`已将群主转让给「${name}」`)
+      await useSessionStore.getState().loadSessions()
     } catch (err) {
       toast.error((err as Error).message)
     }
@@ -188,7 +204,26 @@ export function ChatMembersDialog({ session, open, onOpenChange }: ChatMembersDi
                       {m.userId === me?.id && <Badge className="h-4 shrink-0 px-1 text-[10px]">我</Badge>}
                     </div>
                     {isGroup && isOwner && m.userId !== me?.id ? (
-                      confirming === m.userId ? (
+                      confirmingTransfer === m.userId ? (
+                        <span className="flex shrink-0 items-center gap-1">
+                          <Button
+                            size="sm"
+                            className="h-6 px-2 text-[11.5px]"
+                            disabled={busy}
+                            onClick={() => void transferOwner(m.userId, m.displayName)}
+                          >
+                            确认转让
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="h-6 px-1.5 text-[11.5px]"
+                            onClick={() => setConfirmingTransfer(null)}
+                          >
+                            取消
+                          </Button>
+                        </span>
+                      ) : confirming === m.userId ? (
                         <span className="flex shrink-0 items-center gap-1">
                           <Button
                             size="sm"
@@ -209,14 +244,24 @@ export function ChatMembersDialog({ session, open, onOpenChange }: ChatMembersDi
                           </Button>
                         </span>
                       ) : (
-                        <button
-                          type="button"
-                          className="shrink-0 rounded p-1 text-muted-foreground hover:bg-background hover:text-destructive"
-                          title="移出成员"
-                          onClick={() => setConfirming(m.userId)}
-                        >
-                          <UserMinus className="size-3.5" />
-                        </button>
+                        <span className="flex shrink-0 items-center gap-0.5">
+                          <button
+                            type="button"
+                            className="rounded p-1 text-muted-foreground hover:bg-background hover:text-amber-700"
+                            title="转让群主（旧群主保留可协作）"
+                            onClick={() => setConfirmingTransfer(m.userId)}
+                          >
+                            <Crown className="size-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            className="rounded p-1 text-muted-foreground hover:bg-background hover:text-destructive"
+                            title="移出成员"
+                            onClick={() => setConfirming(m.userId)}
+                          >
+                            <UserMinus className="size-3.5" />
+                          </button>
+                        </span>
                       )
                     ) : null}
                   </div>

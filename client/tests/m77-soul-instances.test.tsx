@@ -378,7 +378,7 @@ describe('M77：Composer（成员条与 @ 候选按实例）', () => {
     await user.type(box, '@')
     const menu = screen.getByRole('listbox')
     expect(menu.textContent).toContain('卢娜（全部 2 位）')
-    await user.click(within(menu).getByRole('button', { name: /卢娜（全部 2 位）/ }))
+    await user.click(within(menu).getByRole('option', { name: /卢娜（全部 2 位）/ }))
     // 逐一点名：两个实例 token（服务端裸名只召集主实例，全伞须显式）
     expect(box).toHaveValue('@卢娜·狂野 @卢娜·禅意 ')
   })

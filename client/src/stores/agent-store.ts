@@ -14,6 +14,7 @@ interface AgentState {
   skills: SkillMeta[]
   loaded: boolean
   loading: boolean
+  error?: string
   /** agentId → 五态 */
   statuses: Record<string, AgentRunState>
   load: () => Promise<void>
@@ -31,7 +32,7 @@ async function fetchAll(): Promise<{
 }> {
   const [agentsRes, skillsRes] = await Promise.all([
     apiGet<{ agents: AgentDefinition[]; groups?: AgentGroup[]; presets?: RosterPreset[] }>('/api/agents'),
-    apiGet<{ skills: SkillMeta[] }>('/api/skills'),
+    apiGet<{ skills: SkillMeta[] }>('/api/skills').catch(() => ({ skills: [] })), 
   ])
   return {
     agents: agentsRes.agents,
@@ -52,9 +53,11 @@ export const useAgentStore = create<AgentState>((set, get) => ({
 
   load: async () => {
     if (get().loaded || get().loading) return
-    set({ loading: true })
+    set({ loading: true, error: undefined })
     try {
       set({ ...(await fetchAll()), loaded: true })
+    } catch (err) {
+      set({ error: err instanceof Error ? err.message : '资产加载失败，请重试' })
     } finally {
       set({ loading: false })
     }
@@ -62,9 +65,11 @@ export const useAgentStore = create<AgentState>((set, get) => ({
 
   reload: async () => {
     if (get().loading) return
-    set({ loading: true })
+    set({ loading: true, error: undefined })
     try {
       set({ ...(await fetchAll()), loaded: true })
+    } catch (err) {
+      set({ error: err instanceof Error ? err.message : '资产加载失败，请重试' })
     } finally {
       set({ loading: false })
     }

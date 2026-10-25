@@ -13,24 +13,24 @@ function lastTurn(agents: Array<{ turnIndex?: number }>): number {
 describe('M42 圆桌例会链路（mock）', () => {
   it('OPC 周经营例会（串行）：开场声明 → 逐项回标 → 回交主持人 → 纪要 → 交还用户（5 波）', async () => {
     const env = makeEnv()
-    const session = env.sessions.create(['chief', 'finance', 'growth', 'sales'], 'M42 例会')
+    const session = env.sessions.create(['chief', 'finance', 'growth', 'ops'], 'M42 例会')
     const user = appendUserMessage(
       env,
       session.id,
-      '主持本周经营例会：幕僚长开场定议程，财务给出测算与口径，增长汇报指标与实验结论，销售更新重点客户与回款风险，最后收敛为经营简报与下周优先级。',
+      '主持本周经营例会：幕僚长开场定议程，财务给出测算与口径，增长汇报指标与实验结论，运营梳理交付、协作阻塞与下周执行风险，最后收敛为经营简报与下周优先级。',
     )
     const { runId } = env.engine.launch(session.id, user.id)
     await waitRunFinished(env.engine, runId)
 
     const agents = env.sessions.messages(session.id).filter((m) => m.role === 'agent')
-    // 链路序：chief（开场）→ growth → finance → sales（回交）→ chief（纪要）= 5 波（eval turns_lte 5 临界）
-    expect(agents.map((m) => m.agentId)).toEqual(['chief', 'growth', 'finance', 'sales', 'chief'])
+    // 链路序：chief（开场）→ growth → finance → ops（回交）→ chief（纪要）= 5 波（eval turns_lte 5 临界）
+    expect(agents.map((m) => m.agentId)).toEqual(['chief', 'growth', 'finance', 'ops', 'chief'])
     expect(lastTurn(agents)).toBe(5)
 
     // 开场声明：会议容器 + 四项议题 + 转交 growth
     const opening = agents[0]!.content
     expect(opening).toContain('::: meeting 本周经营例会')
-    for (const item of ['增长复盘：渠道与内容', '财务盘点：回款与成本', '客户与回款：重点跟进', '经营简报：优先级与下周动作']) {
+    for (const item of ['增长复盘：渠道与内容', '财务盘点：回款与成本', '运营交付：协作阻塞与执行风险', '经营简报：优先级与下周动作']) {
       expect(opening).toContain(`- ${item}`)
     }
     expect(opening).toContain('@高扬 接力棒给你了。')
@@ -38,7 +38,7 @@ describe('M42 圆桌例会链路（mock）', () => {
     // 议题推进回标（容器更新：后声明显式态覆盖）
     expect(agents[1]!.content).toContain('- [x] 增长复盘：渠道与内容')
     expect(agents[2]!.content).toContain('- [x] 财务盘点：回款与成本')
-    expect(agents[3]!.content).toContain('- [x] 客户与回款：重点跟进')
+    expect(agents[3]!.content).toContain('- [x] 运营交付：协作阻塞与执行风险')
 
     // 收尾回交主持人（非主持人全体议毕）
     expect(agents[3]!.content).toContain('@柏川 议题都过完了，请主持收尾并出纪要。')

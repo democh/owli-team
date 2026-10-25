@@ -26,7 +26,7 @@ describe('M88：L0 规则判定', () => {
   })
 
   it('显式「先出计划 / 先别动手」→ 规划；「帮我规划个活动」→ 直接执行（业务任务不误判）', () => {
-    expect(base('先出个登录改造计划再动手')).toMatchObject({ needsPlan: true, source: 'rule' })
+    expect(base('先出个登录改造计划再动手')).toMatchObject({ needsPlan: true, source: 'user' })
     expect(base('先别动手，说说你的思路')).toMatchObject({ needsPlan: true })
     expect(base('帮我规划个活动')).toMatchObject({ needsPlan: false })
     expect(base('做个活动策划方案')).toMatchObject({ needsPlan: false })
@@ -61,10 +61,9 @@ describe('M88：L0 规则判定', () => {
     expect(base('随便聊聊', { planFirst: true })).toMatchObject({ needsPlan: true })
   })
 
-  it('已有进行中的计划 → 不重复进入规划', () => {
-    const intent = base('先出个计划，继续推进', { hasActivePlan: true })
-    expect(intent.needsPlan).toBe(false)
-    expect(intent.reasons.join('')).toContain('已有进行中的计划')
+  it('批准计划的执行意图不重复规划，但新消息独立判定', () => {
+    expect(modeOfIntent(planExecutionIntent(true))).toBe('execute')
+    expect(base('删除旧数据库').needsPlan).toBe(true)
   })
 
   it('多环节长需求 → 规划（低风险 + 中置信度）', () => {
@@ -149,6 +148,60 @@ describe('M88：PRS 结构化判定合并', () => {
     expect(mergeRouterIntent(user, coerceRouterIntent({ needsPlan: true, riskLevel: 'high', confidence: 1 }))).toBe(user)
     const policy = resolveIntent({ text: '随便', autonomy: 'never-plan' })
     expect(mergeRouterIntent(policy, coerceRouterIntent({ needsPlan: true, confidence: 1 })).needsPlan).toBe(false)
+  })
+})
+
+describe('意图优先级与动作范围回归', () => {
+  it('never-plan 不被复杂度覆盖，文本先规划不被 PRS 覆盖', () => {
+    const direct = base('首先调研，然后输出报告', { autonomy: 'never-plan' })
+    expect(direct.needsPlan).toBe(false)
+    expect(direct.reasons.join('')).not.toContain('先对齐方案')
+    const planned = base('先出计划给我确认')
+    const router = coerceRouterIntent({ needsPlan: false, riskLevel: 'low', confidence: 1, reasons: ['直接执行'] })
+    expect(mergeRouterIntent(planned, router).needsPlan).toBe(true)
+    expect(mergeRouterIntent(planned, router).reasons.join('')).not.toContain('直接执行')
+  })
+
+  it.each([
+    ['不要删除数据，只检查配置', false],
+    ['请不要删除 A 或清空 B', false],
+    ['不要删除 A，但删除 B', true],
+    ['不要删除 A，直接清空 B', true],
+    ['只评审删除数据库的方案，不执行', false],
+    ['评审删除方案，然后删除 B', true],
+  ])('高风险只看肯定动作：%s', (text, high) => {
+    expect(base(text).risk === 'high').toBe(high)
+    expect(base(text).needsPlan).toBe(high)
+  })
+
+  it('只评审修改方案保持只读；修改方案并检查是执行后评审', () => {
+    expect(modeOfIntent(base('只评审修改方案'))).toBe('review')
+    expect(modeOfIntent(base('不要修改，只检查配置'))).toBe('review')
+    expect(modeOfIntent(base('不要修改，只检查配置', { autonomy: 'always-plan' }))).toBe('plan')
+    expect(base('修改方案并检查')).toMatchObject({ needsPlan: false, needsReview: true })
+    expect(modeOfIntent(base('修改方案并检查'))).toBe('execute')
+    expect(modeOfIntent(base('输出三套完整方案，并检查冲突'))).toBe('execute')
+    expect(modeOfIntent(base('输出完整方案，最后检查冲突'))).toBe('execute')
+    expect(modeOfIntent(base('请结合团队约定评审发布流程要求，产出部署流程约定交付件'))).toBe('execute')
+    expect(modeOfIntent(base('请评审这份优化方案'))).toBe('review')
+  })
+
+  it('显式 review 在正常、legacy 与 PRS 合并后都保留首波评审', () => {
+    for (const intent of [base('修改方案', { explicitMode: 'review' }), legacyIntentOf({ explicitMode: 'review' })]) {
+      expect(modeOfIntent(intent)).toBe('review')
+      expect(modeOfIntent(mergeRouterIntent(intent, coerceRouterIntent({ needsPlan: false, confidence: 1, reasons: ['执行'] })))).toBe('review')
+    }
+  })
+
+  it('PRS 高风险即使低置信度且未请求计划也必须规划；不绕过 composer 与已批准步骤', () => {
+    const high = coerceRouterIntent({ needsPlan: false, riskLevel: 'high', confidence: 0.1 })!
+    expect(applyConfidencePolicy(high).needsPlan).toBe(true)
+    expect(mergeRouterIntent(base('开始处理'), high).needsPlan).toBe(true)
+    expect(mergeRouterIntent(base('开始处理', { autonomy: 'never-plan' }), high).needsPlan).toBe(true)
+    // 文本直接执行是用户的明确约束，可关闭首波规划；Composer execute 同理。
+    expect(mergeRouterIntent(base('直接执行'), high).needsPlan).toBe(false)
+    expect(mergeRouterIntent(base('开始处理', { explicitMode: 'execute' }), high).needsPlan).toBe(false)
+    expect(mergeRouterIntent(planExecutionIntent(true), high).needsPlan).toBe(false)
   })
 })
 

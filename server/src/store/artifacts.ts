@@ -2,6 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import type { Artifact, ArtifactKind } from '@multi-agent/shared'
 import { ensureDir, resolveInRoot } from '../util/paths.js'
+import { contentHash } from './artifact-versions.js'
 
 // ---------- M24：类型分类（渲染器选择依据） ----------
 
@@ -157,17 +158,19 @@ export class ArtifactStore {
     sessionId: string,
     relPath: string,
     maxBytes: number,
-  ): { fullPath: string; size: number; binary: boolean; content?: string; truncated?: boolean } {
+  ): { fullPath: string; size: number; binary: boolean; hash: string; content?: string; truncated?: boolean } {
     const fullPath = this.resolveSafe(sessionId, relPath)
     if (!fs.existsSync(fullPath) || !fs.statSync(fullPath).isFile()) {
       throw new Error('交付件不存在')
     }
-    const size = fs.statSync(fullPath).size
+    const raw = fs.readFileSync(fullPath)
+    const size = raw.length
+    const hash = contentHash(raw)
     const binary = isBinaryExt(fullPath)
     if (binary || size > maxBytes) {
-      return { fullPath, size, binary }
+      return { fullPath, size, binary, hash }
     }
-    return { fullPath, size, binary, content: fs.readFileSync(fullPath, 'utf8'), truncated: false }
+    return { fullPath, size, binary, hash, content: raw.toString('utf8'), truncated: false }
   }
 
   /**

@@ -23,3 +23,20 @@ agenda:
 stage:
   layout: dock
   panel: chartboard
+category: culture
+catalog:
+  keywords:
+    - 传统数术
+    - 排盘解读
+    - 多术合参
+    - 择时参考
+    - 术语答疑
+  inputs:
+    - 研习主题
+    - 出生或起卦参数
+    - 时间地点口径
+  outputs:
+    - 排盘记录
+    - 传统解读
+    - 参考区间
+  boundary: 仅供传统文化研习，不作宿命断言，不替代医疗、法律或投资决策。

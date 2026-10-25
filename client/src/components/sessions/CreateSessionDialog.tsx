@@ -9,8 +9,11 @@ import * as React from 'react'
 import { toast } from 'sonner'
 import { Check, Layers, Loader2, Search, Sparkles, Users, X, Zap } from 'lucide-react'
 import type { AgentDefinition, Session } from '@multi-agent/shared'
-import { BLANK_SCENE_ID, DEFAULT_SPACE_ID, baseAgentId } from '@multi-agent/shared'
+import { BLANK_SCENE_ID, CATALOG_CATEGORIES, DEFAULT_SPACE_ID, baseAgentId } from '@multi-agent/shared'
 import { apiPatch } from '../../lib/api'
+import { writeDraft } from '../../lib/draft-store'
+import { buildCatalog, searchCatalog, type CatalogSource } from '../../lib/catalog'
+import { CatalogDetail } from '../agents/CatalogDetail'
 import { useAgentStore } from '../../stores/agent-store'
 import { useAuthStore } from '../../stores/auth-store'
 import { useFriendsStore } from '../../stores/friends-store'
@@ -31,10 +34,7 @@ import { SoulParticipantPicker } from '../agents/SoulPicker'
 import { HumanAvatar } from '../chat/HumanAvatar'
 
 /** 组队来源（快速组队 preset / 场景 scene 二选一；命令面板 pendingCreate 与此共用） */
-export interface CreateSource {
-  kind: 'preset' | 'scene'
-  id: string
-}
+export type CreateSource = CatalogSource
 
 export interface CreateSessionDialogProps {
   open: boolean
@@ -61,6 +61,19 @@ export function CreateSessionDialog({
   const [souls, setSouls] = React.useState<Record<string, string>>({})
   const [titleInput, setTitleInput] = React.useState('')
   const [busy, setBusy] = React.useState(false)
+  const busyRef = React.useRef(false)
+  const [draft, setDraft] = React.useState('')
+  const [category, setCategory] = React.useState('all')
+  const [sourceTab, setSourceTab] = React.useState<'scene' | 'preset'>('scene')
+  const [detailKey, setDetailKey] = React.useState<string>()
+  const [pendingSource, setPendingSource] = React.useState<CreateSource | null>()
+  const detailOpener = React.useRef<HTMLElement | null>(null)
+  const catalog = React.useMemo(() => buildCatalog(agents, groups, presets), [agents, groups, presets])
+  const catalogByKey = React.useMemo(() => new Map(catalog.map((e) => [e.key, e])), [catalog])
+  const agentById = React.useMemo(() => new Map(agents.map((a) => [a.id, a])), [agents])
+  const detailEntry = detailKey ? catalogByKey.get(detailKey) : undefined
+  const openDetail = (key: string): void => { detailOpener.current = document.activeElement as HTMLElement; setDetailKey(key) }
+  const closeDetail = (): void => { setDetailKey(undefined); requestAnimationFrame(() => detailOpener.current?.focus()) }
   // M79-O：协作成员（真人）——创建时一步邀请（免「先建后共享」两步）
   const [humanIds, setHumanIds] = React.useState<string[]>([])
   const multiUser = useAuthStore((s) => s.status.multiUser)
@@ -85,22 +98,33 @@ export function CreateSessionDialog({
       initialSource?.kind === 'scene'
         ? useAgentStore.getState().groups.find((g) => g.id === initialSource.id)
         : undefined
+    const single = initialSource?.kind === 'agent' ? useAgentStore.getState().agents.find((a) => a.id === initialSource.id) : undefined
+    setDraft(initialSource?.draft ?? preset?.prompt ?? '')
+    // 页签跟随已解析的来源（无效 id 回退场景页，不留下空白的预设页）
+    setSourceTab(preset ? 'preset' : 'scene')
+    setCategory('all')
+    setDetailKey(undefined)
+    setPendingSource(undefined)
+    busyRef.current = false
     setTitleInput('')
     setQuery('')
     setBusy(false)
     setSouls({})
     setHumanIds([])
     if (preset) {
-      setSource({ kind: 'preset', id: preset.id })
+      setSource({ kind: 'preset', id: preset.id, draft: initialSource?.draft })
       setPicked(preset.members.filter((id) => known.has(id)))
     } else if (group) {
-      setSource({ kind: 'scene', id: group.id })
+      setSource({ kind: 'scene', id: group.id, draft: initialSource?.draft })
       setPicked((group.chain ?? []).filter((id) => known.has(id)))
+    } else if (single) {
+      setSource({ kind: 'agent', id: single.id, draft: initialSource?.draft })
+      setPicked([single.id])
     } else {
       setSource(undefined)
       setPicked([])
     }
-    setPane(preset || group ? (narrowRef.current ? 'lineup' : 'source') : 'source')
+    setPane(preset || group || single ? (narrowRef.current ? 'lineup' : 'source') : 'source')
   }, [open, initialSource])
 
   // M79-O：打开时拉好友（协作成员候选；多用户模式）
@@ -113,12 +137,13 @@ export function CreateSessionDialog({
 
   const preset = source?.kind === 'preset' ? presets.find((p) => p.id === source.id) : undefined
   const group = source?.kind === 'scene' ? groups.find((g) => g.id === source.id) : undefined
+  const single = source?.kind === 'agent' ? agentById.get(source.id) : undefined
   // M77：编制按「成员键」组织（分身 = `agentId~soulId`）；行视图按角色聚合（一角色一行，行内选参与性格）
   const lineupItems = React.useMemo(() => {
     const byAgent = new Map<string, { agent: AgentDefinition; keys: string[] }>()
     const order: string[] = []
     for (const key of picked) {
-      const agent = agents.find((a) => a.id === baseAgentId(key))
+      const agent = agentById.get(baseAgentId(key))
       if (!agent) continue
       let item = byAgent.get(agent.id)
       if (!item) {
@@ -129,45 +154,50 @@ export function CreateSessionDialog({
       item.keys.push(key)
     }
     return order.map((id) => byAgent.get(id)!)
-  }, [picked, agents])
+  }, [picked, agentById])
   const q = query.trim().toLowerCase()
-  const presetList = q
-    ? presets.filter((p) => p.name.toLowerCase().includes(q) || p.description.toLowerCase().includes(q))
-    : presets
+  const presetList = sourceTab === 'preset' ? searchCatalog(catalog, query, category, 'preset').map((e) => e.preset!) : []
   // M50：空场景走独立入口卡（单 Agent 语义），「按场景组队」列表过滤 blank 避免双入口
   const blankGroup = groups.find((g) => g.id === BLANK_SCENE_ID)
   const blankHit = Boolean(
     blankGroup && (!q || blankGroup.name.toLowerCase().includes(q) || blankGroup.description.toLowerCase().includes(q)),
   )
-  const groupList = (
-    q ? groups.filter((g) => g.name.toLowerCase().includes(q) || g.description.toLowerCase().includes(q)) : groups
-  ).filter((g) => g.id !== BLANK_SCENE_ID)
+  const groupList = sourceTab === 'scene' ? searchCatalog(catalog, query, category, 'scene').map((e) => e.group!).filter((g) => g.id !== BLANK_SCENE_ID) : []
   // 「已微调」提示：编制与来源推荐不一致（仅比较成员集合；顺序语义 = 链序，本期不排序）
-  const recommended = preset?.members ?? group?.chain ?? []
-  const tuned = Boolean(source) && (picked.length !== recommended.length || picked.some((id) => !recommended.includes(id)))
+  const recommended = preset?.members ?? group?.chain ?? (single ? [single.id] : [])
+  const tuned = picked.length !== recommended.length || picked.some((id, i) => id !== recommended[i]) || Object.entries(souls).some(([id, soul]) => picked.includes(id) && soul !== agentById.get(baseAgentId(id))?.defaultSoul)
+  const sourceDraft = source?.draft ?? preset?.prompt ?? ''
   const PresetIcon = preset ? resolveIcon(preset.icon) : undefined
 
   /** 选来源：以推荐编制整体替换并清 souls（空推荐 = 空编制，合法） */
-  const pickSource = (next: CreateSource): void => {
+  const applySource = (next: CreateSource | null): void => {
+    if (!next) { setSource(undefined); setPicked([]); setSouls({}); setDraft(''); setPendingSource(undefined); if (narrowRef.current) setPane('pool'); return }
     const known = new Set(agents.map((a) => a.id))
     if (next.kind === 'preset') {
       const p = presets.find((x) => x.id === next.id)
       setPicked((p?.members ?? []).filter((id) => known.has(id)))
+    } else if (next.kind === 'agent') {
+      setPicked(known.has(next.id) ? [next.id] : [])
     } else {
       const g = groups.find((x) => x.id === next.id)
       setPicked((g?.chain ?? []).filter((id) => known.has(id)))
     }
+    setDraft(next.draft ?? (next.kind === 'preset' ? presets.find((p) => p.id === next.id)?.prompt ?? '' : ''))
     setSource(next)
     setSouls({})
+    setPendingSource(undefined)
+    setDetailKey(undefined)
     if (narrowRef.current) setPane('lineup')
   }
 
   /** 自由组合：清来源与编制（窄屏切「角色池」以便直接挑人） */
+  const pickSource = (next: CreateSource): void => {
+    if (tuned || draft !== sourceDraft) setPendingSource(next)
+    else applySource(next)
+  }
   const clearAll = (): void => {
-    setSource(undefined)
-    setPicked([])
-    setSouls({})
-    if (narrowRef.current) setPane('pool')
+    if (tuned || draft !== sourceDraft) setPendingSource(null)
+    else applySource(null)
   }
 
   /** 清空编制（保留来源；来源徽标随后呈「已微调」态） */
@@ -209,6 +239,8 @@ export function CreateSessionDialog({
 
   const submitCreate = async (): Promise<void> => {
     // M48：0 人提交 = 空编制创建，首条消息由平台路由自动组队（引擎 PRS）
+    if (busyRef.current) return
+    busyRef.current = true
     setBusy(true)
     try {
       // M46：souls 仅保留最终编制（取消勾选的成员不携带灵魂覆盖）
@@ -243,19 +275,20 @@ export function CreateSessionDialog({
           }
         }
       }
-      // M21：预设开场指令预填为 Composer 草稿（须在 onSelect 前写入，切会话时读取恢复；键与 Composer.draftKey 一致）
-      if (preset?.prompt) localStorage.setItem(`ma:draft:${session.id}`, preset.prompt)
+      // M21：预设开场指令预填为 Composer 草稿（须在 onSelect 前写入，切会话时读取恢复；键与 Composer 同一存储，localStorage 不可用时保留内存副本）
+      if (draft) writeDraft(`ma:draft:${session.id}`, draft)
       onOpenChange(false)
       onCreated(session.id)
       const invitedNote = invited > 0 ? `（已邀请 ${invited} 位好友）` : failed.length > 0 ? `；邀请失败：${failed.join('、')}` : ''
       toast(
-        preset?.prompt
+        draft
           ? `会话「${session.title}」已创建，开场指令已预填${invitedNote}`
           : `会话「${session.title}」已创建${invitedNote}`,
       )
     } catch (err) {
       toast.error((err as Error).message)
     } finally {
+      busyRef.current = false
       setBusy(false)
     }
   }
@@ -263,7 +296,9 @@ export function CreateSessionDialog({
   // ---------- 左栏：来源 ----------
   const sourcePane = (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="shrink-0 px-2 pt-2">
+      <div className="shrink-0 space-y-2 px-2 pt-2">
+        <div className="flex gap-2">{(['scene', 'preset'] as const).map((tab) => <Button key={tab} size="sm" variant={sourceTab === tab ? 'default' : 'outline'} aria-pressed={sourceTab === tab} onClick={() => setSourceTab(tab)}>{tab === 'scene' ? '场景' : '任务预设'}</Button>)}</div>
+        <select aria-label="来源分类" value={category} onChange={(e) => setCategory(e.target.value)} className="h-8 w-full rounded border bg-card px-2 text-[13px]"><option value="all">全部分类</option>{Object.entries(CATALOG_CATEGORIES).map(([id, name]) => <option key={id} value={id}>{name}</option>)}</select>
         <div className="relative">
           <Search className="absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
           <Input
@@ -287,7 +322,7 @@ export function CreateSessionDialog({
 
       <div className="min-h-0 flex-1 space-y-2.5 overflow-y-auto px-2 py-2">
         {/* M50：空场景独立入口——单助手直聊（不引入任何角色）；与「按场景组队」互斥展示 */}
-        {blankGroup &&
+        {sourceTab === 'scene' && blankGroup &&
           blankHit &&
           (() => {
             const Icon = resolveIcon(blankGroup.icon)
@@ -315,7 +350,7 @@ export function CreateSessionDialog({
                   {on && <Check className="size-3.5 shrink-0 text-primary" />}
                   <span className="shrink-0 text-[10.5px] text-muted-foreground">单 Agent · 1 位成员</span>
                 </div>
-                <p className="mt-1 line-clamp-2 text-[11px] leading-4 text-muted-foreground">{blankGroup.description}</p>
+                <p className="mt-1 line-clamp-2 text-[13px] leading-5 text-muted-foreground">{blankGroup.description}</p>
               </button>
             )
           })()}
@@ -330,7 +365,7 @@ export function CreateSessionDialog({
                 const Icon = resolveIcon(p.icon)
                 const on = source?.kind === 'preset' && source.id === p.id
                 const memberAgents = p.members
-                  .map((id) => agents.find((a) => a.id === id))
+                  .map((id) => agentById.get(id))
                   .filter((a): a is NonNullable<typeof a> => Boolean(a))
                 return (
                   <button
@@ -356,7 +391,7 @@ export function CreateSessionDialog({
                       {on && <Check className="size-3.5 shrink-0 text-primary" />}
                       <span className="shrink-0 text-[10px] text-muted-foreground">{p.members.length} 人</span>
                     </div>
-                    <p className="mt-0.5 line-clamp-1 text-[10.5px] leading-4 text-muted-foreground">{p.description}</p>
+                    <p className="mt-0.5 line-clamp-1 text-[13px] leading-5 text-muted-foreground">{p.description}</p>
                     {memberAgents.length > 0 && (
                       <span className="mt-1 flex -space-x-1.5">
                         {memberAgents.slice(0, 4).map((a) => (
@@ -393,7 +428,7 @@ export function CreateSessionDialog({
                 const Icon = resolveIcon(g.icon)
                 const on = source?.kind === 'scene' && source.id === g.id
                 const chainAgents = g.chain
-                  .map((id) => agents.find((a) => a.id === id))
+                  .map((id) => agentById.get(id))
                   .filter((a): a is NonNullable<typeof a> => Boolean(a))
                 return (
                   <div key={g.id} className="flex items-start gap-1">
@@ -422,7 +457,7 @@ export function CreateSessionDialog({
                       {g.parallel ? '∥ 并行协作 · ' : ''}
                       {chainAgents.length} 位推荐
                     </div>
-                    <p className="mt-0.5 line-clamp-1 text-[10.5px] leading-4 text-muted-foreground">{g.description}</p>
+                    <p className="mt-0.5 line-clamp-1 text-[13px] leading-5 text-muted-foreground">{g.description}</p>
                     {g.objective && (
                       <p className="mt-0.5 line-clamp-1 text-[10px] leading-4 text-muted-foreground/80">
                         目标：{g.objective}
@@ -475,7 +510,7 @@ export function CreateSessionDialog({
   // ---------- 中栏：角色池（AgentPicker 填满列高；卡点击 = 编制增删） ----------
   const poolPane = (
     <div className="flex h-full min-h-0 flex-col p-2">
-      <AgentPicker value={picked} onChange={setPicked} fill className="flex-1" />
+      <AgentPicker key={source ? `${source.kind}:${source.id}` : 'all'} value={picked} onChange={setPicked} initialGroup={group?.id ?? single?.group} recommendedIds={preset?.members} onDetail={(id) => openDetail(`agent:${id}`)} fill className="flex-1" />
     </div>
   )
 
@@ -499,9 +534,12 @@ export function CreateSessionDialog({
             </span>
           )}
           {group && <GroupBadge group={group} />}
+          {single && <span>{single.name} · 单角色</span>}
+          {source && <Button size="sm" variant="ghost" onClick={() => openDetail(`${source.kind}:${source.id}`)}>来源详情</Button>}
+          {source && tuned && <Button size="sm" variant="outline" onClick={() => setPendingSource(source)}>恢复推荐团队</Button>}
           {tuned && (
             <span className="rounded-full bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-600">
-              已微调
+              已调整
             </span>
           )}
           <span className="ml-auto flex shrink-0 items-center gap-0.5">
@@ -568,17 +606,8 @@ export function CreateSessionDialog({
         })}
       </div>
 
-      <div className="shrink-0 space-y-2 border-t px-2.5 py-2">
-        {preset?.prompt && (
-          <details className="rounded-lg border bg-muted/30 px-2.5 py-1.5 text-[11.5px]">
-            <summary className="cursor-pointer select-none text-muted-foreground">
-              开场指令将预填为草稿（点击预览）
-            </summary>
-            <p className="mt-1.5 max-h-24 overflow-y-auto whitespace-pre-wrap leading-5 text-foreground/85">
-              {preset.prompt}
-            </p>
-          </details>
-        )}
+      <div className="max-h-[60%] shrink-0 space-y-2 overflow-y-auto border-t px-2.5 py-2">
+        <label className="block space-y-1 text-[13px]">开场草稿（不自动发送）<textarea aria-label="创建开场草稿" value={draft} onChange={(e) => setDraft(e.target.value)} rows={3} className="w-full rounded-lg border bg-background p-2" placeholder="可选：创建后预填到新会话" /></label>
         {picked.length === 0 && (
           <p className="flex items-start gap-1.5 rounded-lg border border-primary/25 bg-primary/[0.04] px-2 py-1.5 text-[11px] text-muted-foreground">
             <Sparkles className="mt-0.5 size-3 shrink-0 text-primary/70" />
@@ -648,7 +677,7 @@ export function CreateSessionDialog({
   )
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={(next) => { if (!busyRef.current) onOpenChange(next) }}>
       <DialogContent className="max-w-5xl overflow-hidden p-0" aria-describedby={undefined}>
         <div className="flex h-[min(86vh,760px)] min-h-0 flex-col">
           <div className="flex h-12 shrink-0 items-center gap-2 border-b pl-4 pr-12">
@@ -656,7 +685,7 @@ export function CreateSessionDialog({
             <DialogTitle className="text-[13.5px] font-semibold">新建会话</DialogTitle>
           </div>
 
-          {narrow ? (
+          {pendingSource !== undefined ? <div className="min-h-0 flex-1 overflow-auto p-6" role="alert"><h3 className="font-semibold">替换当前团队和开场草稿？</h3><p className="my-3 text-[13px] text-muted-foreground">已调整的成员、人格分身和开场草稿将被推荐配置替换。真人邀请保持不变。</p><div className="flex gap-3"><Button autoFocus variant="outline" onClick={() => setPendingSource(undefined)}>保留当前调整</Button><Button onClick={() => applySource(pendingSource)}>确认替换</Button></div></div> : detailEntry ? <div className="min-h-0 flex-1 overflow-y-auto p-4" onKeyDown={(e) => { if (e.key === 'Escape') { e.stopPropagation(); closeDetail() } }}><Button autoFocus variant="outline" onClick={closeDetail}>返回组队</Button><h2 className="my-3 text-lg font-semibold">{detailEntry.name}</h2><CatalogDetail key={detailEntry.key} entry={detailEntry} entries={catalog} onNavigate={setDetailKey} onUse={pickSource} /></div> : narrow ? (
             <>
               <div className="flex shrink-0 gap-1 border-b px-2 py-1.5" role="tablist" aria-label="组队台视图">
                 {(
@@ -687,7 +716,7 @@ export function CreateSessionDialog({
             </>
           ) : (
             <div className="flex min-h-0 flex-1">
-              <div className="w-[236px] shrink-0 border-r">{sourcePane}</div>
+              <div className="w-[280px] shrink-0 border-r">{sourcePane}</div>
               <div className="min-w-0 flex-1 border-r">{poolPane}</div>
               <div className="w-[280px] shrink-0">{lineupPane}</div>
             </div>

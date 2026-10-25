@@ -8,9 +8,10 @@ import { TooltipProvider } from './components/ui/tooltip'
 import { Toaster } from './components/ui/sonner'
 import { AppLayout } from './components/layout/AppLayout'
 import { AvatarPreview } from './pages/AvatarPreview'
-import { AgentsDirectory } from './pages/AgentsDirectory'
 import { AuthLoading, ForcePasswordPage, LoginPage, SetupPage, TokenEntryPage } from './pages/AuthPages'
 import { useAuthStore } from './stores/auth-store'
+
+const AgentsDirectory = React.lazy(() => import('./pages/AgentsDirectory').then((m) => ({ default: m.AgentsDirectory })))
 
 /** M57：登录态门控（各阶段见 auth-store.bootstrap） */
 function AuthGate({ children }: { children: React.ReactNode }): React.JSX.Element {
@@ -52,7 +53,7 @@ export default function App(): React.JSX.Element {
         {hash.startsWith('#/avatars') ? (
           <AvatarPreview />
         ) : hash.startsWith('#/agents') ? (
-          <AgentsDirectory />
+          <React.Suspense fallback={<AuthLoading />}><AgentsDirectory /></React.Suspense>
         ) : (
           <AppLayout />
         )}

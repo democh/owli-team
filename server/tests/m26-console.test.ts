@@ -248,6 +248,63 @@ describe('M26：/api/console Agent 生命周期', () => {
     }
   })
 
+  it('展示元数据 catalog：创建 / 更新 / 复制往返不丢，旧客户端不传时保留', async () => {
+    const env = await makeConsoleEnv()
+    try {
+      const base = {
+        name: '挑刺官',
+        role: '质量评审',
+        title: '批判性评审',
+        description: '专门找问题',
+        capabilities: ['找问题'],
+        avatar: { icon: 'bug' },
+        handoff: [],
+        body: '## 职责\n\n对方案挑刺。',
+      }
+      const catalog = {
+        keywords: ['挑刺'],
+        inputs: ['待评审方案'],
+        outputs: ['评审意见'],
+        boundary: '只给意见，不代用户做决定。',
+      }
+      const post = async (body: unknown): Promise<{ agent: ConsoleAgentDetail }> =>
+        (await (
+          await fetch(`${env.url}/api/console/agents`, { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify(body) })
+        ).json()) as { agent: ConsoleAgentDetail }
+      const put = async (body: unknown): Promise<{ agent: ConsoleAgentDetail }> =>
+        (await (
+          await fetch(`${env.url}/api/console/agents/critic`, { method: 'PUT', headers: JSON_HEADERS, body: JSON.stringify(body) })
+        ).json()) as { agent: ConsoleAgentDetail }
+
+      const created = await post({
+        ...base,
+        id: 'critic',
+        group: 'review',
+        newGroup: { id: 'review', name: '评审组', description: '挑刺', icon: 'gavel', theme: ['#ef4444', '#f87171'] },
+        catalog,
+      })
+      expect(created.agent.meta.catalog).toEqual(catalog)
+      expect(fs.readFileSync(path.join(env.agentsDir, 'review', 'critic', 'AGENT.md'), 'utf8')).toContain('boundary:')
+
+      // 旧客户端（不含 catalog 字段）保存 → 保留磁盘上的展示元数据
+      const kept = await put({ ...base, name: '挑刺官' })
+      expect(kept.agent.meta.catalog).toEqual(catalog)
+
+      // 显式 null → 清除（三态语义）
+      const cleared = await put({ ...base, catalog: null })
+      expect(cleared.agent.meta.catalog).toBeUndefined()
+
+      // 恢复后复制：副本保留 catalog
+      await put({ ...base, catalog })
+      const copied = (await (
+        await fetch(`${env.url}/api/console/agents/critic/duplicate`, { method: 'POST', headers: JSON_HEADERS })
+      ).json()) as { agent: ConsoleAgentDetail }
+      expect(copied.agent.meta.catalog).toEqual(catalog)
+    } finally {
+      await env.close()
+    }
+  })
+
   it('非法 id / 路径穿越 / 重复 id：400 与 409 拒绝', async () => {
     const env = await makeConsoleEnv()
     try {
