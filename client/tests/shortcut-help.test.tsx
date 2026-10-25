@@ -49,7 +49,7 @@ describe('快捷键帮助（M12 · Tab 分组）', () => {
     expect(screen.queryByText('命令面板')).toBeNull()
   })
 
-  it('切到「审批卡」与「画布」页签：各自按键组分别呈现', async () => {
+  it('切到「审批卡」页签：审批按键组呈现', async () => {
     useUiStore.setState({ helpOpen: true })
     render(<ShortcutHelp />)
 
@@ -57,11 +57,7 @@ describe('快捷键帮助（M12 · Tab 分组）', () => {
     await user.click(screen.getByRole('tab', { name: '审批卡' }))
     expect(screen.getByText('Backspace')).toBeTruthy()
     expect(screen.getByText('批准')).toBeTruthy()
-
-    await user.click(screen.getByRole('tab', { name: '画布' }))
-    expect(screen.getByText('手型工具 / 选择工具')).toBeTruthy()
-    expect(screen.getByText('H')).toBeTruthy()
-    expect(screen.getByText('撤销 / 重做')).toBeTruthy()
+    // 临时隐藏画布：「画布」页签已注释，恢复时补回该页签断言
   })
 
   it('页签选择在组件内记忆：关闭重开后停留上次分组', async () => {
@@ -69,11 +65,12 @@ describe('快捷键帮助（M12 · Tab 分组）', () => {
     render(<ShortcutHelp />)
 
     const user = userEvent.setup()
-    await user.click(screen.getByRole('tab', { name: '画布' }))
+    // 临时隐藏画布：原先用「画布」页签验证记忆，改用「输入框」页签
+    await user.click(screen.getByRole('tab', { name: '输入框' }))
 
     act(() => useUiStore.getState().setHelpOpen(false))
     act(() => useUiStore.getState().setHelpOpen(true))
-    expect(screen.getByText('手型工具 / 选择工具')).toBeTruthy()
+    expect(screen.getByText('指派语义')).toBeTruthy()
     expect(screen.queryByText('命令面板')).toBeNull()
   })
 })

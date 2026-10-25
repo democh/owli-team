@@ -164,7 +164,8 @@ describe('僵尸占位自愈与通用闪环（M31 修订）', () => {
   })
 })
 
-describe('ToolCard 画布入口（M31 修订）', () => {
+// 临时隐藏画布：入口（在画布查看）已注释，恢复时把 describe.skip 改回 describe
+describe.skip('ToolCard 画布入口（M31 修订）', () => {
   it('canvas_write（带 meta.canvasNodes）：点击「在画布查看」→ 切画布 + focus 精确请求', async () => {
     render(<ToolCard call={mkCall({ meta: { canvasNodes: ['nd_x', 'nd_y'] } })} />)
     expect(screen.getByText('画布写入')).toBeTruthy()

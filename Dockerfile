@@ -61,6 +61,8 @@ RUN set -eux; \
     | grep -oE 'packages/[^"]*\.whl' \
     | grep "$(uname -m)" \
     | grep -E 'py3-none' \
+    | grep -v musllinux \
+    | grep manylinux \
     | tail -1); \
   test -n "$url"; \
   fn=$(basename "$url"); \
